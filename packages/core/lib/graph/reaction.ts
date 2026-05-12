@@ -1,5 +1,6 @@
 import { createNode } from "../kernel";
 import type { Node } from "../kernel";
+import { withInspectorMeta } from "../kernel/inspector";
 import { getActiveScope, setActiveScope } from "../scope/internal";
 import type { Scope } from "../scope";
 import { collectNodes } from "./deps";
@@ -51,10 +52,12 @@ export interface Reaction {
 
 export interface ReactionConfig<Payload, On extends UnitList<Payload> = UnitList<Payload>> {
   on: On;
+  name?: string;
   run: (payload: Payload) => void;
 }
 
 export interface AutoReactionConfig {
+  name?: string;
   run(): void;
 }
 
@@ -83,21 +86,29 @@ export function reaction(
 ): Reaction {
   const explicit = typeof input === "object" && "on" in input;
   const runHandler = typeof input === "function" ? input : input.run;
+  const name = typeof input === "object" ? input.name : undefined;
   const currentDependencies = new Set<Node>();
   let stopped = false;
 
-  const node = createNode((ctx) => {
-    if (stopped) {
+  const node = createNode({
+    meta: withInspectorMeta(undefined, {
+      type: "reaction",
+      name,
+      internal: false,
+    }),
+    run: (ctx) => {
+      if (stopped) {
+        return ctx.value;
+      }
+
+      if (explicit) {
+        (runHandler as (payload: unknown) => void)(ctx.value);
+      } else {
+        runAuto();
+      }
+
       return ctx.value;
-    }
-
-    if (explicit) {
-      (runHandler as (payload: unknown) => void)(ctx.value);
-    } else {
-      runAuto();
-    }
-
-    return ctx.value;
+    },
   });
 
   const runAuto = (): void => {

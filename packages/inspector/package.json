@@ -1,0 +1,63 @@
+{
+  "name": "@virentia/inspector",
+  "version": "0.1.1",
+  "description": "Virentia devtools inspector UI",
+  "keywords": [],
+  "homepage": "https://movpushmov.dev/virentia/inspector/",
+  "bugs": {
+    "url": "https://github.com/movpushmov/virentia/issues"
+  },
+  "license": "MIT",
+  "author": "movpushmov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/movpushmov/virentia.git",
+    "directory": "packages/inspector"
+  },
+  "bin": {
+    "virentia-inspector": "./bin/virentia-inspector.mjs"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    },
+    "./styles.css": "./dist/styles.css"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown && cp lib/client/shared/ui/public/styles.css dist/styles.css && vite build",
+    "dev": "vite",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@mantine/core": "^9.1.1",
+    "@mantine/hooks": "^9.1.1",
+    "@virentia/core": "workspace:*",
+    "@virentia/react": "workspace:*",
+    "@xyflow/react": "^12.10.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "vite": "^8.0.12"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  }
+}

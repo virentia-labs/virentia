@@ -1,6 +1,11 @@
 import { createNode, run } from "../kernel";
 import type { Node } from "../kernel";
-import { requireActiveScope } from "../scope/internal";
+import {
+  prepareInspectorSnapshotNode,
+  readInspectorNodeMeta,
+  withInspectorMeta,
+} from "../kernel/inspector";
+import { getActiveScope, requireActiveScope, setActiveScope } from "../scope/internal";
 import type { Scope } from "../scope";
 import { collectNodes, trackNode } from "../graph/deps";
 import { registerCleanup } from "../graph/owner";
@@ -14,6 +19,9 @@ export type StoreView<T> = T extends object ? Readonly<T> : { readonly value: T 
 export type StoreWrite<T> = T extends object ? T : { value: T };
 
 export type StoreSubscriber<T> = (value: T, scope: Scope) => void;
+export interface StoreDevtoolsOptions {
+  name?: string;
+}
 
 export type Store<T> = StoreView<T> & StoreApi<T>;
 export type StoreWritable<T> = StoreWrite<T> &
@@ -34,6 +42,7 @@ interface StoreOptions<T> {
   writable: boolean;
   skipToken?: T;
   hasSkipToken: boolean;
+  name?: string;
 }
 
 interface ComputedOptions<T> extends Omit<StoreOptions<T>, "writable"> {
@@ -49,11 +58,16 @@ interface ComputedState<T> {
   value?: T;
 }
 
-export function store<T>(initial: T, skipToken?: T): StoreWritable<T> {
+export function store<T>(
+  initial: T,
+  skipToken?: T,
+  devtools?: StoreDevtoolsOptions,
+): StoreWritable<T> {
   return createStore(initial, {
     writable: true,
     skipToken,
-    hasSkipToken: arguments.length > 1,
+    hasSkipToken: arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined),
+    name: devtools?.name,
   }) as StoreWritable<T>;
 }
 
@@ -67,56 +81,70 @@ export function readStoreValue<T>(store: Store<T>): T {
   return reader() as T;
 }
 
-export function readonlyStore<T>(initial: T, skipToken?: T): Store<T> {
+export function readonlyStore<T>(
+  initial: T,
+  skipToken?: T,
+  devtools?: StoreDevtoolsOptions,
+): Store<T> {
   return createStore(initial, {
     writable: false,
     skipToken,
-    hasSkipToken: arguments.length > 1,
+    hasSkipToken: arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined),
+    name: devtools?.name,
   });
 }
 
-export function computed<T>(fn: () => T, skipToken?: T): Store<T> {
+export function computed<T>(fn: () => T, skipToken?: T, devtools?: StoreDevtoolsOptions): Store<T> {
   return createComputed(fn, {
     skipToken,
-    hasSkipToken: arguments.length > 1,
+    hasSkipToken: arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined),
+    name: devtools?.name,
   });
 }
 
 function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
   const id = Symbol("virentia.store");
   const subscribers = new Set<StoreSubscriber<T>>();
-  const node = createNode((ctx) => {
-    if (!ctx.scope) {
-      throw new Error("Store update requires scope");
-    }
+  const node = createNode({
+    meta: withInspectorMeta(undefined, {
+      type: "store",
+      name: options.name,
+      callable: true,
+      writable: options.writable,
+    }),
+    run: (ctx) => {
+      if (!ctx.scope) {
+        throw new Error("Store update requires scope");
+      }
 
-    const value = ctx.value;
+      const value = ctx.value;
 
-    if (isCommittedStoreUpdate<T>(value)) {
-      return value.value;
-    }
+      if (isCommittedStoreUpdate<T>(value)) {
+        return value.value;
+      }
 
-    const next = value as T;
+      const next = value as T;
 
-    if (options.hasSkipToken && Object.is(next, options.skipToken)) {
-      ctx.stop();
-      return readState(ctx.scope, id, initial);
-    }
+      if (options.hasSkipToken && Object.is(next, options.skipToken)) {
+        ctx.stop();
+        return readState(ctx.scope, id, initial);
+      }
 
-    const previous = readState(ctx.scope, id, initial);
+      const previous = readState(ctx.scope, id, initial);
 
-    if (Object.is(previous, next)) {
-      ctx.stop();
-      return previous;
-    }
+      if (Object.is(previous, next)) {
+        ctx.stop();
+        return previous;
+      }
 
-    ctx.scope.values.set(id, next);
+      ctx.scope.values.set(id, next);
 
-    for (const subscriber of subscribers) {
-      subscriber(next, ctx.scope);
-    }
+      for (const subscriber of subscribers) {
+        subscriber(next, ctx.scope);
+      }
 
-    return next;
+      return next;
+    },
   });
 
   const api: StoreApi<T> = {
@@ -144,6 +172,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
         {
           skipToken,
           hasSkipToken: arguments.length > 1,
+          name: deriveName(node, "map"),
         },
         [node],
       );
@@ -161,6 +190,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
           hasSkipToken: true,
           initialValue: initial,
           hasInitialValue: true,
+          name: deriveName(node, "filter"),
         },
         [node],
       );
@@ -172,6 +202,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
         {
           skipToken,
           hasSkipToken: true,
+          name: deriveName(node, "filterMap"),
         },
         [node],
       );
@@ -239,44 +270,58 @@ function createComputed<T>(
   const id = Symbol("virentia.computed");
   const subscribers = new Set<StoreSubscriber<T>>();
   const dependencies = new Set<Node>();
-  const invalidator = createNode((ctx) => {
-    if (!ctx.scope) {
-      throw new Error("Computed invalidation requires scope");
-    }
+  const invalidator = createNode({
+    meta: withInspectorMeta(undefined, {
+      type: "computed.invalidate",
+      name: options.name ? `${options.name}.invalidate` : undefined,
+      internal: true,
+    }),
+    run: (ctx) => {
+      if (!ctx.scope) {
+        throw new Error("Computed invalidation requires scope");
+      }
 
-    const state = readComputedState<T>(ctx.scope, id);
+      const state = readComputedState<T>(ctx.scope, id);
 
-    state.dirty = true;
+      state.dirty = true;
 
-    if (!hasObservers()) {
-      ctx.stop();
-    }
+      if (!hasObservers()) {
+        ctx.stop();
+      }
 
-    return ctx.value;
+      return ctx.value;
+    },
   });
-  const node = createNode((ctx) => {
-    if (!ctx.scope) {
-      throw new Error("Computed update requires scope");
-    }
+  const node = createNode({
+    meta: withInspectorMeta(undefined, {
+      type: "computed",
+      name: options.name,
+    }),
+    run: (ctx) => {
+      if (!ctx.scope) {
+        throw new Error("Computed update requires scope");
+      }
 
-    const state = readComputedState<T>(ctx.scope, id);
-    const hadValue = state.initialized;
-    const previous = state.value;
-    const next = evaluate(ctx.scope, state);
+      const state = readComputedState<T>(ctx.scope, id);
+      const hadValue = state.initialized;
+      const previous = state.value;
+      const next = evaluate(ctx.scope, state);
 
-    if (state.skipped || (hadValue && Object.is(previous, next))) {
-      ctx.stop();
-      return previous;
-    }
+      if (state.skipped || (hadValue && Object.is(previous, next))) {
+        ctx.stop();
+        return previous;
+      }
 
-    for (const subscriber of subscribers) {
-      subscriber(next, ctx.scope);
-    }
+      for (const subscriber of subscribers) {
+        subscriber(next, ctx.scope);
+      }
 
-    return next;
+      return next;
+    },
   });
 
   invalidator.next = [node];
+  prepareInspectorSnapshotNode(node, inspectDependencies);
 
   for (const dependency of initialDependencies) {
     attachDependency(dependency);
@@ -307,6 +352,7 @@ function createComputed<T>(
         {
           skipToken,
           hasSkipToken: arguments.length > 1,
+          name: deriveName(node, "map"),
         },
         [node],
       );
@@ -322,6 +368,7 @@ function createComputed<T>(
         {
           skipToken: defaultSkipToken as T,
           hasSkipToken: true,
+          name: deriveName(node, "filter"),
         },
         [node],
       );
@@ -333,6 +380,7 @@ function createComputed<T>(
         {
           skipToken,
           hasSkipToken: true,
+          name: deriveName(node, "filterMap"),
         },
         [node],
       );
@@ -393,6 +441,26 @@ function createComputed<T>(
       return collected.result;
     } finally {
       state.computing = false;
+    }
+  }
+
+  function inspectDependencies(): void {
+    const previousScope = getActiveScope();
+
+    setActiveScope({
+      values: new Map(),
+    });
+
+    try {
+      const collected = collectNodes(fn);
+
+      for (const dependency of collected.nodes) {
+        attachDependency(dependency);
+      }
+    } catch {
+      // Inspector snapshots should not make user code fail because a lazy computed cannot be inspected.
+    } finally {
+      setActiveScope(previousScope);
     }
   }
 
@@ -534,4 +602,10 @@ function isCommittedStoreUpdate<T>(
     value !== null &&
     (value as { [committedStoreUpdate]?: true })[committedStoreUpdate] === true
   );
+}
+
+function deriveName(source: Node, operation: string): string | undefined {
+  const name = readInspectorNodeMeta(source).name;
+
+  return name ? `${name}.${operation}` : undefined;
 }

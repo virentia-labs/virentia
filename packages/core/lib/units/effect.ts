@@ -1,5 +1,6 @@
 import { createNode, run } from "../kernel";
 import type { Node } from "../kernel";
+import { linkInspectorNodes, withInspectorMeta } from "../kernel/inspector";
 import { getActiveScope, requireActiveScope } from "../scope/internal";
 import type { Scope } from "../scope";
 import { registerCleanup } from "../graph/owner";
@@ -96,18 +97,19 @@ type EffectOutcome<Params, Done, Fail> =
 
 export function effect<Params, Done, Fail = unknown>(
   handler: EffectHandler<Params, Done>,
+  name?: string,
 ): Effect<Params, Done, Fail> {
   const activeCalls = new Set<EffectCallState<Params, Done>>();
-  const $inFlight = readonlyStore(0);
-  const $pending = readonlyStore(false);
-  const started = event<Params>();
-  const done = event<EffectDone<Params, Done>>();
-  const failed = event<EffectFailed<Params, Fail>>();
-  const doneData = event<Done>();
-  const failData = event<Fail>();
-  const settled = event<EffectFinally<Params, Done, Fail>>();
-  const aborted = event<EffectAborted<Params>>();
-  const abortEvent = event<unknown | void>();
+  const $inFlight = readonlyStore(0, undefined, { name: name ? `${name}.$inFlight` : undefined });
+  const $pending = readonlyStore(false, undefined, { name: name ? `${name}.$pending` : undefined });
+  const started = event<Params>(name ? `${name}.started` : undefined);
+  const done = event<EffectDone<Params, Done>>(name ? `${name}.done` : undefined);
+  const failed = event<EffectFailed<Params, Fail>>(name ? `${name}.failed` : undefined);
+  const doneData = event<Done>(name ? `${name}.doneData` : undefined);
+  const failData = event<Fail>(name ? `${name}.failData` : undefined);
+  const settled = event<EffectFinally<Params, Done, Fail>>(name ? `${name}.settled` : undefined);
+  const aborted = event<EffectAborted<Params>>(name ? `${name}.aborted` : undefined);
+  const abortEvent = event<unknown | void>(name ? `${name}.abort` : undefined);
   let inFlight = 0;
 
   const createCall = (
@@ -186,96 +188,128 @@ export function effect<Params, Done, Fail = unknown>(
     return scope ? run({ unit: abortEvent.node, payload: reason, scope }) : Promise.resolve();
   }, abortEvent) as EventCallable<unknown | void>;
 
-  const executeNode = createNode(async (ctx) => {
-    const call = ctx.value as EffectCallState<Params, Done>;
+  const executeNode = createNode({
+    meta: withInspectorMeta(undefined, {
+      type: "effect.execute",
+      name: name ? `${name}.execute` : undefined,
+      internal: true,
+    }),
+    run: async (ctx) => {
+      const call = ctx.value as EffectCallState<Params, Done>;
 
-    if (call.controller.signal.aborted) {
-      return {
-        status: "fail",
-        call,
-        params: call.params,
-        error: getAbortReason(call.controller.signal) as Fail,
-      } satisfies EffectOutcome<Params, Done, Fail>;
-    }
+      if (call.controller.signal.aborted) {
+        return {
+          status: "fail",
+          call,
+          params: call.params,
+          error: getAbortReason(call.controller.signal) as Fail,
+        } satisfies EffectOutcome<Params, Done, Fail>;
+      }
 
-    try {
-      return {
-        status: "done",
-        call,
-        params: call.params,
-        result: await handler(call.params, {
-          signal: call.controller.signal,
-        }),
-      } satisfies EffectOutcome<Params, Done, Fail>;
-    } catch (error) {
-      return {
-        status: "fail",
-        call,
-        params: call.params,
-        error: error as Fail,
-      } satisfies EffectOutcome<Params, Done, Fail>;
-    }
+      try {
+        return {
+          status: "done",
+          call,
+          params: call.params,
+          result: await handler(call.params, {
+            signal: call.controller.signal,
+          }),
+        } satisfies EffectOutcome<Params, Done, Fail>;
+      } catch (error) {
+        return {
+          status: "fail",
+          call,
+          params: call.params,
+          error: error as Fail,
+        } satisfies EffectOutcome<Params, Done, Fail>;
+      }
+    },
   });
 
-  const settleNode = createNode((ctx) => {
-    const outcome = ctx.value as EffectOutcome<Params, Done, Fail>;
+  const settleNode = createNode({
+    meta: withInspectorMeta(undefined, {
+      type: "effect.settle",
+      name: name ? `${name}.settle` : undefined,
+      internal: true,
+    }),
+    run: (ctx) => {
+      const outcome = ctx.value as EffectOutcome<Params, Done, Fail>;
 
-    activeCalls.delete(outcome.call);
-    outcome.call.cleanup();
-    setInFlight(outcome.call.scope, Math.max(0, inFlight - 1));
+      activeCalls.delete(outcome.call);
+      outcome.call.cleanup();
+      setInFlight(outcome.call.scope, Math.max(0, inFlight - 1));
 
-    if (outcome.status === "done") {
+      if (outcome.status === "done") {
+        const finalOutcome = {
+          status: "done",
+          params: outcome.params,
+          result: outcome.result,
+        } satisfies EffectFinally<Params, Done, Fail>;
+
+        void done({
+          params: outcome.params,
+          result: outcome.result,
+        });
+        void doneData(outcome.result);
+        void settled(finalOutcome);
+        outcome.call.resolve(outcome.result);
+        return finalOutcome;
+      }
+
       const finalOutcome = {
-        status: "done",
+        status: "fail",
         params: outcome.params,
-        result: outcome.result,
+        error: outcome.error,
       } satisfies EffectFinally<Params, Done, Fail>;
 
-      void done({
+      void failed({
         params: outcome.params,
-        result: outcome.result,
+        error: outcome.error,
       });
-      void doneData(outcome.result);
+      void failData(outcome.error);
       void settled(finalOutcome);
-      outcome.call.resolve(outcome.result);
+      outcome.call.reject(outcome.error);
       return finalOutcome;
-    }
-
-    const finalOutcome = {
-      status: "fail",
-      params: outcome.params,
-      error: outcome.error,
-    } satisfies EffectFinally<Params, Done, Fail>;
-
-    void failed({
-      params: outcome.params,
-      error: outcome.error,
-    });
-    void failData(outcome.error);
-    void settled(finalOutcome);
-    outcome.call.reject(outcome.error);
-    return finalOutcome;
+    },
   });
 
   executeNode.next = [settleNode];
 
-  const node = createNode((ctx) => {
-    if (!ctx.scope) {
-      throw new Error("Effect call requires scope");
-    }
+  const node = createNode({
+    meta: withInspectorMeta(undefined, {
+      type: "effect",
+      name,
+      callable: true,
+    }),
+    run: (ctx) => {
+      if (!ctx.scope) {
+        throw new Error("Effect call requires scope");
+      }
 
-    const call = isEffectCallState<Params, Done>(ctx.value)
-      ? ctx.value
-      : createCall(ctx.value as Params, undefined, ctx.scope);
+      const call = isEffectCallState<Params, Done>(ctx.value)
+        ? ctx.value
+        : createCall(ctx.value as Params, undefined, ctx.scope);
 
-    activeCalls.add(call);
-    setInFlight(call.scope, inFlight + 1);
-    void started(call.params);
+      activeCalls.add(call);
+      setInFlight(call.scope, inFlight + 1);
+      void started(call.params);
 
-    return call;
+      return call;
+    },
   });
 
   node.next = [executeNode];
+
+  linkEffectSubunit("$pending", $pending.node);
+  linkEffectSubunit("$inFlight", $inFlight.node);
+  linkEffectSubunit("started", started.node);
+  linkEffectSubunit("done", done.node);
+  linkEffectSubunit("failed", failed.node);
+  linkEffectSubunit("doneData", doneData.node);
+  linkEffectSubunit("failData", failData.node);
+  linkEffectSubunit("settled", settled.node);
+  linkEffectSubunit("abort", abortEvent.node);
+  linkEffectSubunit("aborted", aborted.node);
 
   const result = Object.assign(
     (...args: EffectCallArgs<Params>) =>
@@ -310,6 +344,13 @@ export function effect<Params, Done, Fail = unknown>(
   });
 
   return result;
+
+  function linkEffectSubunit(role: string, child: Node): void {
+    linkInspectorNodes(node, child, {
+      kind: "owner",
+      role,
+    });
+  }
 }
 
 export function runEffectHandler<Params, Done>(

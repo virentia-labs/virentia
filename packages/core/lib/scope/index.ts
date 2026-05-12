@@ -1,10 +1,15 @@
 import { requireActiveScope, runScopeTask } from "./internal";
 import type { Scope } from "./types";
+import { registerInspectorScope } from "../kernel/inspector";
 
 export function scope(): Scope {
-  return {
+  const nextScope = {
     values: new Map(),
   };
+
+  registerInspectorScope(nextScope);
+
+  return nextScope;
 }
 
 export type ScopedRunner = (<T>(fn: () => T) => T) & {

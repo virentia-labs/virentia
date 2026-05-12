@@ -2,6 +2,15 @@ import type { KernelContextManager, KernelExecutionContext, RunOptions } from ".
 import type { Node } from "./types";
 import type { CreatePageOptions, KernelWorkItem, Page } from "./internal";
 import { getActiveScope, setActiveScope } from "../scope/internal";
+import {
+  emitInspectorBreakpointHit,
+  emitInspectorNodeEnd,
+  emitInspectorNodeStart,
+  inspectorNow,
+  isInspectorEnabled,
+  registerInspectorScope,
+  shouldStopAfterInspectorNode,
+} from "./inspector";
 
 const queue: KernelWorkItem[] = [];
 const batchedItems = new Map<string, KernelWorkItem>();
@@ -128,6 +137,8 @@ export async function run(options: RunOptions): Promise<void> {
   const units = Array.isArray(options.unit) ? options.unit : [options.unit];
   const scope = options.scope ?? getActiveScope();
 
+  registerInspectorScope(scope);
+
   for (const node of units) {
     push({
       node,
@@ -208,28 +219,88 @@ export async function run(options: RunOptions): Promise<void> {
       currentPage = item.page;
       setActiveScope(item.scope);
 
-      if (node.run) {
-        const result = node.run(ctx);
+      const inspected = isInspectorEnabled();
+      const startedAt = inspected ? inspectorNow() : 0;
 
-        if (isPromiseLike(result)) {
-          currentPage = previousPage;
-          setActiveScope(previousScope);
+      if (inspected) {
+        emitInspectorNodeStart({
+          node,
+          scope: item.scope,
+          payload: item.payload,
+          value: item.value,
+          meta: item.meta,
+          timestamp: startedAt,
+        });
+      }
 
-          try {
-            ctx.value = await result;
-            ctx.error = undefined;
-            ctx.failed = false;
-          } catch (error) {
-            ctx.value = undefined;
-            ctx.error = error;
-            ctx.failed = true;
-          } finally {
-            currentPage = item.page;
-            setActiveScope(item.scope);
+      try {
+        if (node.run) {
+          const result = node.run(ctx);
+
+          if (isPromiseLike(result)) {
+            currentPage = previousPage;
+            setActiveScope(previousScope);
+
+            try {
+              ctx.value = await result;
+              ctx.error = undefined;
+              ctx.failed = false;
+            } catch (error) {
+              ctx.value = undefined;
+              ctx.error = error;
+              ctx.failed = true;
+            } finally {
+              currentPage = item.page;
+              setActiveScope(item.scope);
+            }
+          } else {
+            ctx.value = result;
           }
-        } else {
-          ctx.value = result;
         }
+
+        if (shouldStopAfterInspectorNode(node)) {
+          ctx.stop();
+          emitInspectorBreakpointHit({
+            node,
+            scope: item.scope,
+            payload: item.payload,
+            value: ctx.value,
+            meta: item.meta,
+            timestamp: inspectorNow(),
+          });
+        }
+      } catch (error) {
+        if (inspected) {
+          emitInspectorNodeEnd({
+            node,
+            scope: item.scope,
+            payload: item.payload,
+            value: ctx.value,
+            error,
+            failed: true,
+            stopped: true,
+            meta: item.meta,
+            timestamp: inspectorNow(),
+            duration: inspectorNow() - startedAt,
+          });
+        }
+
+        throw error;
+      }
+
+      if (inspected) {
+        emitInspectorNodeEnd({
+          node,
+          scope: item.scope,
+          payload: item.payload,
+          value: ctx.value,
+          error: ctx.error,
+          failed: ctx.failed,
+          stopped: ctx.stopped,
+          meta: item.meta,
+          timestamp: inspectorNow(),
+          duration: inspectorNow() - startedAt,
+        });
       }
 
       if (ctx.stopped) continue;

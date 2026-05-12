@@ -1,5 +1,6 @@
 import { createNode, run } from "../kernel";
 import type { Node } from "../kernel";
+import { readInspectorNodeMeta, withInspectorMeta } from "../kernel/inspector";
 import { requireActiveScope } from "../scope/internal";
 import { registerCleanup } from "../graph/owner";
 
@@ -16,12 +17,18 @@ export interface EventCallable<T = void> extends Event<T> {
   (...payload: EventPayload<T>): Promise<void>;
 }
 
-export function event<T = void>(): EventCallable<T> {
-  return createEvent<T>() as EventCallable<T>;
+export function event<T = void>(name?: string): EventCallable<T> {
+  return createEvent<T>(name) as EventCallable<T>;
 }
 
-function createEvent<T>(): Event<T> {
-  const node = createNode();
+function createEvent<T>(name?: string): Event<T> {
+  const node = createNode({
+    meta: withInspectorMeta(undefined, {
+      type: "event",
+      name,
+      callable: true,
+    }),
+  });
 
   const append = (next: Node): void => {
     node.next = node.next ?? [];
@@ -50,12 +57,16 @@ function createEvent<T>(): Event<T> {
       node,
 
       map<Next>(fn: (value: T) => Next): Event<Next> {
-        const mapped = createEvent<Next>();
+        const mapped = createEvent<Next>(deriveName(node, "map"));
 
         append(
           createNode({
             run: (ctx) => fn(ctx.value as T),
             next: [mapped.node],
+            meta: withInspectorMeta(undefined, {
+              type: "event.map",
+              internal: true,
+            }),
           }),
         );
 
@@ -63,7 +74,7 @@ function createEvent<T>(): Event<T> {
       },
 
       filter(fn: (value: T) => boolean): Event<T> {
-        const filtered = createEvent<T>();
+        const filtered = createEvent<T>(deriveName(node, "filter"));
 
         append(
           createNode({
@@ -75,6 +86,10 @@ function createEvent<T>(): Event<T> {
               return ctx.value;
             },
             next: [filtered.node],
+            meta: withInspectorMeta(undefined, {
+              type: "event.filter",
+              internal: true,
+            }),
           }),
         );
 
@@ -82,7 +97,7 @@ function createEvent<T>(): Event<T> {
       },
 
       filterMap<Next>(fn: (value: T) => Next | undefined): Event<Next> {
-        const mapped = createEvent<Next>();
+        const mapped = createEvent<Next>(deriveName(node, "filterMap"));
 
         append(
           createNode({
@@ -96,6 +111,10 @@ function createEvent<T>(): Event<T> {
               return value;
             },
             next: [mapped.node],
+            meta: withInspectorMeta(undefined, {
+              type: "event.filterMap",
+              internal: true,
+            }),
           }),
         );
 
@@ -105,4 +124,10 @@ function createEvent<T>(): Event<T> {
   );
 
   return result as Event<T>;
+}
+
+function deriveName(source: Node, operation: string): string | undefined {
+  const name = readInspectorNodeMeta(source).name;
+
+  return name ? `${name}.${operation}` : undefined;
 }

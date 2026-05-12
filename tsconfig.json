@@ -7,11 +7,14 @@
     "skipLibCheck": true,
     "noEmit": true,
     "isolatedModules": true,
+    "jsx": "react-jsx",
     "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
       "@virentia/core": ["packages/core/lib/index.ts"],
+      "@virentia/core/devtools": ["packages/core/lib/devtools.ts"],
       "@virentia/effector": ["packages/effector/lib/index.ts"],
+      "@virentia/inspector": ["packages/inspector/lib/index.ts"],
       "@virentia/react": ["packages/react/lib/index.ts"]
     }
   },
@@ -22,6 +25,10 @@
     "packages/effector/lib/**/*.ts",
     "packages/effector/tests/**/*.ts",
     "packages/effector/tsdown.config.ts",
+    "packages/inspector/lib/**/*.ts",
+    "packages/inspector/lib/**/*.tsx",
+    "packages/inspector/tsdown.config.ts",
+    "packages/inspector/vite.config.ts",
     "packages/react/lib/**/*.ts",
     "packages/react/tests/**/*.ts",
     "packages/react/tsdown.config.ts"

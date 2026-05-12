@@ -26,6 +26,11 @@
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.cjs"
+    },
+    "./devtools": {
+      "types": "./dist/devtools.d.mts",
+      "import": "./dist/devtools.mjs",
+      "require": "./dist/devtools.cjs"
     }
   },
   "publishConfig": {

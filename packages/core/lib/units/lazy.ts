@@ -1,5 +1,6 @@
 import { createNode } from "../kernel";
 import type { Node } from "../kernel";
+import { withInspectorMeta } from "../kernel/inspector";
 import { scoped } from "../scope";
 import { requireActiveScope } from "../scope/internal";
 import type { StoreSubscriber } from "./store";
@@ -108,13 +109,19 @@ function createLazyUnit<T>(loader: LazyLoader<T>): T {
   const mirroredNext = createMirroredNextList();
   const children = new Map<PropertyKey, unknown>();
   const derived = new Set<(unit: T) => void>();
-  const node = createNode(async (ctx) => {
-    const unit = await resolveUnit();
+  const node = createNode({
+    meta: withInspectorMeta(undefined, {
+      type: "lazy",
+      callable: true,
+    }),
+    run: async (ctx) => {
+      const unit = await resolveUnit();
 
-    ctx.stop();
-    ctx.launch(unit.node, ctx.value);
+      ctx.stop();
+      ctx.launch(unit.node, ctx.value);
 
-    return ctx.value;
+      return ctx.value;
+    },
   });
   const target = (...args: unknown[]) => {
     const scope = requireActiveScope();
