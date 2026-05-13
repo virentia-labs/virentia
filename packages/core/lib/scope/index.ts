@@ -1,11 +1,41 @@
 import { requireActiveScope, runScopeTask } from "./internal";
 import type { Scope } from "./types";
 import { registerInspectorScope } from "../kernel/inspector";
+import type { Effect, EffectHandler } from "../units/effect";
+import { seedScopeStoreValue } from "../units/store";
+import type { StoreWritable } from "../units/store";
 
-export function scope(): Scope {
+export interface ScopeOptions {
+  values?:
+    | ReadonlyMap<StoreWritable<any>, unknown>
+    | readonly (readonly [StoreWritable<any>, unknown])[];
+  handlers?:
+    | ReadonlyMap<Effect<any, any, any>, EffectHandler<any, any>>
+    | readonly (readonly [Effect<any, any, any>, EffectHandler<any, any>])[];
+}
+
+export function scope(options: ScopeOptions = {}): Scope {
   const nextScope = {
     values: new Map(),
+    handlers: new Map(),
   };
+
+  if (options.values) {
+    const values = options.values instanceof Map ? options.values.entries() : options.values;
+
+    for (const [store, value] of values) {
+      seedScopeStoreValue(nextScope, store, value);
+    }
+  }
+
+  if (options.handlers) {
+    const handlers =
+      options.handlers instanceof Map ? options.handlers.entries() : options.handlers;
+
+    for (const [effect, handler] of handlers) {
+      nextScope.handlers.set(effect, handler as (...args: any[]) => unknown);
+    }
+  }
 
   registerInspectorScope(nextScope);
 

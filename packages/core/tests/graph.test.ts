@@ -84,6 +84,49 @@ describe("reaction", () => {
     expect(values).toEqual([1]);
     expect(subscription.dependencies()).toEqual([]);
   });
+
+  it("can be limited to a scope", async () => {
+    const firstScope = scope();
+    const secondScope = scope();
+    const counter = store(0);
+    const values: number[] = [];
+
+    reaction({
+      on: counter,
+      scope: secondScope,
+      run: (value: number) => {
+        values.push(value);
+      },
+    });
+
+    await run({ unit: counter.node, payload: 1, scope: firstScope });
+    await run({ unit: counter.node, payload: 2, scope: secondScope });
+
+    expect(values).toEqual([2]);
+  });
+
+  it("runs auto reactions in the configured scope", async () => {
+    const firstScope = scope();
+    const secondScope = scope();
+    const counter = store(0);
+    const values: number[] = [];
+
+    scoped(secondScope, () => {
+      counter.value = 10;
+    });
+
+    reaction({
+      scope: secondScope,
+      run: () => {
+        values.push(counter.value);
+      },
+    });
+
+    await run({ unit: counter.node, payload: 1, scope: firstScope });
+    await run({ unit: counter.node, payload: 11, scope: secondScope });
+
+    expect(values).toEqual([10, 11]);
+  });
 });
 
 describe("owner", () => {

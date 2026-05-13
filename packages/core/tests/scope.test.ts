@@ -24,6 +24,17 @@ describe("scope", () => {
     expect(() => value.value).toThrow("Scope is required");
   });
 
+  it("creates a scope with initial store values", () => {
+    const value = store(0);
+    const appScope = scope({
+      values: [[value, 10]],
+    });
+
+    scoped(appScope, () => {
+      expect(value.value).toBe(10);
+    });
+  });
+
   it("keeps the current scope across awaited scoped work", async () => {
     const appScope = scope();
     const count = store(0);

@@ -1,0 +1,780 @@
+/*
+ * Copyright (c) 2020 Sergey Sova
+ * Copyright (c) 2021 Effector core team
+ * SPDX-License-Identifier: MIT
+ * Source: https://github.com/effector/patronum
+ */
+
+import "regenerator-runtime/runtime";
+import { createStore, createEvent, createEffect, createDomain } from "effector";
+import { wait, watch } from "../../test-library";
+import { debounce } from "patronum/debounce";
+
+describe("arguments validation", () => {
+  test("event, effect and store is allowed as source", () => {
+    debounce({ source: createStore(0), timeout: 10 });
+    debounce({ source: createEvent(), timeout: 10 });
+    debounce({ source: createEffect(), timeout: 10 });
+  });
+
+  test("domain is not allowed", () => {
+    expect(() => debounce({ source: createDomain(), timeout: 10 })).toThrowError(
+      /cannot be domain/,
+    );
+  });
+
+  test("not-unit source is not allowed", () => {
+    // @ts-expect-error
+    expect(() => debounce({ source: 10, timeout: 10 })).toThrowError(/must be unit from effector/);
+  });
+
+  test("negative timeout is wrong", () => {
+    expect(() => debounce({ source: createEvent(), timeout: -1 })).toThrowError(/must be positive/);
+  });
+
+  test("zero timeout is allowed", () => {
+    debounce({ source: createEvent(), timeout: 0 });
+  });
+
+  test("NaN timeout is wrong", () => {
+    expect(() => debounce({ source: createEvent(), timeout: Number.NaN })).toThrowError(
+      /must be positive/,
+    );
+  });
+
+  test("Infinity timeout is wrong", () => {
+    expect(() => debounce({ source: createEvent(), timeout: Infinity })).toThrowError(
+      /must be positive/,
+    );
+    expect(() => debounce({ source: createEvent(), timeout: -Infinity })).toThrowError(
+      /must be positive/,
+    );
+  });
+});
+
+describe("timeout as store", () => {
+  test("new timeout is used after source trigger", async () => {
+    const trigger = createEvent();
+    const changeTimeout = createEvent<number>();
+    const $timeout = createStore(40).on(changeTimeout, (_, value) => value);
+    const debounced = debounce({ source: trigger, timeout: $timeout });
+    const watcher = watch(debounced);
+
+    trigger();
+    await wait(32);
+    changeTimeout(100);
+    trigger();
+    await wait(12);
+    expect(watcher).toBeCalledTimes(0);
+    await wait(92);
+    expect(watcher).toBeCalledTimes(1);
+
+    trigger();
+    await wait(120);
+    expect(watcher).toBeCalledTimes(2);
+  });
+  test("new timeout is used after source trigger (shorthand form)", async () => {
+    const trigger = createEvent();
+    const changeTimeout = createEvent<number>();
+    const $timeout = createStore(40).on(changeTimeout, (_, value) => value);
+    const debounced = debounce(trigger, $timeout);
+    const watcher = watch(debounced);
+
+    trigger();
+    await wait(32);
+    changeTimeout(100);
+    trigger();
+    await wait(12);
+    expect(watcher).toBeCalledTimes(0);
+    await wait(92);
+    expect(watcher).toBeCalledTimes(1);
+
+    trigger();
+    await wait(120);
+    expect(watcher).toBeCalledTimes(2);
+  });
+});
+
+describe("triple trigger one wait", () => {
+  test("event", async () => {
+    const watcher = vi.fn();
+
+    const trigger = createEvent();
+    const debounced = debounce({ source: trigger, timeout: 40 });
+
+    debounced.watch(watcher);
+
+    trigger();
+    trigger();
+    trigger();
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+  });
+  test("event (shorthand)", async () => {
+    const watcher = vi.fn();
+
+    const trigger = createEvent();
+    const debounced = debounce(trigger, 40);
+
+    debounced.watch(watcher);
+
+    trigger();
+    trigger();
+    trigger();
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+  });
+
+  test("effect", async () => {
+    const watcher = vi.fn();
+
+    const triggerFx = createEffect<void, void>().use(() => undefined);
+
+    const debounced = debounce({ source: triggerFx, timeout: 40 });
+    debounced.watch(watcher);
+
+    triggerFx();
+    triggerFx();
+    triggerFx();
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+  });
+  test("effect (shorthand)", async () => {
+    const watcher = vi.fn();
+
+    const triggerFx = createEffect<void, void>().use(() => undefined);
+
+    const debounced = debounce(triggerFx, 40);
+    debounced.watch(watcher);
+
+    triggerFx();
+    triggerFx();
+    triggerFx();
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+  });
+
+  test("store", async () => {
+    const watcher = vi.fn();
+
+    const trigger = createEvent<number>();
+    const $store = createStore(0).on(trigger, (_, value) => value);
+
+    const debounced = debounce({ source: $store, timeout: 40 });
+    debounced.watch(watcher);
+
+    trigger(0);
+    trigger(1);
+    trigger(2);
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher).toBeCalledWith(2);
+  });
+  test("store (shorthand)", async () => {
+    const watcher = vi.fn();
+
+    const trigger = createEvent<number>();
+    const $store = createStore(0).on(trigger, (_, value) => value);
+
+    const debounced = debounce($store, 40);
+    debounced.watch(watcher);
+
+    trigger(0);
+    trigger(1);
+    trigger(2);
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher).toBeCalledWith(2);
+  });
+});
+
+describe("too small wait after each trigger", () => {
+  test("event", async () => {
+    const watcher = vi.fn();
+    const trigger = createEvent();
+    const debounced = debounce({ source: trigger, timeout: 40 });
+    debounced.watch(watcher);
+
+    trigger();
+    await wait(32);
+    trigger();
+    await wait(32);
+    trigger();
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+  });
+
+  test("effect", async () => {
+    const watcher = vi.fn();
+    const trigger = createEffect<void, void>().use(() => undefined);
+    const debounced = debounce({ source: trigger, timeout: 40 });
+    debounced.watch(watcher);
+
+    trigger();
+    await wait(32);
+    trigger();
+    await wait(32);
+    trigger();
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+  });
+
+  test("effect", async () => {
+    const watcher = vi.fn();
+    const trigger = createEvent();
+    const source = createStore(0).on(trigger, (state) => state + 1);
+    const debounced = debounce({ source, timeout: 40 });
+    debounced.watch(watcher);
+
+    trigger();
+    await wait(32);
+    trigger();
+    await wait(32);
+    trigger();
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+  });
+});
+
+describe("debounced triggered with latest value", () => {
+  test("event", async () => {
+    const watcher = vi.fn();
+    const trigger = createEvent<number>();
+    const debounced = debounce({ source: trigger, timeout: 40 });
+    debounced.watch(watcher);
+
+    trigger(0);
+    trigger(1);
+    trigger(2);
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher).toBeCalledWith(2);
+  });
+
+  test("effect", async () => {
+    const watcher = vi.fn();
+    const trigger = createEffect<number, void>().use(() => undefined);
+    const debounced = debounce({ source: trigger, timeout: 40 });
+    debounced.watch(watcher);
+
+    trigger(0);
+    trigger(1);
+    trigger(2);
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher).toBeCalledWith(2);
+  });
+
+  test("store", async () => {
+    const watcher = vi.fn();
+    const trigger = createEvent();
+    const source = createStore(0).on(trigger, (state) => state + 1);
+    const debounced = debounce({ source, timeout: 40 });
+    debounced.watch(watcher);
+
+    trigger();
+    trigger();
+    trigger();
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher).toBeCalledWith(3);
+  });
+});
+
+describe("debounced can be triggered after first", () => {
+  test("event", async () => {
+    const watcher = vi.fn();
+    const trigger = createEvent<number>();
+    const debounced = debounce({ source: trigger, timeout: 40 });
+    debounced.watch(watcher);
+
+    trigger(0);
+    trigger(1);
+    trigger(2);
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher).toBeCalledWith(2);
+
+    trigger(3);
+    await wait(32);
+    trigger(4);
+    await wait(42);
+
+    expect(watcher).toBeCalledTimes(2);
+    expect(watcher).toBeCalledWith(2);
+    expect(watcher).toBeCalledWith(4);
+  });
+
+  test("effect", async () => {
+    const watcher = vi.fn();
+    const trigger = createEffect<number, void>().use(() => undefined);
+    const debounced = debounce({ source: trigger, timeout: 40 });
+    debounced.watch(watcher);
+
+    trigger(0);
+    trigger(1);
+    trigger(2);
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher).toBeCalledWith(2);
+
+    trigger(3);
+    await wait(32);
+    trigger(4);
+    await wait(42);
+
+    expect(watcher).toBeCalledTimes(2);
+    expect(watcher).toBeCalledWith(2);
+    expect(watcher).toBeCalledWith(4);
+  });
+
+  test("store", async () => {
+    const watcher = vi.fn();
+    const trigger = createEvent();
+    const source = createStore(0).on(trigger, (state) => state + 1);
+    const debounced = debounce({ source, timeout: 40 });
+    debounced.watch(watcher);
+
+    trigger();
+    trigger();
+    trigger();
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher).toBeCalledWith(3);
+
+    trigger();
+    await wait(32);
+    trigger();
+    await wait(42);
+
+    expect(watcher).toBeCalledTimes(2);
+    expect(watcher).toBeCalledWith(3);
+    expect(watcher).toBeCalledWith(5);
+  });
+});
+
+describe("target triggered on debounce", () => {
+  test("event target", async () => {
+    const watcher = vi.fn();
+    const source = createEvent<number>();
+    const target = createEvent<number>();
+    debounce({ source, timeout: 40, target });
+    target.watch(watcher);
+
+    source(1);
+    source(2);
+    source(3);
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher).toBeCalledWith(3);
+  });
+
+  test("effect target", async () => {
+    const watcher = vi.fn();
+    const source = createEvent<number>();
+    const target = createEffect<number, void>().use(() => undefined);
+    debounce({ source, timeout: 40, target });
+    target.watch(watcher);
+
+    source(1);
+    source(2);
+    source(3);
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher).toBeCalledWith(3);
+  });
+
+  test("store target", async () => {
+    const watcher = vi.fn();
+    const source = createEvent<number>();
+    const target = createStore(0);
+    debounce({ source, timeout: 40, target });
+    target.updates.watch(watcher);
+
+    source(1);
+    source(2);
+    source(3);
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher).toBeCalledWith(3);
+  });
+});
+
+describe("target argument returns the same unit", () => {
+  test("event target", () => {
+    const source = createEvent();
+    const target = createEvent();
+    const result = debounce({ source, target, timeout: 40 });
+
+    expect(result).toBe(target);
+  });
+
+  test("effect target", () => {
+    const source = createEvent<number>();
+    const target = createEffect<number, void>();
+    const result = debounce({ source, target, timeout: 40 });
+
+    expect(result).toBe(target);
+  });
+
+  test("store target", () => {
+    const source = createEvent<number>();
+    const target = createStore(0);
+    const result = debounce({ source, target, timeout: 40 });
+
+    expect(result).toBe(target);
+  });
+});
+
+describe("source and target type combinations", () => {
+  test.todo("source event, target event");
+
+  test("source event, target store", async () => {
+    const watcher = vi.fn();
+    const source = createEvent<number>();
+    const target = createStore<number>(0);
+    debounce({ source, timeout: 40, target });
+    target.updates.watch(watcher);
+
+    source(1);
+    source(2);
+    source(3);
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher.mock.calls).toMatchInlineSnapshot(`
+      [
+        [
+          3,
+        ],
+      ]
+    `);
+  });
+
+  test("source event, target effect", async () => {
+    const watcher = vi.fn();
+    const source = createEvent<number>();
+    const target = createEffect<number, void>().use(() => undefined);
+    debounce({ source, timeout: 40, target });
+    target.watch(watcher);
+
+    source(0);
+    source(1);
+    source(2);
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher.mock.calls).toMatchInlineSnapshot(`
+      [
+        [
+          2,
+        ],
+      ]
+    `);
+  });
+
+  test("source store, target effect", async () => {
+    const watcher = vi.fn();
+    const change = createEvent();
+    const source = createStore<number>(0).on(change, (state) => state + 1);
+    const target = createEffect<number, void>().use(() => undefined);
+    debounce({ source, timeout: 40, target });
+    target.watch(watcher);
+
+    change();
+    change();
+    change();
+    expect(watcher).not.toBeCalled();
+
+    await wait(42);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher.mock.calls).toMatchInlineSnapshot(`
+      [
+        [
+          3,
+        ],
+      ]
+    `);
+  });
+
+  test("source store, target event", async () => {
+    const watcher = vi.fn();
+    const change = createEvent();
+    const source = createStore<number>(0).on(change, (state) => state + 1);
+    const target = createEvent<number>();
+
+    debounce({ source, timeout: 30, target });
+    target.watch(watcher);
+
+    change();
+    change();
+    change();
+    expect(watcher).not.toBeCalled();
+
+    await wait(32);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher.mock.calls).toMatchInlineSnapshot(`
+      [
+        [
+          3,
+        ],
+      ]
+    `);
+  });
+
+  test("source store, target store", async () => {
+    const watcher = vi.fn();
+    const change = createEvent();
+    const source = createStore<number>(0).on(change, (state) => state + 1);
+    const target = createStore<number>(0);
+
+    debounce({ source, timeout: 30, target });
+    target.updates.watch(watcher);
+
+    change();
+    change();
+    change();
+    expect(watcher).not.toBeCalled();
+
+    await wait(32);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher.mock.calls).toMatchInlineSnapshot(`
+      [
+        [
+          3,
+        ],
+      ]
+    `);
+  });
+
+  test("source effect, target event", async () => {
+    const watcher = vi.fn();
+    const source = createEffect<number, void>().use(() => undefined);
+    const target = createEvent<number>();
+
+    debounce({ source, timeout: 30, target });
+    target.watch(watcher);
+
+    source(1);
+    source(2);
+    source(3);
+    expect(watcher).not.toBeCalled();
+
+    await wait(32);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher.mock.calls).toMatchInlineSnapshot(`
+      [
+        [
+          3,
+        ],
+      ]
+    `);
+  });
+
+  test("source effect, target store", async () => {
+    const watcher = vi.fn();
+    const source = createEffect<number, void>().use(() => undefined);
+    const target = createStore<number>(0);
+
+    debounce({ source, timeout: 30, target });
+    target.updates.watch(watcher);
+
+    source(1);
+    source(2);
+    source(3);
+    expect(watcher).not.toBeCalled();
+
+    await wait(32);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher.mock.calls).toMatchInlineSnapshot(`
+      [
+        [
+          3,
+        ],
+      ]
+    `);
+  });
+
+  test("source effect, target effect", async () => {
+    const watcher = vi.fn();
+    const source = createEffect<number, void>().use(() => undefined);
+    const target = createEffect<number, void>();
+
+    debounce({ source, timeout: 30, target });
+    target.watch(watcher);
+
+    source(1);
+    source(2);
+    source(3);
+    expect(watcher).not.toBeCalled();
+
+    await wait(32);
+    expect(watcher).toBeCalledTimes(1);
+    expect(watcher.mock.calls).toMatchInlineSnapshot(`
+      [
+        [
+          3,
+        ],
+      ]
+    `);
+  });
+});
+
+describe("name assigned from source", () => {
+  test("event", () => {
+    const source = createEvent();
+    const debounced = debounce({ source, timeout: 40 });
+
+    expect(debounced.shortName).toMatchInlineSnapshot(`"tick"`);
+  });
+
+  test("store", () => {
+    const $source = createStore(0);
+    const debounced = debounce({ source: $source, timeout: 40 });
+
+    expect(debounced.shortName).toMatchInlineSnapshot(`"tick"`);
+  });
+
+  test("effect", () => {
+    const sourceFx = createEffect();
+    const debounced = debounce({ source: sourceFx, timeout: 40 });
+
+    expect(debounced.shortName).toMatchInlineSnapshot(`"tick"`);
+  });
+});
+
+describe("name assigned from params", () => {
+  test("event", () => {
+    const source = createEvent();
+    const debounced = debounce({ source, name: "hello", timeout: 40 });
+
+    expect(debounced.shortName).toMatchInlineSnapshot(`"tick"`);
+  });
+
+  test("store", () => {
+    const $source = createStore(0);
+    const debounced = debounce({ source: $source, name: "hello", timeout: 40 });
+
+    expect(debounced.shortName).toMatchInlineSnapshot(`"tick"`);
+  });
+
+  test("effect", () => {
+    const sourceFx = createEffect();
+    const debounced = debounce({
+      source: sourceFx,
+      name: "hello",
+      timeout: 40,
+    });
+
+    expect(debounced.shortName).toMatchInlineSnapshot(`"tick"`);
+  });
+});
+
+describe("name of debounced should not inherit domain", () => {
+  test("event", () => {
+    const domain = createDomain();
+    const source = domain.createEvent();
+    const debounced = debounce({ source, timeout: 40 });
+
+    expect(debounced.shortName).toMatchInlineSnapshot(`"tick"`);
+  });
+
+  test("store", () => {
+    const domain = createDomain();
+    const $source = domain.createStore(0);
+    const debounced = debounce({ source: $source, timeout: 40 });
+
+    expect(debounced.shortName).toMatchInlineSnapshot(`"tick"`);
+  });
+
+  test("effect", () => {
+    const domain = createDomain();
+    const sourceFx = domain.createEffect();
+    const debounced = debounce({ source: sourceFx, timeout: 40 });
+
+    expect(debounced.shortName).toMatchInlineSnapshot(`"tick"`);
+  });
+});
+
+test("debounce do not affect another instance of debounce", async () => {
+  const watcherFirst = vi.fn();
+  const triggerFirst = createEvent<number>();
+  const debouncedFirst = debounce({ source: triggerFirst, timeout: 20 });
+  debouncedFirst.watch(watcherFirst);
+
+  const watcherSecond = vi.fn();
+  const triggerSecond = createEvent<string>();
+  const debouncedSecond = debounce({ source: triggerSecond, timeout: 60 });
+  debouncedSecond.watch(watcherSecond);
+
+  triggerFirst(0);
+  expect(watcherFirst).not.toBeCalled();
+
+  await wait(20);
+  expect(watcherFirst).toBeCalledWith(0);
+  expect(watcherSecond).not.toBeCalled();
+
+  triggerSecond("foo");
+  triggerFirst(1);
+  await wait(20);
+  triggerFirst(2);
+
+  await wait(20);
+  expect(watcherFirst).toBeCalledWith(2);
+  expect(watcherSecond).not.toBeCalled();
+
+  await wait(20);
+  expect(watcherSecond).toBeCalledWith("foo");
+});
+
+test("debounced event should be triggered with undefined", async () => {
+  const trigger = createEvent();
+  const debounced = debounce({ source: trigger, timeout: 0 });
+
+  const listener = vi.fn();
+  debounced.watch(listener);
+
+  trigger();
+  await wait(0);
+
+  expect(listener).toBeCalledTimes(1);
+  expect(listener).toBeCalledWith(undefined);
+});

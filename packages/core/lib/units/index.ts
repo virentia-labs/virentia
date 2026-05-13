@@ -15,5 +15,5 @@ export type {
 export { event } from "./event";
 export type { Event, EventCallable, EventPayload } from "./event";
 export { lazyModel } from "./lazy";
-export { computed, store } from "./store";
+export { computed, seedScopeStoreValue, store } from "./store";
 export type { Store, StoreSubscriber, StoreWritable } from "./store";

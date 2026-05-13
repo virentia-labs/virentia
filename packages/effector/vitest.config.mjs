@@ -13,5 +13,8 @@ export default defineConfig({
   test: {
     cache: false,
     include: ["tests/**/*.test.ts"],
+    snapshotFormat: {
+      printBasicPrototype: true,
+    },
   },
 });

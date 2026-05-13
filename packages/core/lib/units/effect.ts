@@ -1,7 +1,7 @@
 import { createNode, run } from "../kernel";
 import type { Node } from "../kernel";
 import { linkInspectorNodes, withInspectorMeta } from "../kernel/inspector";
-import { getActiveScope, requireActiveScope } from "../scope/internal";
+import { getActiveScope, getScopeHandler, requireActiveScope } from "../scope/internal";
 import type { Scope } from "../scope";
 import { registerCleanup } from "../graph/owner";
 import { event } from "./event";
@@ -13,6 +13,7 @@ const effectHandlerRunner = Symbol("virentia.effectHandlerRunner");
 
 export interface EffectHandlerContext {
   signal: AbortSignal;
+  scope: Scope;
 }
 
 export type EffectHandler<Params, Done> = (
@@ -111,6 +112,7 @@ export function effect<Params, Done, Fail = unknown>(
   const aborted = event<EffectAborted<Params>>(name ? `${name}.aborted` : undefined);
   const abortEvent = event<unknown | void>(name ? `${name}.abort` : undefined);
   let inFlight = 0;
+  let result: Effect<Params, Done, Fail>;
 
   const createCall = (
     params: Params,
@@ -194,7 +196,7 @@ export function effect<Params, Done, Fail = unknown>(
       name: name ? `${name}.execute` : undefined,
       internal: true,
     }),
-    run: async (ctx) => {
+    run: (ctx) => {
       const call = ctx.value as EffectCallState<Params, Done>;
 
       if (call.controller.signal.aborted) {
@@ -207,13 +209,36 @@ export function effect<Params, Done, Fail = unknown>(
       }
 
       try {
+        const handlerForScope = getScopeHandler(call.scope, result) ?? handler;
+        const resultValue = handlerForScope(call.params, {
+          signal: call.controller.signal,
+          scope: call.scope,
+        });
+
+        if (isPromiseLike(resultValue)) {
+          return Promise.resolve(resultValue).then(
+            (done) =>
+              ({
+                status: "done",
+                call,
+                params: call.params,
+                result: done,
+              }) satisfies EffectOutcome<Params, Done, Fail>,
+            (error) =>
+              ({
+                status: "fail",
+                call,
+                params: call.params,
+                error: error as Fail,
+              }) satisfies EffectOutcome<Params, Done, Fail>,
+          );
+        }
+
         return {
           status: "done",
           call,
           params: call.params,
-          result: await handler(call.params, {
-            signal: call.controller.signal,
-          }),
+          result: resultValue,
         } satisfies EffectOutcome<Params, Done, Fail>;
       } catch (error) {
         return {
@@ -311,7 +336,7 @@ export function effect<Params, Done, Fail = unknown>(
   linkEffectSubunit("abort", abortEvent.node);
   linkEffectSubunit("aborted", aborted.node);
 
-  const result = Object.assign(
+  result = Object.assign(
     (...args: EffectCallArgs<Params>) =>
       new Promise<Done>((resolve, reject) => {
         const scope = requireActiveScope();
@@ -358,7 +383,11 @@ export function runEffectHandler<Params, Done>(
   params: Params,
   ctx: EffectHandlerContext,
 ): Done | PromiseLike<Done> {
-  return (effect as unknown as EffectInternal<Params, Done>)[effectHandlerRunner](params, ctx);
+  const handler =
+    getScopeHandler(ctx.scope, effect) ??
+    (effect as unknown as EffectInternal<Params, Done>)[effectHandlerRunner];
+
+  return handler(params, ctx);
 }
 
 function getAbortReason(signal: AbortSignal): unknown {
@@ -370,6 +399,12 @@ function isEffectCallState<Params, Done>(value: unknown): value is EffectCallSta
     typeof value === "object" &&
     value !== null &&
     (value as { [effectCallState]?: true })[effectCallState] === true
+  );
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    (typeof value === "object" || typeof value === "function") && value !== null && "then" in value
   );
 }
 

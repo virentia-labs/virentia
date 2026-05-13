@@ -136,6 +136,17 @@ describe("effect", () => {
       expect(waitFx.$inFlight.value).toBe(0);
     });
   });
+
+  it("uses effect handlers from the current scope", async () => {
+    const doubleFx = effect((value: number) => value * 2);
+    const firstScope = scope();
+    const secondScope = scope({
+      handlers: [[doubleFx, (value) => value * 10]],
+    });
+
+    await expect(scoped(firstScope, () => doubleFx(2))).resolves.toBe(4);
+    await expect(scoped(secondScope, () => doubleFx(2))).resolves.toBe(20);
+  });
 });
 
 function waitForMicrotask(): Promise<void> {

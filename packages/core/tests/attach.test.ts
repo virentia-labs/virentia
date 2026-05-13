@@ -86,6 +86,19 @@ describe("attach", () => {
     await expect(promise).rejects.toBe(reason);
     expect(aborted).toEqual([["attached", { params: 1, reason }]]);
   });
+
+  it("uses scoped handlers of the base effect", async () => {
+    const requestFx = effect((id: number) => `real:${id}`);
+    const appScope = scope({
+      handlers: [[requestFx, (id) => `mock:${id}`]],
+    });
+    const attachedFx = attach({
+      effect: requestFx,
+      mapParams: (id: number) => id * 2,
+    });
+
+    await expect(scoped(appScope, () => attachedFx(3))).resolves.toBe("mock:6");
+  });
 });
 
 function waitForMicrotask(): Promise<void> {

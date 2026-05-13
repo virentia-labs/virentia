@@ -1,4 +1,5 @@
 import * as core from "@virentia/core";
+import type { DomainLike } from "./domain-internal";
 import type {
   EventCallable as CoreEvent,
   EventPayload,
@@ -16,13 +17,16 @@ export interface Scope {
 }
 
 export interface CompatScope extends Scope {
+  readonly __domain?: DomainLike;
   readonly __changedSids: Set<string>;
 }
 
 export interface Unit<T = unknown> {
   readonly [unitKind]: UnitKind;
+  readonly kind: UnitKind;
   readonly node: core.Node;
   readonly shortName: string;
+  readonly targetable: boolean;
   getType(): string;
   watch(fn: (payload: T) => void): Unsubscribe;
 }
@@ -41,21 +45,26 @@ export interface EventCallable<T = void> extends Event<T> {
 export interface Store<T> extends Unit<T> {
   readonly updates: Event<T>;
   readonly sid?: string;
+  readonly serialize?: StoreSerializeConfig<T>;
   defaultState: T;
+  readonly reinit: EventCallable<void>;
   getState(scope?: Scope): T;
-  map<Next>(fn: (state: T) => Next): Store<Next>;
+  map<Next>(fn: (state: T) => Next, config?: StoreMapConfig): Store<Next>;
   on<Payload>(trigger: Unit<Payload>, reducer: (state: T, payload: Payload) => T): Store<T>;
-  reset(trigger: Unit<any> | readonly Unit<any>[]): Store<T>;
+  off(trigger: Unit<any>): Store<T>;
+  reset(trigger: Unit<any> | readonly Unit<any>[], ...triggers: Unit<any>[]): Store<T>;
 }
 
 export interface StoreWritable<T> extends Store<T> {
   setState(value: T, scope?: Scope): void;
   on<Payload>(trigger: Unit<Payload>, reducer: (state: T, payload: Payload) => T): StoreWritable<T>;
-  reset(trigger: Unit<any> | readonly Unit<any>[]): StoreWritable<T>;
+  off(trigger: Unit<any>): StoreWritable<T>;
+  reset(trigger: Unit<any> | readonly Unit<any>[], ...triggers: Unit<any>[]): StoreWritable<T>;
 }
 
 export interface Effect<Params, Done, Fail = Error> extends Unit<Params> {
   (...params: EventPayload<Params>): Promise<Done>;
+  readonly sid?: string;
   readonly done: Event<{ params: Params; result: Done }>;
   readonly fail: Event<{ params: Params; error: Fail }>;
   readonly finally: Event<
@@ -66,6 +75,9 @@ export interface Effect<Params, Done, Fail = Error> extends Unit<Params> {
   readonly failData: Event<Fail>;
   readonly pending: Store<boolean>;
   readonly inFlight: Store<number>;
+  map<Next>(fn: (payload: Params) => Next): Event<Next>;
+  filter(config: { fn(payload: Params): boolean } | ((payload: Params) => boolean)): Event<Params>;
+  filterMap<Next>(fn: (payload: Params) => Next | undefined): Event<Next>;
   prepend<Before>(fn: (payload: Before) => Params): EventCallable<Before>;
   use: {
     (handler: (params: Params) => Done | PromiseLike<Done>): Effect<Params, Done, Fail>;
@@ -96,6 +108,11 @@ export interface EffectState<Params, Done, Fail>
 }
 
 export type SourceShape = Store<any> | readonly Store<any>[] | Record<string, Store<any>>;
+export type SampleSource =
+  | AnyUnit
+  | readonly AnyUnit[]
+  | Record<string, AnyUnit | unknown>
+  | unknown;
 
 export type SourceValue<Source> =
   Source extends Store<infer Value>
@@ -110,3 +127,24 @@ export type StoreValues =
   | Record<string, unknown>
   | ReadonlyMap<StoreWritable<any> | string, unknown>
   | readonly (readonly [StoreWritable<any>, unknown])[];
+
+export type StoreSerializeConfig<T> =
+  | "ignore"
+  | {
+      write(value: T): unknown;
+      read(value: any): T;
+    };
+
+export interface StoreMapConfig {
+  name?: string;
+  sid?: string | null;
+  skipVoid?: boolean;
+  and?: unknown;
+}
+
+export type ScopeHandler = ((...params: any[]) => unknown) | Effect<any, any, any>;
+
+export type ScopeHandlers =
+  | Record<string, ScopeHandler>
+  | ReadonlyMap<Effect<any, any, any> | string, ScopeHandler>
+  | readonly (readonly [Effect<any, any, any>, ScopeHandler])[];

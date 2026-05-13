@@ -1,0 +1,382 @@
+/*
+ * Copyright (c) 2019 Zero Bias https://github.com/zerobias
+ * SPDX-License-Identifier: MIT
+ */
+
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  test,
+  vi,
+  type Mock,
+  type MockInstance,
+} from "vitest";
+
+import {
+  createDomain,
+  clearNode,
+  createStore,
+  createEvent,
+  createEffect,
+  createApi,
+  restore,
+  attach,
+} from "@virentia/effector";
+import { argumentHistory, muteErrors } from "effector/fixtures";
+
+describe("upstream domain.test.ts", () => {
+  describe("domain hooks", () => {
+    test("domain.onCreateEvent(fn)", () => {
+      const fn = vi.fn();
+      const dom = createDomain();
+      dom.createEvent();
+      const unsub = dom.onCreateEvent((e) => fn(e));
+      expect(fn).toHaveBeenCalled();
+      const e2 = dom.createEvent();
+      expect(fn).toHaveBeenLastCalledWith(e2);
+      createEvent();
+      expect(fn).toHaveBeenCalledTimes(2);
+      const e4 = dom.createEvent();
+      expect(fn).toHaveBeenLastCalledWith(e4);
+      expect(fn).toHaveBeenCalledTimes(3);
+      expect(() => {
+        unsub();
+      }).not.toThrow();
+      dom.createEvent();
+      expect(fn).toHaveBeenCalledTimes(3);
+    });
+
+    test("domain.onCreateEffect(fn)", () => {
+      const fn = vi.fn();
+      const dom = createDomain();
+      dom.createEffect();
+      const unsub = dom.onCreateEffect((e) => fn(e));
+      expect(fn).toHaveBeenCalled();
+      const e2 = dom.createEffect();
+      expect(fn).toHaveBeenLastCalledWith(e2);
+      createEffect();
+      expect(fn).toHaveBeenCalledTimes(2);
+      const e4 = dom.createEffect();
+      expect(fn).toHaveBeenLastCalledWith(e4);
+      expect(fn).toHaveBeenCalledTimes(3);
+      expect(() => {
+        unsub();
+      }).not.toThrow();
+      dom.createEffect();
+      expect(fn).toHaveBeenCalledTimes(3);
+    });
+
+    test("nested domains", () => {
+      const spyDom = vi.fn();
+      const spySub = vi.fn();
+      const dom = createDomain();
+      const subdom = dom.createDomain();
+      dom.onCreateEvent((e) => spyDom(e));
+      subdom.onCreateEvent((e) => spySub(e));
+      const e1 = dom.createEvent();
+      expect(spyDom).toHaveBeenLastCalledWith(e1);
+      expect(spySub).not.toHaveBeenCalled();
+      const e2 = subdom.createEvent();
+      expect(spyDom).toHaveBeenLastCalledWith(e2);
+      expect(spySub).toHaveBeenLastCalledWith(e2);
+    });
+    test("create* aliases", () => {
+      const fn = vi.fn();
+      const domain = createDomain();
+      domain.onCreateEvent(fn);
+      domain.onCreateEffect(fn);
+      domain.onCreateStore(fn);
+      domain.onCreateDomain(fn);
+      const event = domain.createEvent();
+      const effect = domain.createEffect();
+      const store = domain.createStore(null);
+      const subdomain = domain.createDomain();
+      expect(argumentHistory(fn)).toEqual([event, effect, store, subdomain]);
+    });
+  });
+
+  describe("domain name", () => {
+    muteErrors("getType");
+
+    test("should return it's own name on domain.getType()", () => {
+      expect(createDomain("foo").getType()).toBe("foo");
+    });
+    test("subdomains should has full path in name", () => {
+      const domain = createDomain("dom");
+      const subdomain = domain.createDomain("subdom");
+      expect(domain.createDomain("foo").getType()).toBe("dom/foo");
+      expect(subdomain.createDomain("bar").getType()).toBe("dom/subdom/bar");
+    });
+    test("empty domain name should be skipped", () => {
+      const domain = createDomain("");
+      const subdomain = domain.createDomain("subdom");
+      expect(domain.createDomain("foo").getType()).toBe("foo");
+      expect(subdomain.createDomain("bar").getType()).toBe("subdom/bar");
+    });
+    describe("empty name support", () => {
+      test("createDomain() should" + " create domain with empty string used as name", () => {
+        //eslint-disable-next-line max-len
+        expect(createDomain().getType()).toBeDefined();
+        expect(createDomain().getType()).toBe("");
+      });
+      test("domain.createDomain() should fallback to parent domain name", () => {
+        const domain = createDomain("dom");
+        expect(domain.createDomain().getType()).toBeDefined();
+        expect(domain.createDomain().getType()).not.toBe("");
+        expect(domain.createDomain().getType()).toBe("dom");
+        expect(domain.createEffect().getType()).not.toBe("dom/");
+      });
+    });
+  });
+  describe("config", () => {
+    test("domain.createEffect(config)", async () => {
+      const fn = vi.fn();
+      const domain = createDomain();
+      const fx = domain.createEffect({
+        name: "fx1",
+        handler: fn,
+      });
+      await fx("payload");
+      expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    Array [
+      "payload",
+    ]
+  `);
+    });
+  });
+  describe("domain ownership", () => {
+    test("reference example", () => {
+      const fn = vi.fn();
+      const add = createEvent<string>();
+      const source = createStore<string[]>([]).on(add, (list, item) => [...list, item]);
+      const mappedA = source.map((list) => list.length);
+      const mappedB = source.map((list) => list.length);
+      mappedA.watch((e) => fn(e));
+      add("a");
+      clearNode(mappedB);
+      add("b");
+      expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    Array [
+      0,
+      1,
+      2,
+    ]
+  `);
+    });
+    test("edge case with domains", () => {
+      const fn = vi.fn();
+      const domain = createDomain();
+      const add = domain.createEvent<string>();
+      const source = domain.createStore<string[]>([]).on(add, (list, item) => [...list, item]);
+      const mappedA = source.map((list) => list.length);
+      const mappedB = source.map((list) => list.length);
+      mappedA.watch((e) => fn(e));
+      add("a");
+      clearNode(mappedB);
+      add("b");
+      expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    Array [
+      0,
+      1,
+      2,
+    ]
+  `);
+    });
+    test("clearNode(domain) should work as usual", () => {
+      const fn = vi.fn();
+      const domain = createDomain();
+      const add = domain.createEvent<string>();
+      const source = domain.createStore<string[]>([]).on(add, (list, item) => [...list, item]);
+      const mappedA = source.map((list) => list.length);
+      source.map((list) => list.length);
+      mappedA.watch((e) => fn(e));
+      add("a");
+      clearNode(domain);
+      add("b");
+
+      expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    Array [
+      0,
+      1,
+    ]
+  `);
+    });
+    // Virentia upstream skip reason: Проверяет внутреннее устройство hook unit/graphite у Effector (`domain.hooks.event.graphite.scope`), а не внешний domain API.
+    test.skip("domain should own its hooks", () => {
+      const domain = createDomain();
+      clearNode(domain);
+      //this mean onCreateEvent hook will be erased together with domain itself
+      //@ts-expect-error
+      expect(domain.hooks.event.graphite.scope).toBe(null);
+    });
+  });
+
+  describe("indirect child support", () => {
+    it("support createApi", () => {
+      const fn = vi.fn();
+      const domain = createDomain();
+      domain.onCreateEvent((e) => fn(e));
+      const position = domain.createStore(0);
+      const { moveLeft, moveRight } = createApi(position, {
+        moveLeft: (x) => x - 1,
+        moveRight: (x) => x + 1,
+      });
+      expect(argumentHistory(fn)).toEqual([moveLeft, moveRight]);
+    });
+    it("support restore", () => {
+      const fn = vi.fn();
+      const domain = createDomain();
+      domain.onCreateStore((e) => fn(e));
+      const source = domain.createEvent();
+      const store = restore(source, null);
+      expect(argumentHistory(fn)).toEqual([store]);
+    });
+    it("support prepend", () => {
+      const fn = vi.fn();
+      const domain = createDomain();
+      domain.onCreateEvent((e) => fn(e));
+      const source = domain.createEvent();
+      const prepended = source.prepend(() => {});
+      expect(argumentHistory(fn)).toEqual([source, prepended]);
+    });
+    describe("support attach", () => {
+      test("with source", () => {
+        const fn = vi.fn();
+        const domain = createDomain();
+        domain.onCreateEffect((e) => fn(e));
+        const source = domain.createStore(null);
+        const fx = domain.createEffect();
+        const attached = attach({
+          source,
+          effect: fx,
+          mapParams: (_) => _,
+        });
+        expect(argumentHistory(fn)).toEqual([fx, attached]);
+      });
+      test("without source", () => {
+        const fn = vi.fn();
+        const domain = createDomain();
+        domain.onCreateEffect((e) => fn(e));
+        const fx = domain.createEffect();
+        const attached = attach({
+          effect: fx,
+          mapParams: (_) => _,
+        });
+        expect(argumentHistory(fn)).toEqual([fx, attached]);
+      });
+      test("with fn and explicit domain", () => {
+        const fn = vi.fn();
+        const domain = createDomain();
+        domain.onCreateEffect((e) => fn(e));
+        const source = createStore(null);
+        const attached = attach({
+          source,
+          domain,
+          effect() {},
+        });
+        expect(argumentHistory(fn)).toEqual([attached]);
+      });
+    });
+  });
+
+  test("parent assignment", () => {
+    const fn = vi.fn();
+    const domain = createDomain();
+    domain.onCreateEffect((fx) => {
+      //@ts-expect-error
+      domain.hooks.event(fx.doneData);
+    });
+    domain.onCreateStore((store) => {
+      fn(store.shortName);
+    });
+    const fx = domain.createEffect();
+    const store = restore(fx.doneData, {});
+    expect(argumentHistory(fn)).toEqual(["store"]);
+  });
+
+  describe("pass domain into creator", () => {
+    test("createStore is the same instance", () => {
+      const fn = vi.fn();
+      const domain = createDomain();
+      domain.onCreateStore(fn);
+
+      const $store = createStore(0, { domain });
+
+      expect(fn).toHaveBeenCalledWith($store);
+    });
+    test("createStore correctly passed into hook", () => {
+      const fn = vi.fn();
+      const domain = createDomain();
+      domain.onCreateStore((store) => store.updates.watch(fn));
+
+      const run = createEvent<number>();
+      const $store = createStore(0, { domain });
+      $store.on(run, (_, i) => i);
+      run(2);
+
+      expect(fn).toHaveBeenCalledTimes(1);
+      expect(fn).toHaveBeenCalledWith(2);
+    });
+    test("createEvent correctly passed into hook", () => {
+      const fn = vi.fn();
+      const domain = createDomain();
+      domain.onCreateEvent(fn);
+
+      const event = createEvent({ domain });
+
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+    test("createEffect correctly passed into hook", () => {
+      const fn = vi.fn();
+      const domain = createDomain();
+      domain.onCreateEffect(fn);
+
+      const effect = createEffect({ domain });
+
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+    test("createDomain correctly passed into hook", () => {
+      const fn = vi.fn();
+      const domain = createDomain();
+      domain.onCreateDomain(fn);
+
+      const another = createDomain({ domain });
+
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+    test("unit in nested domains triggers correctly", () => {
+      const fn = vi.fn();
+      const d1 = createDomain();
+      d1.onCreateStore(fn);
+      const d2 = createDomain({ domain: d1 });
+      d2.onCreateStore(fn);
+      const d3 = createDomain({ domain: d2 });
+      d3.onCreateStore(fn);
+
+      const $store = createStore(0, { domain: d3 });
+
+      expect(fn).toHaveBeenCalledTimes(3);
+    });
+
+    test("unit made from two domains should select indirect one", () => {
+      const directFn = vi.fn();
+      const direct = createDomain();
+      direct.onCreateStore(directFn);
+
+      const indirectFn = vi.fn();
+      const indirect = createDomain();
+      indirect.onCreateStore(indirectFn);
+
+      // @ts-expect-error There is no types for case, just runtime check
+      const $unit = direct.createStore(0, { domain: indirect });
+
+      expect(directFn).not.toHaveBeenCalled();
+      expect(indirectFn).toHaveBeenCalledTimes(1);
+    });
+  });
+});

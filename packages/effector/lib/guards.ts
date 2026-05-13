@@ -23,6 +23,17 @@ export const is = {
   effect(value: unknown): value is Effect<any, any, any> {
     return isEffect(value);
   },
+  domain(value: unknown): boolean {
+    return Boolean(value && typeof value === "object" && "__domainState" in value);
+  },
+  attached(value: unknown): boolean {
+    return Boolean(
+      value &&
+      (typeof value === "object" || typeof value === "function") &&
+      "__attached" in value &&
+      (value as { __attached?: boolean }).__attached,
+    );
+  },
   targetable(value: unknown): value is UnitTargetable {
     return isTargetable(value);
   },
@@ -30,7 +41,9 @@ export const is = {
 
 export function isUnit(value: unknown): value is AnyUnit {
   return Boolean(
-    value && (typeof value === "object" || typeof value === "function") && unitKind in value,
+    value &&
+      (typeof value === "object" || typeof value === "function") &&
+      (unitKind in value || "__domainState" in value),
   );
 }
 
@@ -47,9 +60,7 @@ export function isEffect(value: unknown): value is EffectState<any, any, any> {
 }
 
 export function isTargetable(value: unknown): value is UnitTargetable {
-  return (
-    isEvent(value) || isEffect(value) || (isStore(value) && typeof value.setState === "function")
-  );
+  return isUnit(value) && value.targetable === true;
 }
 
 export function isScope(value: unknown): value is Scope {

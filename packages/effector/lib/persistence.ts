@@ -1,5 +1,6 @@
-import { applyStoreValues, createCompatScope, storesBySid } from "./shared";
-import type { Scope, Store, StoreValues } from "./types";
+import { applyStoreValues, createCompatScope, defaultScope, storesBySid } from "./shared";
+import type { DomainLike } from "./domain-internal";
+import type { Scope, Store, StoreValues, StoreWritable } from "./types";
 
 export function serialize(
   scope: Scope,
@@ -10,6 +11,11 @@ export function serialize(
 ): Record<string, unknown> {
   const compatScope = createCompatScope(scope.__core);
   const onlyChanges = config.onlyChanges ?? true;
+
+  if (!onlyChanges && !compatScope.__domain) {
+    throw new Error("scope should be created from domain");
+  }
+
   const ignored = new Set(
     (config.ignore ?? [])
       .map((item) => (typeof item === "string" ? item : item.sid))
@@ -17,8 +23,29 @@ export function serialize(
   );
   const result: Record<string, unknown> = {};
 
-  for (const [sid, store] of storesBySid) {
+  const stores = compatScope.__domain
+    ? [
+        ...Array.from(compatScope.__domain.history.stores).filter(
+          (store): store is StoreWritable<any> => Boolean(store.sid),
+        ),
+        ...Array.from(compatScope.__changedSids)
+          .map((sid) => storesBySid.get(sid))
+          .filter((store): store is StoreWritable<any> => Boolean(store?.sid)),
+      ]
+    : Array.from(storesBySid.values());
+
+  for (const store of stores) {
+    const sid = store.sid;
+
+    if (!sid) {
+      continue;
+    }
+
     if (ignored.has(sid)) {
+      continue;
+    }
+
+    if (store.serialize === "ignore") {
       continue;
     }
 
@@ -26,12 +53,19 @@ export function serialize(
       continue;
     }
 
-    result[sid] = store.getState(compatScope);
+    const value = store.getState(compatScope);
+    result[sid] = typeof store.serialize === "object" ? store.serialize.write(value) : value;
   }
 
   return result;
 }
 
-export function hydrate(scope: Scope, config: { values: StoreValues }): void {
+export function hydrate(target: Scope | DomainLike, config: { values: StoreValues }): void {
+  const scope = isDomainLike(target) ? createCompatScope(defaultScope) : target;
+
   applyStoreValues(scope, config.values);
+}
+
+function isDomainLike(value: unknown): value is DomainLike {
+  return Boolean(value && typeof value === "object" && "__domainState" in value);
 }

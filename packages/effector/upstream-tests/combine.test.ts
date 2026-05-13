@@ -1,0 +1,473 @@
+/*
+ * Copyright (c) 2019 Zero Bias https://github.com/zerobias
+ * SPDX-License-Identifier: MIT
+ */
+
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  test,
+  vi,
+  type Mock,
+  type MockInstance,
+} from "vitest";
+
+import {
+  combine,
+  createStore,
+  createEffect,
+  sample,
+  createEvent,
+  EffectResult,
+  createDomain,
+  fork,
+  allSettled,
+} from "@virentia/effector";
+import { argumentHistory, muteErrors } from "effector/fixtures";
+
+muteErrors("skipVoid");
+
+function rgbToHex(r: number, g: number, b: number) {
+  return (
+    "#" +
+    r.toString(16).padStart(2, "0") +
+    g.toString(16).padStart(2, "0") +
+    b.toString(16).padStart(2, "0")
+  );
+}
+describe("combine cases", () => {
+  test("combine({R,G,B})", () => {
+    const R = createStore(233);
+    const G = createStore(88);
+    const B = createStore(1);
+    const store = combine({ R, G, B });
+    expect(store.getState()).toEqual({ R: 233, G: 88, B: 1 });
+  });
+  test("combine([R,G,B])", () => {
+    const R = createStore(233);
+    const G = createStore(88);
+    const B = createStore(1);
+    const store = combine([R, G, B]);
+    expect(store.getState()).toEqual([233, 88, 1]);
+  });
+  test("combine({Color})", () => {
+    const Color = createStore("#e95801");
+    const store = combine({ Color });
+    expect(store.getState()).toEqual({ Color: "#e95801" });
+  });
+  test("combine([Color])", () => {
+    const Color = createStore("#e95801");
+    const store = combine([Color]);
+    expect(store.getState()).toEqual(["#e95801"]);
+  });
+  test(`combine({R,G,B}, ({R,G,B}) => '~')`, () => {
+    const R = createStore(233);
+    const G = createStore(88);
+    const B = createStore(1);
+    const store = combine({ R, G, B }, ({ R, G, B }) => rgbToHex(R, G, B));
+    expect(store.getState()).toEqual("#e95801");
+  });
+  test(`combine([R,G,B], ([R,G,B]) => '~')`, () => {
+    const R = createStore(233);
+    const G = createStore(88);
+    const B = createStore(1);
+    const store = combine([R, G, B], ([R, G, B]) => rgbToHex(R, G, B));
+    expect(store.getState()).toEqual("#e95801");
+  });
+  test(`combine({Color}, ({Color}) => '~')`, () => {
+    const Color = createStore("#e95801");
+    const store = combine({ Color }, ({ Color }) => Color);
+    expect(store.getState()).toEqual("#e95801");
+  });
+  test(`combine([Color], ([Color]) => '~')`, () => {
+    const Color = createStore("#e95801");
+    const store = combine([Color], ([Color]) => Color);
+    expect(store.getState()).toEqual("#e95801");
+  });
+  test(`combine(Color, (Color) => '~')`, () => {
+    const Color = createStore("#e95801");
+    const store = combine(Color, (Color) => Color);
+    expect(store.getState()).toEqual("#e95801");
+  });
+  test(`combine(R,G,B, (R,G,B) => '~')`, () => {
+    const R = createStore(233);
+    const G = createStore(88);
+    const B = createStore(1);
+    const store = combine(R, G, B, (R, G, B) => rgbToHex(R, G, B));
+    expect(store.getState()).toEqual("#e95801");
+  });
+  test("combine(R,G,B)", () => {
+    const R = createStore(233);
+    const G = createStore(88);
+    const B = createStore(1);
+    const store = combine(R, G, B);
+    expect(store.getState()).toEqual([233, 88, 1]);
+  });
+  test("combine(Color)", () => {
+    const Color = createStore("#e95801");
+    const store = combine(Color);
+    expect(store.getState()).toEqual(["#e95801"]);
+  });
+  test("combine(...primitives)", () => {
+    const store = combine(1, [false], { value: "a" });
+    expect(store.getState()).toEqual([1, [false], { value: "a" }]);
+  });
+  test("combine([primitives])", () => {
+    const store = combine([1, [false], { value: "a" }]);
+    expect(store.getState()).toEqual([1, [false], { value: "a" }]);
+  });
+  test("combine(Store, primitive)", () => {
+    const Color = createStore("#e95801");
+    const store = combine(Color, "#e95801");
+    expect(store.getState()).toEqual(["#e95801", "#e95801"]);
+  });
+});
+
+// Virentia upstream skip reason: Проверяет eager intermediate updates combine + pending; lazy graph Virentia не обещает тот же порядок промежуточных recompute.
+it.skip("deduplicate outputs", async () => {
+  const fn = vi.fn();
+  const fetchApi = createEffect(async () => {
+    await new Promise((rs) => setTimeout(rs, 10));
+    return [{ name: "physics", id: 1 }];
+  });
+  const data = createStore([] as EffectResult<typeof fetchApi>).on(
+    fetchApi.done,
+    (_, { result }) => result,
+  );
+  const lessonIndex = createStore(0);
+  const lesson = combine(data, lessonIndex, (data, index) => data[index] || null);
+  const lessonWithPending = combine(lesson, fetchApi.pending, (lesson, pending) => ({
+    lesson,
+    pending,
+  }));
+  sample(lessonWithPending).updates.watch((data) => fn(data));
+
+  await fetchApi();
+  expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    Array [
+      Object {
+        "lesson": null,
+        "pending": true,
+      },
+      Object {
+        "lesson": Object {
+          "id": 1,
+          "name": "physics",
+        },
+        "pending": false,
+      },
+    ]
+  `);
+});
+
+// Virentia upstream skip reason: Закрепляет exact eager dedupe/update emission для derived combine; базовый getState/update contract покрыт соседними combine tests.
+it.skip("skip first duplicated update", () => {
+  const fn = vi.fn();
+  const changedToken = createEvent<string>();
+
+  const $token = createStore("").on(changedToken, (_, token) => token);
+  const $token2 = createStore("").on(changedToken, (_, token) => token);
+
+  const websocketUrl = combine($token, () => null);
+  websocketUrl.watch(fn);
+  changedToken("token");
+  expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    Array [
+      null,
+    ]
+  `);
+});
+
+// Virentia upstream skip reason: Проверяет Effector skipVoid/eager recompute sequence for derived combine; Virentia lazy derived stores не обещают такую последовательность.
+it.skip("updates consistently", () => {
+  const fn = vi.fn();
+  const e = createEvent<string>();
+
+  const s1 = createStore("").on(e, (_, m) => m);
+  const s2 = createStore("").on(e, (_, m) => m);
+  let i = 0;
+  //prettier-ignore
+  const combined = combine(s1, s2, (_, m): (string | null | void) => {
+    i+=1
+    switch (i) {
+      case 1: return null
+      //a
+      case 2: return m
+      //return the same value twice
+      //b
+      case 3:
+      //c
+      case 4: return 'noop'
+      //d
+      case 5: return m
+      //return undefined
+      //e
+      case 6: return
+      //f
+      case 7: return m
+      //return undefined and then return same state
+      //g
+      case 8: return
+      //h
+      case 9: return (() => combined.getState())()
+      //i, j
+      default: return m
+    }
+  })
+  combined.watch(fn);
+  e("a");
+  e("b");
+  e("c");
+  e("d");
+  e("e");
+  e("f");
+  e("g");
+  e("h");
+  e("i");
+  e("j");
+  expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    Array [
+      null,
+      "a",
+      "noop",
+      "d",
+      "f",
+      "i",
+      "j",
+    ]
+  `);
+});
+
+describe("validations", () => {
+  it("validate amount of arguments", () => {
+    expect(() => {
+      const $foo = combine();
+    }).toThrowErrorMatchingInlineSnapshot(`"expect first argument be an object"`);
+  });
+
+  it("validate shape", () => {
+    expect(() => {
+      const $foo = combine(null);
+    }).toThrowErrorMatchingInlineSnapshot(`"[combine] unit '$foo': shape should be an object"`);
+    expect(() => {
+      const $foo = combine("text");
+    }).toThrowErrorMatchingInlineSnapshot(`"[combine] unit '$foo': shape should be an object"`);
+    expect(() => {
+      const $foo = combine(0, () => {});
+    }).toThrowErrorMatchingInlineSnapshot(`"[combine] unit '$foo': shape should be an object"`);
+  });
+
+  it("doesn`t allow events or other units in shape", () => {
+    expect(() => {
+      const $foo = combine({ a: createEvent() });
+    }).toThrowErrorMatchingInlineSnapshot(
+      `"[combine] unit '$foo': combine expects a store in a field a"`,
+    );
+    expect(() => {
+      const $foo = combine({ a: createEffect() });
+    }).toThrowErrorMatchingInlineSnapshot(
+      `"[combine] unit '$foo': combine expects a store in a field a"`,
+    );
+    expect(() => {
+      const $foo = combine({ a: createDomain() });
+    }).toThrowErrorMatchingInlineSnapshot(
+      `"[combine] unit '$foo': combine expects a store in a field a"`,
+    );
+  });
+  it("doesn`t allow undefined in shape", () => {
+    expect(() => {
+      const $foo = combine({ a: undefined });
+    }).toThrowErrorMatchingInlineSnapshot(
+      `"[combine] unit '$foo': combine expects a store in a field a"`,
+    );
+  });
+});
+
+// Virentia upstream skip reason: Завязано на exact Effector combine handler argument shape for internal metadata; пользовательский combine runtime покрыт соседними tests.
+it.skip("doesn`t leak internal variables to transform function", () => {
+  const fn = vi.fn();
+  const inc = createEvent();
+  const a = createStore(0).on(inc, (x) => x + 1);
+  const combined = combine({ a }, (...args) => {
+    fn(args);
+    return 0;
+  });
+  inc();
+  expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    Array [
+      Array [
+        Object {
+          "a": 0,
+        },
+      ],
+      Array [
+        Object {
+          "a": 1,
+        },
+      ],
+    ]
+  `);
+});
+
+describe("doesn`t fail with slice is not a function", () => {
+  test("array", () => {
+    const fn = vi.fn();
+    const inc = createEvent();
+    const $a = createStore(0).on(inc, (x) => x + 1);
+    const combined = combine([$a], (array: any) => {
+      const mainSlice = array.slice;
+      array.slice = (...args: any[]) => {
+        fn("slice");
+        return mainSlice.apply(array, args);
+      };
+      return array[0] + 1;
+    });
+    inc();
+
+    expect(argumentHistory(fn)).toMatchInlineSnapshot(`Array []`);
+  });
+
+  test("combine + map", () => {
+    const fn = vi.fn();
+    const inc = createEvent();
+    const $a = createStore(0).on(inc, (x) => x + 1);
+    const $b = createStore(0).on(inc, (x) => x + 1);
+    const combined = combine([$a, $b]).map((array: any) => {
+      const mainSlice = array.slice;
+      array.slice = (...args: any[]) => {
+        fn("slice");
+        return mainSlice.apply(array, args);
+      };
+      return array[0] + 1;
+    });
+    inc();
+    inc();
+    inc();
+
+    expect(argumentHistory(fn)).toMatchInlineSnapshot(`Array []`);
+  });
+});
+
+describe("don`t reuse values from user", () => {
+  test("with sample (more convenient)", () => {
+    const triggerA = createEvent();
+    const triggerB = createEvent();
+    const foo = createStore(0);
+    const bar = createStore(0).on(triggerB, (x) => x + 10);
+    const combined = createStore({ foo: 0, bar: 0 }).on(combine({ foo, bar }), (_, x) => x);
+    sample({
+      clock: triggerA,
+      source: combined,
+      target: combined,
+      fn: ({ foo, bar }) => ({
+        foo: foo + 1,
+        bar: bar + 1,
+      }),
+    });
+
+    triggerA();
+    expect(combined.getState()).toEqual({ foo: 1, bar: 1 });
+    triggerB();
+    expect(combined.getState()).toEqual({ foo: 0, bar: 10 });
+    triggerA();
+    expect(combined.getState()).toEqual({ foo: 1, bar: 11 });
+    triggerB();
+    expect(combined.getState()).toEqual({ foo: 0, bar: 20 });
+  });
+  test("with on (less convenient)", () => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const triggerA = createEvent();
+    const triggerB = createEvent();
+    const foo = createStore(0);
+    const bar = createStore(0).on(triggerB, (x) => x + 10);
+    const combined = createStore({ foo: 0, bar: 0 }).on(combine({ foo, bar }), (_, x) => x);
+    combined.on(triggerA, ({ foo, bar }) => ({
+      foo: foo + 1,
+      bar: bar + 1,
+    }));
+    warn.mockRestore();
+
+    triggerA();
+    expect(combined.getState()).toEqual({ foo: 1, bar: 1 });
+    triggerB();
+    expect(combined.getState()).toEqual({ foo: 0, bar: 10 });
+    triggerA();
+    expect(combined.getState()).toEqual({ foo: 1, bar: 11 });
+    triggerB();
+    expect(combined.getState()).toEqual({ foo: 0, bar: 20 });
+  });
+});
+
+// Virentia upstream skip reason: Проверяет количество eager вызовов combine fn при getState/allSettled; lazy computation Virentia допускает дополнительные вычисления без изменения результата.
+describe.skip("fn retriggers", () => {
+  test("dont retrigger combine fn on allSettled calls", async () => {
+    const fn = vi.fn();
+    const inc = createEvent();
+    const $a = createStore(0).on(inc, (a) => a + 1);
+    const $comb = combine($a, (a) => {
+      fn(a);
+      return a;
+    });
+
+    const scope = fork({ values: [[$a, 10]] });
+    await allSettled(inc, { scope });
+    expect(argumentHistory(fn)).toEqual([0, 11]);
+  });
+  test("dont retrigger combine fn on getState calls", () => {
+    const fn = vi.fn();
+    const $a = createStore(0);
+    const $comb = combine($a, (a) => {
+      fn(a);
+      return a;
+    });
+
+    const scope = fork({ values: [[$a, 10]] });
+    scope.getState($comb);
+    expect(argumentHistory(fn)).toEqual([0, 10]);
+  });
+  test("dont retrigger combine fn on getState + allSettled calls", async () => {
+    const fn = vi.fn();
+    const inc = createEvent();
+    const $a = createStore(0).on(inc, (a) => a + 1);
+    const $comb = combine($a, (a) => {
+      fn(a);
+      return a;
+    });
+
+    const scope = fork({ values: [[$a, 10]] });
+    scope.getState($comb);
+    await allSettled(inc, { scope });
+    expect(argumentHistory(fn)).toEqual([0, 10, 11]);
+  });
+});
+
+describe("dont have forbidden keys", () => {
+  describe.each(["domain", "parent", "sid", "name"])("%s key", (key) => {
+    const $foo = createStore(0);
+    test("dont throw without babel", () => {
+      expect(() => {
+        // skip babel processing
+        ({ _: combine })._({ [key]: $foo });
+      }).not.toThrow();
+    });
+    test("dont throw with babel", () => {
+      expect(() => {
+        combine({ [key]: $foo });
+      }).not.toThrow();
+    });
+    test("has expected state", () => {
+      const $store = combine({ [key]: $foo });
+      expect($store.getState()).toEqual({ [key]: 0 });
+    });
+    test("dont throw with function", () => {
+      expect(() => {
+        combine({ [key]: $foo }, (x) => x);
+      }).not.toThrow();
+    });
+  });
+});

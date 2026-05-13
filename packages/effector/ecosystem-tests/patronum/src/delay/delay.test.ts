@@ -1,0 +1,456 @@
+/*
+ * Copyright (c) 2020 Sergey Sova
+ * Copyright (c) 2021 Effector core team
+ * SPDX-License-Identifier: MIT
+ * Source: https://github.com/effector/patronum
+ */
+
+// @ts-nocheck
+import { createStore, createEvent, createEffect } from "effector";
+import { argumentHistory, time, toBeCloseWithThreshold, waitFor } from "../../test-library";
+import { delay } from "patronum/delay";
+
+expect.extend({ toBeCloseWithThreshold });
+
+const TIMER_THRESHOLD = 70;
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test("delay event with number", async () => {
+  const source = createEvent();
+  const delayed = delay({ source, timeout: 100 });
+  const fn = vi.fn();
+  delayed.watch(fn);
+
+  source(1);
+  const start = time();
+  expect(fn).toBeCalledTimes(0);
+
+  await waitFor(delayed);
+  expect(start.diff()).toBeCloseWithThreshold(100, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(1);
+
+  expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    [
+      1,
+    ]
+  `);
+});
+test("delay event with number (shorthand)", async () => {
+  const source = createEvent();
+  const delayed = delay(source, 100);
+  const fn = vi.fn();
+  delayed.watch(fn);
+
+  source(1);
+  const start = time();
+  expect(fn).toBeCalledTimes(0);
+
+  await waitFor(delayed);
+  expect(start.diff()).toBeCloseWithThreshold(100, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(1);
+
+  expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    [
+      1,
+    ]
+  `);
+});
+
+test("delay event with number with target", async () => {
+  const source = createEvent();
+  const target = createEvent();
+  delay({ source, timeout: 100, target });
+  const fn = vi.fn();
+  target.watch(fn);
+
+  source(1);
+  const start = time();
+  expect(fn).toBeCalledTimes(0);
+
+  await waitFor(target);
+  expect(start.diff()).toBeCloseWithThreshold(100, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(1);
+
+  expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    [
+      1,
+    ]
+  `);
+});
+
+test("double delay event with number", async () => {
+  const source = createEvent();
+  const delayed = delay({ source, timeout: 100 });
+  const fn = vi.fn();
+  delayed.watch(fn);
+
+  const startA = time();
+  source(1);
+  expect(fn).toBeCalledTimes(0);
+
+  await waitFor(delayed);
+  expect(startA.diff()).toBeCloseWithThreshold(100, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(1);
+
+  const startB = time();
+  source(2);
+  expect(fn).toBeCalledTimes(1);
+
+  await waitFor(delayed);
+  expect(startB.diff()).toBeCloseWithThreshold(100, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(2);
+
+  expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    [
+      1,
+      2,
+    ]
+  `);
+});
+
+test("delay event with function", async () => {
+  const source = createEvent();
+  const delayed = delay({ source, timeout: () => 100 });
+  const fn = vi.fn();
+  delayed.watch(fn);
+
+  const start = time();
+  source(1);
+
+  await waitFor(delayed);
+  expect(start.diff()).toBeCloseWithThreshold(100, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(1);
+
+  expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    [
+      1,
+    ]
+  `);
+});
+
+test("delay event with function (shorthand)", async () => {
+  const source = createEvent();
+  const delayed = delay(source, () => 100);
+  const fn = vi.fn();
+  delayed.watch(fn);
+
+  const start = time();
+  source(1);
+
+  await waitFor(delayed);
+  expect(start.diff()).toBeCloseWithThreshold(100, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(1);
+
+  expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    [
+      1,
+    ]
+  `);
+});
+
+test("delay event with function of argument", async () => {
+  const source = createEvent<number>();
+  const delayed = delay({ source, timeout: (number) => number * 100 });
+  const fn = vi.fn();
+  delayed.watch(fn);
+
+  const start1 = time();
+  source(1); // 100ms delay
+  expect(fn).toBeCalledTimes(0);
+
+  await waitFor(delayed);
+  expect(start1.diff()).toBeCloseWithThreshold(100, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(1);
+
+  const start2 = time();
+  source(2); // 200ms delay
+
+  await waitFor(delayed);
+  expect(start2.diff()).toBeCloseWithThreshold(200, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(2);
+
+  await wait(120);
+  expect(fn).toBeCalledTimes(2);
+
+  expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    [
+      1,
+      2,
+    ]
+  `);
+});
+
+test("delay event with function of argument (shorthand)", async () => {
+  const source = createEvent<number>();
+  const delayed = delay(source, (number) => number * 100);
+  const fn = vi.fn();
+  delayed.watch(fn);
+
+  const start1 = time();
+  source(1); // 100ms delay
+  expect(fn).toBeCalledTimes(0);
+
+  await waitFor(delayed);
+  expect(start1.diff()).toBeCloseWithThreshold(100, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(1);
+
+  const start2 = time();
+  source(2); // 200ms delay
+
+  await waitFor(delayed);
+  expect(start2.diff()).toBeCloseWithThreshold(200, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(2);
+
+  await wait(120);
+  expect(fn).toBeCalledTimes(2);
+
+  expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    [
+      1,
+      2,
+    ]
+  `);
+});
+
+test("delay event with store as timeout", async () => {
+  const source = createEvent();
+  const timeout = createStore(0).on(source, (current, count) => current + count * 100);
+  const delayed = delay({ source, timeout });
+  const fn = vi.fn();
+  delayed.watch(fn);
+
+  const start1 = time();
+  source(1); // 100ms delay
+  expect(fn).toBeCalledTimes(0);
+
+  await waitFor(delayed);
+  expect(start1.diff()).toBeCloseWithThreshold(100, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(1);
+
+  const start2 = time();
+  source(2); // 200ms delay
+
+  await waitFor(delayed);
+  expect(start2.diff()).toBeCloseWithThreshold(300, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(2);
+
+  await wait(120);
+  expect(fn).toBeCalledTimes(2);
+
+  expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    [
+      1,
+      2,
+    ]
+  `);
+});
+
+test("delay event with store as timeout (shorthand)", async () => {
+  const source = createEvent();
+  const timeout = createStore(0).on(source, (current, count) => current + count * 100);
+  const delayed = delay(source, timeout);
+  const fn = vi.fn();
+  delayed.watch(fn);
+
+  const start1 = time();
+  source(1); // 100ms delay
+  expect(fn).toBeCalledTimes(0);
+
+  await waitFor(delayed);
+  expect(start1.diff()).toBeCloseWithThreshold(100, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(1);
+
+  const start2 = time();
+  source(2); // 200ms delay
+
+  await waitFor(delayed);
+  expect(start2.diff()).toBeCloseWithThreshold(300, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(2);
+
+  await wait(120);
+  expect(fn).toBeCalledTimes(2);
+
+  expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    [
+      1,
+      2,
+    ]
+  `);
+});
+
+test("delay store", async () => {
+  const change = createEvent();
+  const $source = createStore(0).on(change, (_, value) => value);
+  const delayed = delay({ source: $source, timeout: 100 });
+  const fn = vi.fn();
+  delayed.watch(fn);
+
+  const start1 = time();
+  change(1);
+  expect(fn).toBeCalledTimes(0);
+
+  await waitFor(delayed);
+  expect(start1.diff()).toBeCloseWithThreshold(100, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(1);
+
+  const start2 = time();
+  change(2);
+  expect(fn).toBeCalledTimes(1);
+
+  await waitFor(delayed);
+  expect(start2.diff()).toBeCloseWithThreshold(100, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(2);
+
+  expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    [
+      1,
+      2,
+    ]
+  `);
+});
+
+test("double delay effect", async () => {
+  const effect = createEffect().use(() => 1000);
+  const delayed = delay({ source: effect, timeout: 100 });
+  const fn = vi.fn();
+  delayed.watch(fn);
+
+  const start1 = time();
+  effect(1);
+  expect(fn).toBeCalledTimes(0);
+
+  await waitFor(delayed);
+  expect(start1.diff()).toBeCloseWithThreshold(100, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(1);
+
+  const start2 = time();
+  effect(2);
+
+  await waitFor(delayed);
+  expect(start2.diff()).toBeCloseWithThreshold(100, TIMER_THRESHOLD);
+  expect(fn).toBeCalledTimes(2);
+
+  expect(argumentHistory(fn)).toMatchInlineSnapshot(`
+    [
+      1,
+      2,
+    ]
+  `);
+});
+
+test("delay with array of units", async () => {
+  expect.assertions(2);
+
+  const source = createEvent();
+
+  const fnA = vi.fn();
+  const targetA = createEvent();
+
+  targetA.watch(fnA);
+
+  const fnB = vi.fn();
+  const targetB = createEvent();
+
+  targetB.watch(fnB);
+
+  delay({ source, timeout: 100, target: [targetA, targetB] });
+
+  source(1);
+
+  await waitFor(targetA);
+
+  expect(fnA).toHaveBeenCalledTimes(1);
+  expect(fnB).toHaveBeenCalledTimes(1);
+});
+
+test("delay throws when any of targets is not a unit", async () => {
+  expect.assertions(1);
+
+  const source = createEvent();
+  const target = createEvent();
+
+  expect(() => delay({ source, timeout: 100, target: [target, "not a unit"] })).toThrowError(
+    /target must be a unit/,
+  );
+});
+
+test("delay throws when source is not a unit", async () => {
+  expect.assertions(1);
+
+  const target = createEvent();
+
+  expect(() => delay({ source: "not a unit", timeout: 100, target })).toThrowError(
+    /source must be a unit/,
+  );
+});
+
+describe("delay without source", () => {
+  test("triggers target after timeout when returned unit is called", async () => {
+    const target = createEvent();
+    const trigger = delay({ timeout: 100, target });
+    const fn = vi.fn();
+    target.watch(fn);
+
+    trigger("payload");
+    const start = time();
+    expect(fn).toBeCalledTimes(0);
+
+    await waitFor(target);
+    expect(start.diff()).toBeCloseWithThreshold(100, TIMER_THRESHOLD);
+    expect(fn).toBeCalledTimes(1);
+    expect(argumentHistory(fn)).toEqual(["payload"]);
+  });
+
+  test("supports multiple targets", async () => {
+    const targetA = createEvent();
+    const targetB = createEvent();
+    const trigger = delay({ timeout: 100, target: [targetA, targetB] });
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    targetA.watch(fnA);
+    targetB.watch(fnB);
+
+    trigger(42);
+
+    await waitFor(targetA);
+    expect(fnA).toHaveBeenCalledTimes(1);
+    expect(fnB).toHaveBeenCalledTimes(1);
+    expect(fnA).toHaveBeenCalledWith(42);
+    expect(fnB).toHaveBeenCalledWith(42);
+  });
+
+  test("timeout as function of payload", async () => {
+    const target = createEvent();
+    const trigger = delay({
+      timeout: (payload) => payload * 50,
+      target,
+    });
+    const fn = vi.fn();
+    target.watch(fn);
+
+    trigger(2);
+    const start = time();
+    await waitFor(target);
+    expect(start.diff()).toBeCloseWithThreshold(100, TIMER_THRESHOLD);
+    expect(argumentHistory(fn)).toEqual([2]);
+  });
+
+  test("timeout from store", async () => {
+    const $timeout = createStore(80);
+    const target = createEvent();
+    const trigger = delay({ timeout: $timeout, target });
+    const fn = vi.fn();
+    target.watch(fn);
+
+    trigger("x");
+    const start = time();
+    await waitFor(target);
+    expect(start.diff()).toBeCloseWithThreshold(80, TIMER_THRESHOLD);
+    expect(argumentHistory(fn)).toEqual(["x"]);
+  });
+
+  test("throws when target is not a unit", () => {
+    expect(() => delay({ timeout: 100, target: ["not a unit"] })).toThrow(/target must be a unit/);
+  });
+});

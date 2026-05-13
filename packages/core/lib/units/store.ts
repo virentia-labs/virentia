@@ -13,6 +13,7 @@ import { registerCleanup } from "../graph/owner";
 const defaultSkipToken = Symbol("virentia.skip");
 const committedStoreUpdate = Symbol("virentia.committedStoreUpdate");
 const storeReaders = new WeakMap<object, () => unknown>();
+const storeScopeWriters = new WeakMap<object, (scope: Scope, value: unknown) => void>();
 
 export type StoreView<T> = T extends object ? Readonly<T> : { readonly value: T };
 
@@ -79,6 +80,16 @@ export function readStoreValue<T>(store: Store<T>): T {
   }
 
   return reader() as T;
+}
+
+export function seedScopeStoreValue<T>(scope: Scope, store: StoreWritable<T>, value: T): void {
+  const writer = storeScopeWriters.get(store as object);
+
+  if (!writer) {
+    throw new Error("Scope values can contain only writable stores");
+  }
+
+  writer(scope, value);
 }
 
 export function readonlyStore<T>(
@@ -215,6 +226,11 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
   );
 
   storeReaders.set(proxy as object, () => readState(requireActiveScope(), id, initial));
+  if (options.writable) {
+    storeScopeWriters.set(proxy as object, (scope, value) => {
+      scope.values.set(id, value);
+    });
+  }
 
   return proxy as Store<T>;
 
@@ -449,6 +465,7 @@ function createComputed<T>(
 
     setActiveScope({
       values: new Map(),
+      handlers: new Map(),
     });
 
     try {

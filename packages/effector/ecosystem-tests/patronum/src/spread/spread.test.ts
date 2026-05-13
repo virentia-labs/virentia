@@ -1,0 +1,598 @@
+/*
+ * Copyright (c) 2020 Sergey Sova
+ * Copyright (c) 2021 Effector core team
+ * SPDX-License-Identifier: MIT
+ * Source: https://github.com/effector/patronum
+ */
+
+import { combine, createEffect, createEvent, createStore, sample } from "effector";
+import { spread } from "patronum/spread";
+
+describe("spread(source, targets)", () => {
+  test("event to events", () => {
+    const source = createEvent<{ first: string; second: number }>();
+    const targetA = createEvent<string>();
+    const targetB = createEvent<number>();
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    targetA.watch(fnA);
+    targetB.watch(fnB);
+
+    spread({
+      source,
+      targets: {
+        first: targetA,
+        second: targetB,
+      },
+    });
+
+    source({ first: "Hello", second: 200 });
+
+    expect(fnA).toBeCalledWith("Hello");
+    expect(fnB).toBeCalledWith(200);
+  });
+
+  test("event to stores", () => {
+    const source = createEvent<{ first: string; second: number }>();
+    const targetA = createStore("");
+    const targetB = createStore(0);
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    targetA.watch(fnA);
+    targetB.watch(fnB);
+
+    spread({
+      source,
+      targets: {
+        first: targetA,
+        second: targetB,
+      },
+    });
+
+    source({ first: "Hello", second: 200 });
+
+    expect(fnA).toBeCalledWith("Hello");
+    expect(fnB).toBeCalledWith(200);
+  });
+
+  test("store to stores", () => {
+    const change = createEvent<{ first: string; second: number }>();
+    const source = createStore({ first: "hello", second: 200 }).on(change, (_, value) => value);
+    const targetA = createStore("");
+    const targetB = createStore(0);
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    targetA.watch(fnA);
+    targetB.watch(fnB);
+
+    spread({
+      source,
+      targets: {
+        first: targetA,
+        second: targetB,
+      },
+    });
+
+    change({ first: "Hello", second: 200 });
+
+    expect(fnA).toBeCalledWith("Hello");
+    expect(fnB).toBeCalledWith(200);
+  });
+
+  test("store to events", () => {
+    const change = createEvent<{ first: string; second: number }>();
+    const source = createStore({ first: "hello", second: 200 }).on(change, (_, value) => value);
+    const targetA = createEvent<string>();
+    const targetB = createEvent<number>();
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    targetA.watch(fnA);
+    targetB.watch(fnB);
+
+    spread({
+      source,
+      targets: {
+        first: targetA,
+        second: targetB,
+      },
+    });
+
+    change({ first: "Hello", second: 200 });
+
+    expect(fnA).toBeCalledWith("Hello");
+    expect(fnB).toBeCalledWith(200);
+  });
+
+  test("unit to array of units", () => {
+    const source = createEvent<{ first: string; second: number; third: string }>();
+    const targetA = createEvent<string>();
+    const targetA2 = createEffect<string, void>();
+    const targetB = createEvent<number>();
+    const targetB2 = createEvent<number>();
+    const targetC = createStore("");
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    const fnA1 = vi.fn();
+    const fnB1 = vi.fn();
+    const fnC = vi.fn();
+
+    targetA.watch(fnA);
+    targetB.watch(fnB);
+    targetA2.watch(fnA1);
+    targetB2.watch(fnB1);
+    targetC.watch(fnC);
+
+    spread({
+      source,
+      targets: {
+        first: [targetA, targetA2],
+        second: [targetB, targetB2],
+        third: targetC,
+      },
+    });
+
+    source({ first: "Hello", second: 200, third: "third" });
+
+    expect(fnA).toBeCalledWith("Hello");
+    expect(fnB).toBeCalledWith(200);
+    expect(fnA1).toBeCalledWith("Hello");
+    expect(fnB1).toBeCalledWith(200);
+    expect(fnC).toBeCalledWith("third");
+  });
+});
+
+describe("spread(targets)", () => {
+  test("event to events", () => {
+    const source = createEvent<{ first: string; second: number }>();
+    const targetA = createEvent<string>();
+    const targetB = createEvent<number>();
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    targetA.watch(fnA);
+    targetB.watch(fnB);
+
+    sample({
+      clock: source,
+      target: spread({
+        targets: {
+          first: targetA,
+          second: targetB,
+        },
+      }),
+    });
+
+    source({ first: "Hello", second: 200 });
+
+    expect(fnA).toBeCalledWith("Hello");
+    expect(fnB).toBeCalledWith(200);
+  });
+
+  test("event to events (shorthand)", () => {
+    const source = createEvent<{ first: string; second: number }>();
+    const targetA = createEvent<string>();
+    const targetB = createEvent<number>();
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    targetA.watch(fnA);
+    targetB.watch(fnB);
+
+    sample({
+      clock: source,
+      target: spread({
+        first: targetA,
+        second: targetB,
+      }),
+    });
+
+    source({ first: "Hello", second: 200 });
+
+    expect(fnA).toBeCalledWith("Hello");
+    expect(fnB).toBeCalledWith(200);
+  });
+
+  test("event to stores", () => {
+    const source = createEvent<{ first: string; second: number }>();
+    const $targetA = createStore("");
+    const $targetB = createStore(0);
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    $targetA.watch(fnA);
+    $targetB.watch(fnB);
+
+    sample({
+      clock: source,
+      target: spread({
+        targets: {
+          first: $targetA,
+          second: $targetB,
+        },
+      }),
+    });
+
+    source({ first: "Hello", second: 200 });
+
+    expect(fnA).toBeCalledWith("Hello");
+    expect(fnB).toBeCalledWith(200);
+  });
+
+  test("event to stores (shorthand)", () => {
+    const source = createEvent<{ first: string; second: number }>();
+    const $targetA = createStore("");
+    const $targetB = createStore(0);
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    $targetA.watch(fnA);
+    $targetB.watch(fnB);
+
+    sample({
+      clock: source,
+      target: spread({
+        first: $targetA,
+        second: $targetB,
+      }),
+    });
+
+    source({ first: "Hello", second: 200 });
+
+    expect(fnA).toBeCalledWith("Hello");
+    expect(fnB).toBeCalledWith(200);
+  });
+
+  test("store to stores", () => {
+    const change = createEvent<{ first: string; second: number }>();
+    const source = createStore({ first: "hello", second: 200 }).on(change, (_, value) => value);
+    const $targetA = createStore("");
+    const $targetB = createStore(0);
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    $targetA.watch(fnA);
+    $targetB.watch(fnB);
+
+    sample({
+      clock: source,
+      target: spread({
+        targets: {
+          first: $targetA,
+          second: $targetB,
+        },
+      }),
+    });
+
+    change({ first: "Hello", second: 200 });
+
+    expect(fnA).toBeCalledWith("Hello");
+    expect(fnB).toBeCalledWith(200);
+  });
+
+  test("store to events", () => {
+    const change = createEvent<{ first: string; second: number }>();
+    const source = createStore({ first: "hello", second: 200 }).on(change, (_, value) => value);
+    const targetA = createEvent<string>();
+    const targetB = createEvent<number>();
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    targetA.watch(fnA);
+    targetB.watch(fnB);
+
+    sample({
+      clock: source,
+      target: spread({
+        targets: {
+          first: targetA,
+          second: targetB,
+        },
+      }),
+    });
+
+    change({ first: "Hello", second: 200 });
+
+    expect(fnA).toBeCalledWith("Hello");
+    expect(fnB).toBeCalledWith(200);
+  });
+
+  test("unit to array of units", () => {
+    const source = createEvent<{ first: string; second: number; third: string }>();
+    const targetA = createEvent<string>();
+    const targetA2 = createEffect<string, void>();
+    const targetB = createEvent<number>();
+    const targetB2 = createEvent<number>();
+    const targetC = createStore("");
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    const fnA1 = vi.fn();
+    const fnB1 = vi.fn();
+    const fnC = vi.fn();
+
+    targetA.watch(fnA);
+    targetB.watch(fnB);
+    targetA2.watch(fnA1);
+    targetB2.watch(fnB1);
+    targetC.watch(fnC);
+
+    sample({
+      source,
+      target: spread({
+        targets: {
+          first: [targetA, targetA2],
+          second: [targetB, targetB2],
+          third: targetC,
+        },
+      }),
+    });
+
+    source({ first: "Hello", second: 200, third: "third" });
+
+    expect(fnA).toBeCalledWith("Hello");
+    expect(fnB).toBeCalledWith(200);
+    expect(fnA1).toBeCalledWith("Hello");
+    expect(fnB1).toBeCalledWith(200);
+    expect(fnC).toBeCalledWith("third");
+  });
+
+  test("unit to array of units (shorthand)", () => {
+    const source = createEvent<{ first: string; second: number; third: string }>();
+    const targetA = createEvent<string>();
+    const targetA2 = createEffect<string, void>();
+    const targetB = createEvent<number>();
+    const targetB2 = createEvent<number>();
+    const targetC = createStore("");
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    const fnA1 = vi.fn();
+    const fnB1 = vi.fn();
+    const fnC = vi.fn();
+
+    targetA.watch(fnA);
+    targetB.watch(fnB);
+    targetA2.watch(fnA1);
+    targetB2.watch(fnB1);
+    targetC.watch(fnC);
+
+    sample({
+      source,
+      target: spread({
+        first: [targetA, targetA2],
+        second: [targetB, targetB2],
+        third: targetC,
+      }),
+    });
+
+    source({ first: "Hello", second: 200, third: "third" });
+
+    expect(fnA).toBeCalledWith("Hello");
+    expect(fnB).toBeCalledWith(200);
+    expect(fnA1).toBeCalledWith("Hello");
+    expect(fnB1).toBeCalledWith(200);
+    expect(fnC).toBeCalledWith("third");
+  });
+});
+
+describe("edge", () => {
+  test("array in source", () => {
+    // Eslint brokes here // createEvent<[string, number]>();
+    const source = createEvent<any>();
+    const targetA = createEvent();
+    const targetB = createEvent();
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    targetA.watch(fnA);
+    targetB.watch(fnB);
+
+    spread({
+      source,
+      targets: {
+        0: targetA,
+        1: targetB,
+      },
+    });
+
+    source(["Hello", 200]);
+
+    expect(fnA).toBeCalledWith("Hello");
+    expect(fnB).toBeCalledWith(200);
+  });
+
+  test("nested targets", () => {
+    const source = createEvent<{
+      first: string;
+      second: { foo: number; bar: boolean };
+    }>();
+    const targetA = createEvent<string>();
+    const targetB = createEvent<number>();
+    const targetC = createEvent<boolean>();
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    const fnC = vi.fn();
+    targetA.watch(fnA);
+    targetB.watch(fnB);
+    targetC.watch(fnC);
+
+    spread({
+      source,
+      targets: {
+        first: targetA,
+        second: spread({
+          targets: {
+            foo: targetB,
+            bar: targetC,
+          },
+        }),
+      },
+    });
+
+    source({
+      first: "Hello",
+      second: {
+        foo: 200,
+        bar: true,
+      },
+    });
+
+    expect(fnA).toBeCalledWith("Hello");
+    expect(fnB).toBeCalledWith(200);
+    expect(fnC).toBeCalledWith(true);
+  });
+
+  test("batch store updates", () => {
+    const source = createEvent<{
+      first: string;
+      second: number;
+      third: boolean;
+    }>();
+    const targetA = createStore<string>("");
+    const targetB = createStore<number>(1);
+    const targetC = createStore<boolean>(true);
+
+    const fn = vi.fn();
+
+    const final = combine(targetA, targetB, targetC, (a, b, c) => ({
+      first: a,
+      second: b,
+      third: c,
+    }));
+    final.updates.watch(fn);
+
+    spread({
+      source,
+      targets: {
+        first: targetA,
+        second: targetB,
+        third: targetC,
+      },
+    });
+
+    source({
+      first: "foo",
+      second: 2,
+      third: false,
+    });
+    expect(final.getState()).toEqual({
+      first: "foo",
+      second: 2,
+      third: false,
+    });
+    expect(fn).toBeCalledTimes(1);
+  });
+});
+
+describe("invalid", () => {
+  test("no field in source", () => {
+    const source = createEvent<{ second: number }>();
+    const targetA = createEvent();
+    const targetB = createEvent<number>();
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    targetA.watch(fnA);
+    targetB.watch(fnB);
+
+    spread({
+      source,
+      targets: {
+        first: targetA,
+        second: targetB,
+      },
+    });
+
+    source({ second: 200 });
+
+    expect(fnA).toBeCalledTimes(0);
+    expect(fnB).toBeCalledWith(200);
+  });
+
+  test("empty object in source", () => {
+    const source = createEvent<Record<string, unknown>>();
+    const targetA = createEvent();
+    const targetB = createEvent();
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    targetA.watch(fnA);
+    targetB.watch(fnB);
+
+    spread({
+      source,
+      targets: {
+        first: targetA,
+        second: targetB,
+      },
+    });
+
+    source({});
+
+    expect(fnA).toBeCalledTimes(0);
+    expect(fnB).toBeCalledTimes(0);
+  });
+
+  test("null/undefined in source", () => {
+    const source = createEvent<null | void | {
+      first: number;
+      second: boolean;
+    }>();
+    const targetA = createEvent<number>();
+    const targetB = createEvent<boolean>();
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    targetA.watch(fnA);
+    targetB.watch(fnB);
+
+    spread({
+      source,
+      targets: {
+        first: targetA,
+        second: targetB,
+      },
+    });
+
+    source(null);
+    source(undefined);
+
+    expect(fnA).toBeCalledTimes(0);
+    expect(fnB).toBeCalledTimes(0);
+  });
+
+  test("no object in source", () => {
+    const source = createEvent<unknown>();
+    const targetA = createEvent();
+    const targetB = createEvent();
+
+    const fnA = vi.fn();
+    const fnB = vi.fn();
+    targetA.watch(fnA);
+    targetB.watch(fnB);
+
+    spread({
+      source,
+      targets: {
+        first: targetA,
+        second: targetB,
+      },
+    });
+
+    source();
+    source(1);
+    source("");
+    source(false);
+    source(() => undefined);
+    source(Symbol(1));
+
+    expect(fnA).toBeCalledTimes(0);
+    expect(fnB).toBeCalledTimes(0);
+  });
+});

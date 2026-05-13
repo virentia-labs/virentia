@@ -1,0 +1,84 @@
+/*
+ * Copyright (c) 2019 Zero Bias https://github.com/zerobias
+ * SPDX-License-Identifier: MIT
+ */
+
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  test,
+  vi,
+  type Mock,
+  type MockInstance,
+} from "vitest";
+
+import { restore, createEvent, createEffect, Effect } from "@virentia/effector";
+
+describe("restore object", () => {
+  test("shape", () => {
+    const shape = restore({
+      foo: "foo",
+      bar: 0,
+    });
+    expect(shape.foo.getState()).toBe("foo");
+    expect(shape.bar.getState()).toBe(0);
+  });
+  test("array", () => {
+    const arr = restore(["foo", 0] as const);
+    expect(arr[0].getState()).toBe("foo");
+    expect(arr[1].getState()).toBe(0);
+    expect(Array.isArray(arr)).toBe(true);
+  });
+});
+
+test("restore event", () => {
+  const event = createEvent<string>();
+
+  const shape = restore(event, "def");
+  expect(shape.getState()).toBe("def");
+  event("foo");
+  expect(shape.getState()).toBe("foo");
+});
+
+test("restore effect", async () => {
+  const fn = vi.fn();
+  const fx: Effect<string, number, string> = createEffect();
+  fx.use((text) => text.length);
+  const shape = restore(fx, -1);
+  shape.watch(fn);
+  expect(shape.getState()).toBe(-1);
+  await fx("foo");
+  expect(shape.getState()).toBe(3);
+  expect(fn).toHaveBeenCalledTimes(2);
+  fx.use(() => {
+    throw "err";
+  });
+  await expect(fx("bar")).rejects.toBe("err");
+  expect(fn).toHaveBeenCalledTimes(2);
+});
+test("all together", () => {
+  const keyPressed = createEvent<string>();
+
+  const calculate = createEffect<number, string>();
+  const shape = restore({
+    index: 0,
+    press: restore(keyPressed, " "),
+    sqrt: restore(calculate, "0"),
+  });
+  calculate.use((n) => Promise.resolve((n * n).toString()));
+  expect(shape.index.getState()).toBe(0);
+});
+
+test("babel plugin naming", () => {
+  const event = createEvent();
+  const foo = restore(event, null);
+  //@ts-expect-error
+  const bar = restore(event, null, { name: "baz" });
+  expect(foo.shortName).toBe("foo");
+  expect(bar.shortName).toBe("baz");
+});

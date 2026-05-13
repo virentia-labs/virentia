@@ -53,11 +53,13 @@ export interface Reaction {
 export interface ReactionConfig<Payload, On extends UnitList<Payload> = UnitList<Payload>> {
   on: On;
   name?: string;
+  scope?: Scope | readonly Scope[];
   run: (payload: Payload) => void;
 }
 
 export interface AutoReactionConfig {
   name?: string;
+  scope?: Scope | readonly Scope[];
   run(): void;
 }
 
@@ -87,6 +89,8 @@ export function reaction(
   const explicit = typeof input === "object" && "on" in input;
   const runHandler = typeof input === "function" ? input : input.run;
   const name = typeof input === "object" ? input.name : undefined;
+  const configuredScopes = typeof input === "object" && input.scope ? toArray(input.scope) : null;
+  const allowedScopes = configuredScopes ? new Set(configuredScopes) : null;
   const currentDependencies = new Set<Node>();
   let stopped = false;
 
@@ -97,7 +101,7 @@ export function reaction(
       internal: false,
     }),
     run: (ctx) => {
-      if (stopped) {
+      if (stopped || !matchesScope(allowedScopes, ctx.scope)) {
         return ctx.value;
       }
 
@@ -113,8 +117,15 @@ export function reaction(
 
   const runAuto = (): void => {
     const activeScope = getActiveScope();
+    const configuredScope = configuredScopes?.[0];
+    const scopeForRun = configuredScope ?? activeScope;
     const trackingScope = activeScope ? null : createTrackingScope();
-    const previousScope = trackingScope ? setActiveScope(trackingScope) : null;
+    const previousScope =
+      scopeForRun && scopeForRun !== activeScope
+        ? setActiveScope(scopeForRun)
+        : trackingScope
+          ? setActiveScope(trackingScope)
+          : null;
 
     try {
       const collected = collectNodes(() => {
@@ -123,14 +134,16 @@ export function reaction(
 
       reconcileDependencies(node, currentDependencies, collected.nodes);
     } finally {
-      if (trackingScope) {
+      if (scopeForRun && scopeForRun !== activeScope) {
+        setActiveScope(previousScope);
+      } else if (trackingScope) {
         setActiveScope(previousScope);
       }
     }
   };
 
   if (explicit) {
-    for (const source of asArray(input.on)) {
+    for (const source of toArray(input.on)) {
       attach(source.node, node);
       currentDependencies.add(source.node);
     }
@@ -198,12 +211,17 @@ function detach(source: Node, next: Node): void {
   }
 }
 
-function asArray(value: UnitList): readonly AnyUnit[] {
-  return (Array.isArray(value) ? value : [value]) as readonly AnyUnit[];
+function toArray<T>(value: T | readonly T[]): readonly T[] {
+  return Array.isArray(value) ? (value as readonly T[]) : [value as T];
+}
+
+function matchesScope(allowedScopes: ReadonlySet<Scope> | null, scope: Scope | null): boolean {
+  return !allowedScopes || (scope !== null && allowedScopes.has(scope));
 }
 
 function createTrackingScope(): Scope {
   return {
     values: new Map(),
+    handlers: new Map(),
   };
 }

@@ -1,4 +1,5 @@
 import type { Scope } from "./types";
+import type { Effect, EffectHandler } from "../units/effect";
 
 let activeScope: Scope | null = null;
 
@@ -51,6 +52,13 @@ export function requireActiveScope(): Scope {
   }
 
   return activeScope;
+}
+
+export function getScopeHandler<Params, Done>(
+  scope: Scope,
+  effect: Effect<Params, Done, any>,
+): EffectHandler<Params, Done> | undefined {
+  return scope.handlers.get(effect) as EffectHandler<Params, Done> | undefined;
 }
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
