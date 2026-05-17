@@ -1,6 +1,13 @@
 import { createNode, run } from "../kernel";
 import type { Node } from "../kernel";
 import {
+  isPendingStoreValue,
+  readTransactionStore,
+  withTransaction,
+  writeTransactionStore,
+} from "../kernel/transaction";
+import type { StoreCommitResult } from "../kernel/transaction";
+import {
   prepareInspectorSnapshotNode,
   readInspectorNodeMeta,
   withInspectorMeta,
@@ -128,6 +135,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
         throw new Error("Store update requires scope");
       }
 
+      const scope = ctx.scope;
       const value = ctx.value;
 
       if (isCommittedStoreUpdate<T>(value)) {
@@ -141,18 +149,14 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
         return readState(ctx.scope, id, initial);
       }
 
-      const previous = readState(ctx.scope, id, initial);
+      const previous = readCommittedState(scope, id, initial);
 
       if (Object.is(previous, next)) {
         ctx.stop();
         return previous;
       }
 
-      ctx.scope.values.set(id, next);
-
-      for (const subscriber of subscribers) {
-        subscriber(next, ctx.scope);
-      }
+      commitImmediateState(scope, next);
 
       return next;
     },
@@ -258,23 +262,62 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
       return true;
     }
 
+    withTransaction(() => {
+      writeTransactionStore({
+        id,
+        scope,
+        commit: (value) => commitState(scope, value),
+      }, next);
+    });
+
+    return true;
+  }
+
+  function commitState(scope: Scope, next: T): StoreCommitResult {
+    if (options.hasSkipToken && Object.is(next, options.skipToken)) {
+      return {
+        changed: false,
+        notify: noop,
+      };
+    }
+
+    const previous = readCommittedState(scope, id, initial);
+
+    if (Object.is(previous, next)) {
+      return {
+        changed: false,
+        notify: noop,
+      };
+    }
+
+    scope.values.set(id, next);
+
+    return {
+      changed: true,
+      notify() {
+        for (const subscriber of subscribers) {
+          subscriber(next, scope);
+        }
+
+        void run({
+          unit: node,
+          payload: {
+            [committedStoreUpdate]: true,
+            value: next,
+          },
+          scope,
+          batchKey: id,
+        });
+      },
+    };
+  }
+
+  function commitImmediateState(scope: Scope, next: T): void {
     scope.values.set(id, next);
 
     for (const subscriber of subscribers) {
       subscriber(next, scope);
     }
-
-    void run({
-      unit: node,
-      payload: {
-        [committedStoreUpdate]: true,
-        value: next,
-      },
-      scope,
-      batchKey: id,
-    });
-
-    return true;
   }
 }
 
@@ -585,12 +628,24 @@ function readComputedState<T>(scope: Scope, id: symbol): ComputedState<T> {
 }
 
 function readState<T>(scope: Scope, id: symbol, initial: T): T {
+  const pending = readTransactionStore<T>(scope, id);
+
+  if (isPendingStoreValue(pending)) {
+    return pending as T;
+  }
+
+  return readCommittedState(scope, id, initial);
+}
+
+function readCommittedState<T>(scope: Scope, id: symbol, initial: T): T {
   if (!scope.values.has(id)) {
     scope.values.set(id, initial);
   }
 
   return scope.values.get(id) as T;
 }
+
+function noop(): void {}
 
 function assignProperty<T>(state: T, property: PropertyKey, value: unknown): T {
   if (Array.isArray(state)) {

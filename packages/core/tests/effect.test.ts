@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { effect, reaction, scope, scoped } from "../lib";
+import { effect, event, reaction, scope, scoped, store } from "../lib";
 
 describe("effect", () => {
   it("returns handler result and emits success units", async () => {
@@ -134,6 +134,50 @@ describe("effect", () => {
     scoped(appScope, () => {
       expect(waitFx.$pending.value).toBe(false);
       expect(waitFx.$inFlight.value).toBe(0);
+    });
+  });
+
+  it("publishes lifecycle stores immediately when an async effect starts inside a transaction", async () => {
+    const appScope = scope();
+    const submitted = event();
+    const value = store(0);
+    let resolveFx!: (value: string) => void;
+    const saveFx = effect(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveFx = resolve;
+        }),
+    );
+    const pendingValues: boolean[] = [];
+
+    saveFx.$pending.subscribe((next) => {
+      pendingValues.push(next);
+    });
+    reaction({
+      on: submitted,
+      run() {
+        value.value = 1;
+        void saveFx();
+      },
+    });
+
+    const promise = scoped(appScope, () => submitted());
+    await waitForMicrotask();
+
+    expect(pendingValues).toEqual([true]);
+    scoped(appScope, () => {
+      expect(value.value).toBe(1);
+      expect(saveFx.$pending.value).toBe(true);
+      expect(saveFx.$inFlight.value).toBe(1);
+    });
+
+    resolveFx("ok");
+    await promise;
+
+    expect(pendingValues).toEqual([true, false]);
+    scoped(appScope, () => {
+      expect(saveFx.$pending.value).toBe(false);
+      expect(saveFx.$inFlight.value).toBe(0);
     });
   });
 

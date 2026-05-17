@@ -11,21 +11,27 @@ import {
   registerInspectorScope,
   shouldStopAfterInspectorNode,
 } from "./inspector";
+import { commitActiveTransaction, enterTransaction, exitTransaction } from "./transaction";
 
-const queue: KernelWorkItem[] = [];
-const batchedItems = new Map<string, KernelWorkItem>();
 const scopeIds = new WeakMap<object, number>();
-const flushWaiters: FlushWaiter[] = [];
 
 let nextPageId = 0;
 let nextImplicitNodeId = 0;
 let nextScopeId = 0;
-let queueHead = 0;
-let flushing = false;
+let activeDrain: DrainContext | null = null;
+let runningNodeDepth = 0;
 
 interface FlushWaiter {
   resolve(): void;
   reject(error: unknown): void;
+}
+
+interface DrainContext {
+  queue: KernelWorkItem[];
+  batchedItems: Map<string, KernelWorkItem>;
+  waiters: FlushWaiter[];
+  pending: Promise<void>[];
+  queueHead: number;
 }
 
 export const rootPage = createPage();
@@ -79,7 +85,17 @@ export function writePageContext<T>(
   page.contextMap.set(id, value);
 }
 
-function push(item: KernelWorkItem): void {
+function createDrainContext(): DrainContext {
+  return {
+    queue: [],
+    batchedItems: new Map(),
+    waiters: [],
+    pending: [],
+    queueHead: 0,
+  };
+}
+
+function push(context: DrainContext, item: KernelWorkItem): void {
   const enabled = item.node.enabled;
 
   if (typeof enabled === "function" ? !enabled() : enabled === false) {
@@ -89,7 +105,7 @@ function push(item: KernelWorkItem): void {
   if (item.batchKey !== undefined) {
     const nodeId = item.node.id ?? (item.node.id = ++nextImplicitNodeId);
     item.queueKey = `${getScopeId(item.scope)}:${String(nodeId)}:${String(item.batchKey)}`;
-    const queued = batchedItems.get(item.queueKey);
+    const queued = context.batchedItems.get(item.queueKey);
 
     if (queued) {
       queued.payload = item.payload;
@@ -100,10 +116,10 @@ function push(item: KernelWorkItem): void {
       return;
     }
 
-    batchedItems.set(item.queueKey, item);
+    context.batchedItems.set(item.queueKey, item);
   }
 
-  queue.push(item);
+  context.queue.push(item);
 }
 
 function getScopeId(scope: object | null): number {
@@ -139,8 +155,13 @@ export async function run(options: RunOptions): Promise<void> {
 
   registerInspectorScope(scope);
 
+  const drain =
+    activeDrain && runningNodeDepth === 0
+      ? activeDrain
+      : createDrainContext();
+
   for (const node of units) {
-    push({
+    push(drain, {
       node,
       page,
       scope,
@@ -153,192 +174,295 @@ export async function run(options: RunOptions): Promise<void> {
     });
   }
 
-  if (flushing) {
-    return waitForFlush();
+  if (activeDrain && runningNodeDepth === 0) {
+    return waitForDrain(activeDrain);
   }
 
-  flushing = true;
+  if (activeDrain && runningNodeDepth > 0) {
+    const parentDrain = activeDrain;
+    const result = drainQueue(drain);
+
+    if (isPromiseLike(result)) {
+      parentDrain.pending.push(result);
+    }
+
+    return result;
+  }
 
   const previousPage = currentPage;
   const previousScope = getActiveScope();
-  let flushError: unknown;
-  let hasFlushError = false;
 
   try {
-    while (queueHead < queue.length) {
-      const item = queue[queueHead++];
+    const result = drainQueue(drain);
 
-      if (item.queueKey) batchedItems.delete(item.queueKey);
-
-      if (queueHead === queue.length) {
-        queueHead = 0;
-        queue.length = 0;
-      }
-
-      const node = item.node;
-      const itemPage = item.page;
-      let ctx: KernelExecutionContext;
-      const launchFromContext = (unit: Node | readonly Node[], value = ctx.value): void => {
-        const nextNodes = Array.isArray(unit) ? unit : [unit];
-
-        for (const nextNode of nextNodes) {
-          push({
-            node: nextNode,
-            page: itemPage,
-            scope: ctx.scope,
-            payload: value,
-            value,
-            error: undefined,
-            failed: false,
-            meta: ctx.meta,
-            batchKey: item.batchKey,
-          });
-        }
-      };
-
-      ctx = {
-        node,
-        scope: item.scope,
-        payload: item.payload,
-        value: item.value,
-        error: item.error,
-        failed: item.failed,
-        stopped: false,
-        meta: item.meta,
-        stop: stopContext,
-        fail: failContext,
-        launch: launchFromContext,
-        getContext<T>(context: KernelContextManager<T>): T {
-          return readPageContext(itemPage, context);
-        },
-        setContext<T>(context: KernelContextManager<T>, value: T): void {
-          writePageContext(itemPage, context, value);
-        },
-      };
-
-      currentPage = item.page;
-      setActiveScope(item.scope);
-
-      const inspected = isInspectorEnabled();
-      const startedAt = inspected ? inspectorNow() : 0;
-
-      if (inspected) {
-        emitInspectorNodeStart({
-          node,
-          scope: item.scope,
-          payload: item.payload,
-          value: item.value,
-          meta: item.meta,
-          timestamp: startedAt,
-        });
-      }
-
-      try {
-        if (node.run) {
-          const result = node.run(ctx);
-
-          if (isPromiseLike(result)) {
-            currentPage = previousPage;
-            setActiveScope(previousScope);
-
-            try {
-              ctx.value = await result;
-              ctx.error = undefined;
-              ctx.failed = false;
-            } catch (error) {
-              ctx.value = undefined;
-              ctx.error = error;
-              ctx.failed = true;
-            } finally {
-              currentPage = item.page;
-              setActiveScope(item.scope);
-            }
-          } else {
-            ctx.value = result;
-          }
-        }
-
-        if (shouldStopAfterInspectorNode(node)) {
-          ctx.stop();
-          emitInspectorBreakpointHit({
-            node,
-            scope: item.scope,
-            payload: item.payload,
-            value: ctx.value,
-            meta: item.meta,
-            timestamp: inspectorNow(),
-          });
-        }
-      } catch (error) {
-        if (inspected) {
-          emitInspectorNodeEnd({
-            node,
-            scope: item.scope,
-            payload: item.payload,
-            value: ctx.value,
-            error,
-            failed: true,
-            stopped: true,
-            meta: item.meta,
-            timestamp: inspectorNow(),
-            duration: inspectorNow() - startedAt,
-          });
-        }
-
-        throw error;
-      }
-
-      if (inspected) {
-        emitInspectorNodeEnd({
-          node,
-          scope: item.scope,
-          payload: item.payload,
-          value: ctx.value,
-          error: ctx.error,
-          failed: ctx.failed,
-          stopped: ctx.stopped,
-          meta: item.meta,
-          timestamp: inspectorNow(),
-          duration: inspectorNow() - startedAt,
-        });
-      }
-
-      if (ctx.stopped) continue;
-
-      for (const next of node.next ?? []) {
-        push({
-          node: next,
-          page: item.page,
-          scope: ctx.scope,
-          payload: ctx.value,
-          value: ctx.value,
-          error: undefined,
-          failed: false,
-          meta: ctx.meta,
-          batchKey: item.batchKey,
-        });
-      }
+    if (isPromiseLike(result)) {
+      await result;
     }
   } catch (error) {
-    flushError = error;
-    hasFlushError = true;
     throw error;
   } finally {
     currentPage = previousPage;
     setActiveScope(previousScope);
-    flushing = false;
-    settleFlushWaiters(hasFlushError, flushError);
   }
 }
 
-function waitForFlush(): Promise<void> {
+function drainQueue(drain: DrainContext): Promise<void> | void {
+  const previousDrain = activeDrain;
+
+  activeDrain = drain;
+
+  return continueDrain(drain, previousDrain);
+}
+
+function continueDrain(
+  drain: DrainContext,
+  previousDrain: DrainContext | null,
+): Promise<void> | void {
+  try {
+    while (drain.queueHead < drain.queue.length) {
+      enterTransaction();
+
+      while (drain.queueHead < drain.queue.length) {
+        const item = drain.queue[drain.queueHead++];
+
+        if (item.queueKey) drain.batchedItems.delete(item.queueKey);
+
+        const result = processItem(drain, item);
+
+        if (isPromiseLike(result)) {
+          exitTransaction();
+          activeDrain = previousDrain;
+
+          return result.then(
+            () => {
+              activeDrain = drain;
+              return continueDrain(drain, previousDrain);
+            },
+            (error) => {
+              activeDrain = previousDrain;
+              settleFlushWaiters(drain, true, error);
+              throw error;
+            },
+          );
+        }
+      }
+
+      drain.queueHead = 0;
+      drain.queue.length = 0;
+      exitTransaction();
+
+      if (drain.pending.length > 0) {
+        const pending = drain.pending.splice(0);
+
+        activeDrain = previousDrain;
+
+        return Promise.all(pending).then(
+          () => {
+            activeDrain = drain;
+            return continueDrain(drain, previousDrain);
+          },
+          (error) => {
+            activeDrain = previousDrain;
+            settleFlushWaiters(drain, true, error);
+            throw error;
+          },
+        );
+      }
+    }
+  } catch (error) {
+    exitTransaction();
+    activeDrain = previousDrain;
+    settleFlushWaiters(drain, true, error);
+    throw error;
+  }
+
+  activeDrain = previousDrain;
+  settleFlushWaiters(drain, false, undefined);
+}
+
+function processItem(drain: DrainContext, item: KernelWorkItem): Promise<void> | void {
+  const node = item.node;
+  const itemPage = item.page;
+  let ctx: KernelExecutionContext;
+  const launchFromContext = (unit: Node | readonly Node[], value = ctx.value): void => {
+    const nextNodes = Array.isArray(unit) ? unit : [unit];
+
+    for (const nextNode of nextNodes) {
+      push(drain, {
+        node: nextNode,
+        page: itemPage,
+        scope: ctx.scope,
+        payload: value,
+        value,
+        error: undefined,
+        failed: false,
+        meta: ctx.meta,
+        batchKey: item.batchKey,
+      });
+    }
+  };
+
+  ctx = {
+    node,
+    scope: item.scope,
+    payload: item.payload,
+    value: item.value,
+    error: item.error,
+    failed: item.failed,
+    stopped: false,
+    meta: item.meta,
+    stop: stopContext,
+    fail: failContext,
+    launch: launchFromContext,
+    getContext<T>(context: KernelContextManager<T>): T {
+      return readPageContext(itemPage, context);
+    },
+    setContext<T>(context: KernelContextManager<T>, value: T): void {
+      writePageContext(itemPage, context, value);
+    },
+  };
+
+  currentPage = item.page;
+  setActiveScope(item.scope);
+
+  const inspected = isInspectorEnabled();
+  const startedAt = inspected ? inspectorNow() : 0;
+
+  if (inspected) {
+    emitInspectorNodeStart({
+      node,
+      scope: item.scope,
+      payload: item.payload,
+      value: item.value,
+      meta: item.meta,
+      timestamp: startedAt,
+    });
+  }
+
+  try {
+    runningNodeDepth += 1;
+
+    try {
+      if (node.run) {
+        const result = node.run(ctx);
+
+        if (isPromiseLike(result)) {
+          commitActiveTransaction();
+
+          const previousPage = currentPage;
+          const previousScope = getActiveScope();
+
+          currentPage = rootPage;
+          setActiveScope(null);
+
+          return Promise.resolve(result)
+            .then(
+              (value) => {
+                ctx.value = value;
+                ctx.error = undefined;
+                ctx.failed = false;
+              },
+              (error) => {
+                ctx.value = undefined;
+                ctx.error = error;
+                ctx.failed = true;
+              },
+            )
+            .then(() => {
+              currentPage = previousPage;
+              setActiveScope(previousScope);
+              finishItem(drain, item, ctx, inspected, startedAt);
+            });
+        } else {
+          ctx.value = result;
+        }
+      }
+    } finally {
+      runningNodeDepth -= 1;
+    }
+
+    finishItem(drain, item, ctx, inspected, startedAt);
+  } catch (error) {
+    if (inspected) {
+      emitInspectorNodeEnd({
+        node,
+        scope: item.scope,
+        payload: item.payload,
+        value: ctx.value,
+        error,
+        failed: true,
+        stopped: true,
+        meta: item.meta,
+        timestamp: inspectorNow(),
+        duration: inspectorNow() - startedAt,
+      });
+    }
+
+    throw error;
+  }
+}
+
+function finishItem(
+  drain: DrainContext,
+  item: KernelWorkItem,
+  ctx: KernelExecutionContext,
+  inspected: boolean,
+  startedAt: number,
+): void {
+  const node = item.node;
+
+  if (shouldStopAfterInspectorNode(node)) {
+    ctx.stop();
+    emitInspectorBreakpointHit({
+      node,
+      scope: item.scope,
+      payload: item.payload,
+      value: ctx.value,
+      meta: item.meta,
+      timestamp: inspectorNow(),
+    });
+  }
+
+  if (inspected) {
+    emitInspectorNodeEnd({
+      node,
+      scope: item.scope,
+      payload: item.payload,
+      value: ctx.value,
+      error: ctx.error,
+      failed: ctx.failed,
+      stopped: ctx.stopped,
+      meta: item.meta,
+      timestamp: inspectorNow(),
+      duration: inspectorNow() - startedAt,
+    });
+  }
+
+  if (ctx.stopped) return;
+
+  for (const next of node.next ?? []) {
+    push(drain, {
+      node: next,
+      page: item.page,
+      scope: ctx.scope,
+      payload: ctx.value,
+      value: ctx.value,
+      error: undefined,
+      failed: false,
+      meta: ctx.meta,
+      batchKey: item.batchKey,
+    });
+  }
+}
+
+function waitForDrain(drain: DrainContext): Promise<void> {
   return new Promise((resolve, reject) => {
-    flushWaiters.push({ resolve, reject });
+    drain.waiters.push({ resolve, reject });
   });
 }
 
-function settleFlushWaiters(failed: boolean, error: unknown): void {
-  const waiters = flushWaiters.splice(0);
+function settleFlushWaiters(drain: DrainContext, failed: boolean, error: unknown): void {
+  const waiters = drain.waiters.splice(0);
 
   for (const waiter of waiters) {
     if (failed) {

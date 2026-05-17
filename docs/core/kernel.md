@@ -46,6 +46,10 @@ const gate = createNode((ctx) => {
 });
 ```
 
+## Transactions
+
+The user-facing model is described in [Transactions](/core/transactions). Runtime mechanics and design rationale live in [Deep Knowledge](/guide/deep-knowledge).
+
 ## Kernel Contexts
 
 Kernel contexts pass execution metadata through a run chain.

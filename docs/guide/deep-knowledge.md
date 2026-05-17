@@ -61,6 +61,105 @@ Each queued item carries:
 
 The scope is always part of the queued work. That is the important bit: once a unit starts in a scope, downstream nodes receive that same scope unless a lower-level integration intentionally changes it.
 
+## Transactions And Drain Context
+
+Every `run` call puts work into a drain context. A drain owns the queue, batched work items, waiters for callers that are waiting for the drain to finish, and pending child promises created by nested async work.
+
+When there is no active drain, `run` creates one and drains it. When `run` is called while commit notifications are already draining, the work is appended to the active drain and the caller waits for that drain.
+
+The important case is a direct unit call inside a running node:
+
+```ts
+reaction({
+  on: opened,
+  run() {
+    first();
+    second();
+  },
+});
+```
+
+While `first()` is called, the kernel is already inside a node. Virentia creates a child drain and executes it immediately. Then control returns to user code and `second()` runs. This is why explicit nested calls behave like normal JavaScript calls rather than being moved into a later priority wave.
+
+Graph edges still use the current drain queue. A node can enqueue downstream work through `node.next` or `ctx.launch`.
+
+```ts
+const gate = createNode((ctx) => {
+  ctx.stop();
+  ctx.launch(nextNode, "value");
+});
+```
+
+`ctx.launch` forwards the current scope, page context, metadata, value, and batch key into the same drain. It is useful for low-level adapters that need to route execution without pretending to be user-written synchronous calls.
+
+## Transaction State And Commit
+
+The active transaction stores pending writes by scope and store id:
+
+```ts
+type Transaction = {
+  depth: number;
+  writes: WeakMap<Scope, Map<StoreId, PendingWrite>>;
+  scopes: Scope[];
+};
+```
+
+The `WeakMap` isolates writes per scope. The inner `Map` means each store has one pending write per transaction. If a store is written several times, only the latest pending value is committed.
+
+Store reads first check the transaction:
+
+```txt
+read store
+  pending value exists in current transaction -> return pending value
+  otherwise -> return committed scope value
+```
+
+Committing is split into two phases:
+
+```txt
+phase 1:
+  apply all changed store values
+  collect notify callbacks
+
+phase 2:
+  run notify callbacks
+```
+
+Subscribers should observe a committed graph, not a half-applied set of store writes. If two stores were changed in the same transaction, both committed values are installed before notifications start.
+
+Notification callbacks can enqueue more work. That work goes through the active drain and, if it writes stores, through a new transaction. This keeps state writes and observer reactions separated without requiring a public batching API.
+
+## Async Boundaries
+
+If a node returns a promise, the kernel commits the active transaction before awaiting it. The continuation resumes later in the same scope and page context, but with a fresh transaction.
+
+```txt
+node starts
+  write draft
+  return promise
+commit current transaction
+await promise
+resume node
+enqueue downstream work
+```
+
+The runtime deliberately does not keep drafts alive across `await`. A long-lived draft would make stale writes, conflict resolution, and memory lifetime much harder to explain and debug. `scoped` preserves scope and causal context through async work; it does not preserve the transaction draft.
+
+Effect lifecycle stores are an exception to domain-state batching. `$pending` and `$inFlight` are runtime execution signals, so they update immediately when async work starts or settles. Lifecycle events such as `started`, `doneData`, `failData`, and `settled` remain normal units; reactions to those events write business stores through the normal transactional path.
+
+## Why Not Priority Layers
+
+Virentia avoids a priority scheduler where store updates, derived invalidation, lifecycle units, and user reactions compete in hidden layers. That style can be powerful, but it also makes small changes in graph shape affect ordering in surprising ways.
+
+The kernel instead follows two rules:
+
+- explicit synchronous calls run now, in JavaScript order;
+- graph edges are queued in the current drain and observe committed state after store commits.
+
+Sibling reactions attached to the same source still have deterministic runtime order, but that order is not meant to define business decisions. If order matters, model it with explicit calls or react to committed state.
+
+Warnings about read-after-write between sibling reactions and several sibling writes to the same store should be diagnostics, not a separate execution semantic. The runtime should not reorder work to "fix" such a model; devtools or runtime diagnostics should show the causality chain, source unit, scope, which reactions read or wrote the store, and why the result depends on registration order.
+
 ## Boundaries And Scope Context
 
 `allSettled(unit, { scope })` is the cleanest boundary because scope is explicit. It creates graph work with the given scope and waits until async graph work settles.

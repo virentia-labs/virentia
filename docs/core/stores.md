@@ -40,6 +40,22 @@ profile.age += 1;
 
 Direct reads and writes need a scope in the current execution context. If you are not inside a reaction, effect handler, or another model run, open the scope with `scoped(scope, fn)`.
 
+Store writes are transactional. Several writes made during one synchronous unit tree are batched into one commit, and reactions observe the committed final value.
+
+```ts
+reaction({
+  on: incremented,
+  run() {
+    count.value++;
+    count.value++;
+  },
+});
+```
+
+Inside the transaction, later code reads the current draft value. Outside the transaction, subscribers and derived stores are notified after commit.
+
+The full execution model is described in [Transactions](/core/transactions).
+
 ## Derived Stores
 
 Use a derived store when a value fully follows another value. For example, a search label can be derived from the query instead of being updated by hand in every reaction.

@@ -12,6 +12,7 @@ Try not to mix those roles. If an event starts owning state, it becomes hard to 
 - [Events](/core/events) explain how the model learns that something happened.
 - [Effects](/core/effects) explain how async work and its lifecycle stay inside the model.
 - [Reactions](/core/reactions) explain how to describe rules between stores, events, and effects.
+- [Transactions](/core/transactions) explain when store writes become visible and how sync unit calls are ordered.
 - [Lazy Models](/core/lazy-models) explain how to load a model module only when one of its units is launched.
 
 After that, read [Scopes](/core/scopes), because without a scope there is no concrete store value.

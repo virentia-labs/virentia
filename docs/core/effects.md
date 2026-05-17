@@ -15,6 +15,10 @@ An effect is callable, but that is not its main value. Its main value is making 
 
 An effect exposes result events and state stores. `started` receives call params. `done` and `failed` receive params with the result or error. `doneData` and `failData` expose only the result or error. `settled` and `finally` run in both cases. `$pending` tells whether any call is active, and `$inFlight` stores the number of active calls.
 
+Effect lifecycle state is published immediately when async work starts or settles. It is not hidden until the surrounding business transaction commits, because UI often needs `$pending` and `$inFlight` as execution state rather than domain state.
+
+This lifecycle exception is part of the broader [transaction model](/core/transactions).
+
 ```ts
 searchFx.started;
 searchFx.done;

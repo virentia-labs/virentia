@@ -47,6 +47,6 @@ One model, two states. That is the basic Virentia mechanism.
 
 ## What Next
 
-Start with the main units: [stores](/core/stores), [events](/core/events), [effects](/core/effects), and [reactions](/core/reactions). Then read [Scopes](/core/scopes) to understand where values live and how `scoped` works. If models are created and removed at runtime, read [Owners and Cleanup](/core/owners).
+Start with the main units: [stores](/core/stores), [events](/core/events), [effects](/core/effects), and [reactions](/core/reactions). Then read [Transactions](/core/transactions) to understand when writes become visible, and [Scopes](/core/scopes) to understand where values live and how `scoped` works. If models are created and removed at runtime, read [Owners and Cleanup](/core/owners).
 
 [Low-level Kernel](/core/kernel) is only needed for adapters, devtools, and custom primitives.
