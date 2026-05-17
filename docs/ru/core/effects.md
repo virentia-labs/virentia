@@ -127,12 +127,12 @@ export const searchModel = {
 
 Так loading, результат, ошибка и отмена остаются частью модели, а не расползаются по компонентам. UI может читать `loading`, `requests`, `status`, `results` и просто вызывать `searchSubmitted` или `searchCancelled`.
 
-## attach
+## Варианты эффектов
 
-`attach` нужен, когда параметры эффекта собираются из двух мест: часть приходит вместе с вызовом, а часть уже лежит в сторах модели. Типичный пример — запрос, которому нужен id из события и token из текущего scope.
+`effect.variant` нужен, когда модели требуется своя публичная операция, но сама работа уже описана в другом эффекте. Это частый случай для API-эффектов: несколько моделей могут использовать один transport handler, но держать отдельные `$pending`, `doneData`, `failData` и `aborted`.
 
 ```ts
-import { attach, effect, store } from "@virentia/core";
+import { effect, store } from "@virentia/core";
 
 const token = store("");
 
@@ -145,16 +145,23 @@ const requestFx = effect(async (params: { id: number; token: string }, { signal 
   return response.json();
 });
 
-const authorizedRequestFx = attach({
-  source: token,
-  effect: requestFx,
-  mapParams: (id: number, token: string) => ({ id, token }),
-});
+const authorizedRequestFx = requestFx.variant("authorizedRequestFx", (id: number) => ({
+  id,
+  token: token.value,
+}));
 ```
 
-Когда `authorizedRequestFx(42)` вызывается в scope, `attach` читает `token` именно из этого scope и передает в обработчик уже собранные params. `source` может быть одним стором, массивом сторов или объектом сторов.
+Когда `authorizedRequestFx(42)` вызывается в scope, mapper читает `token` именно из этого scope и передает собранные params в обработчик `requestFx`.
 
-Если передать существующий эффект, `attach` переиспользует его обработчик. Жизненный цикл при этом принадлежит новому эффекту: читать `$pending`, `doneData`, `failData` и `aborted` обычно нужно у `authorizedRequestFx`.
+Жизненный цикл принадлежит варианту. Вызов `authorizedRequestFx` не вызывает `requestFx.doneData` и не переводит `requestFx.$pending` в `true`. При этом scoped handler override базового эффекта сохраняется: в тесте можно заменить `requestFx` один раз, и все его варианты будут использовать этот handler.
+
+Если параметры вызова уже совпадают с базовым эффектом, mapper не нужен:
+
+```ts
+const profileLoadUserFx = requestFx.variant("profileLoadUserFx");
+```
+
+`attach` остается доступным для совместимости с кодом, которому удобны `source` и `mapParams`, но в новом коде Virentia обычно лучше использовать `variant`: сторы являются обычными scoped-значениями, поэтому `token.value` читается яснее, чем отдельный список источников.
 
 ## Отмена
 

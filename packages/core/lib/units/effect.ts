@@ -48,6 +48,23 @@ export type EffectFinally<Params, Done, Fail> =
   | ({ status: "done" } & EffectDone<Params, Done>)
   | ({ status: "fail" } & EffectFailed<Params, Fail>);
 
+export type EffectParams<Fx> = Fx extends Effect<infer Params, any, any> ? Params : never;
+
+export type EffectDoneValue<Fx> = Fx extends Effect<any, infer Done, any> ? Done : never;
+
+export type EffectFailValue<Fx> = Fx extends Effect<any, any, infer Fail> ? Fail : never;
+
+export type EffectVariantParams<Call, BaseParams> = (call: Call) => BaseParams;
+
+export interface EffectVariantConfig<Call, BaseParams> {
+  name?: string;
+  params: EffectVariantParams<Call, BaseParams>;
+}
+
+export interface EffectVariantIdentityConfig {
+  name?: string;
+}
+
 export interface Effect<Params, Done, Fail = unknown> {
   (...call: EffectCallArgs<Params>): Promise<Done>;
 
@@ -64,6 +81,13 @@ export interface Effect<Params, Done, Fail = unknown> {
   readonly settled: Event<EffectFinally<Params, Done, Fail>>;
   readonly abort: EventCallable<unknown | void>;
   readonly aborted: Event<EffectAborted<Params>>;
+
+  variant(): Effect<Params, Done, Fail>;
+  variant(name: string): Effect<Params, Done, Fail>;
+  variant<Call>(params: EffectVariantParams<Call, Params>): Effect<Call, Done, Fail>;
+  variant<Call>(name: string, params: EffectVariantParams<Call, Params>): Effect<Call, Done, Fail>;
+  variant<Call>(config: EffectVariantConfig<Call, Params>): Effect<Call, Done, Fail>;
+  variant(config: EffectVariantIdentityConfig): Effect<Params, Done, Fail>;
 }
 
 const effectCallState = Symbol("virentia.effectCallState");
@@ -113,6 +137,20 @@ export function effect<Params, Done, Fail = unknown>(
   const abortEvent = event<unknown | void>(name ? `${name}.abort` : undefined);
   let inFlight = 0;
   let result: Effect<Params, Done, Fail>;
+
+  const variant: Effect<Params, Done, Fail>["variant"] = ((
+    first?: string | EffectVariantIdentityConfig | EffectVariantParams<unknown, Params>,
+    second?: EffectVariantParams<unknown, Params>,
+  ) => {
+    const variantName = resolveVariantName(first);
+    const mapParams = resolveVariantParams(first, second);
+
+    return effect<unknown, Done, Fail>((call, ctx) => {
+      const params = mapParams ? mapParams(call) : (call as Params);
+
+      return runEffectHandler(result, params, ctx);
+    }, variantName);
+  }) as Effect<Params, Done, Fail>["variant"];
 
   const createCall = (
     params: Params,
@@ -360,6 +398,7 @@ export function effect<Params, Done, Fail = unknown>(
       settled,
       abort,
       aborted,
+      variant,
     },
   );
 
@@ -406,6 +445,28 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   return (
     (typeof value === "object" || typeof value === "function") && value !== null && "then" in value
   );
+}
+
+function resolveVariantName(
+  value?: string | EffectVariantIdentityConfig | EffectVariantParams<unknown, unknown>,
+): string | undefined {
+  if (typeof value === "string") return value;
+  if (typeof value === "object" && value !== null) return value.name;
+
+  return undefined;
+}
+
+function resolveVariantParams<Params>(
+  first?: string | EffectVariantIdentityConfig | EffectVariantParams<unknown, Params>,
+  second?: EffectVariantParams<unknown, Params>,
+): EffectVariantParams<unknown, Params> | undefined {
+  if (typeof first === "function") return first;
+  if (typeof second === "function") return second;
+  if (typeof first === "object" && first !== null && "params" in first) {
+    return (first as EffectVariantConfig<unknown, Params>).params;
+  }
+
+  return undefined;
 }
 
 function noop(): void {}

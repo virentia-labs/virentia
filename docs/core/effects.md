@@ -127,12 +127,12 @@ export const searchModel = {
 
 Loading, result, error handling, and cancellation stay in the model instead of spreading through components. UI can read `loading`, `requests`, `status`, `results` and only call `searchSubmitted` or `searchCancelled`.
 
-## attach
+## Effect variants
 
-Use `attach` when effect params are assembled from two places: part of the data comes from the call, and part already lives in model stores. A common example is a request that needs an id from an event and a token from the current scope.
+Use `effect.variant` when a model needs its own public operation, but the actual work already exists in another effect. This is common for API effects: several models can reuse the same transport handler while keeping separate `$pending`, `doneData`, `failData`, and `aborted` units.
 
 ```ts
-import { attach, effect, store } from "@virentia/core";
+import { effect, store } from "@virentia/core";
 
 const token = store("");
 
@@ -145,16 +145,23 @@ const requestFx = effect(async (params: { id: number; token: string }, { signal 
   return response.json();
 });
 
-const authorizedRequestFx = attach({
-  source: token,
-  effect: requestFx,
-  mapParams: (id: number, token: string) => ({ id, token }),
-});
+const authorizedRequestFx = requestFx.variant("authorizedRequestFx", (id: number) => ({
+  id,
+  token: token.value,
+}));
 ```
 
-When `authorizedRequestFx(42)` runs in a scope, `attach` reads `token` from that scope and passes assembled params to the handler. Source can be one store, an array of stores, or an object of stores.
+When `authorizedRequestFx(42)` runs in a scope, the mapper reads `token` from that scope and passes assembled params to the handler of `requestFx`.
 
-If you pass an existing effect, `attach` reuses its handler. The lifecycle belongs to the new effect, so `$pending`, `doneData`, `failData`, and `aborted` are usually read from `authorizedRequestFx`.
+The lifecycle belongs to the variant. Calling `authorizedRequestFx` does not emit `requestFx.doneData` and does not make `requestFx.$pending` true. Scoped handler overrides of the base effect still apply, so tests can replace `requestFx` once and all variants will use that handler.
+
+If the call params already match the base effect, omit the mapper:
+
+```ts
+const profileLoadUserFx = requestFx.variant("profileLoadUserFx");
+```
+
+`attach` is still available for compatibility with code that prefers `source` and `mapParams`, but new Virentia code should usually use `variant`: stores are regular scoped values, so reading `token.value` is clearer than declaring a separate source list.
 
 ## Cancellation
 

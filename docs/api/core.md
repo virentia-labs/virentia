@@ -204,6 +204,20 @@ Abort running calls:
 await scoped(appScope, () => loadUserFx.abort(new Error("cancelled")));
 ```
 
+Create an independent variant over the same handler:
+
+```ts
+const profileLoadUserFx = loadUserFx.variant("profileLoadUserFx");
+const authorizedRequestFx = requestFx.variant("authorizedRequestFx", (id: number) => ({
+  id,
+  token: token.value,
+}));
+```
+
+The variant has its own lifecycle units. It reuses the base effect handler and scoped handler overrides, but calling the variant does not emit the base effect lifecycle.
+
+Use `EffectParams<typeof fx>`, `EffectDoneValue<typeof fx>`, and `EffectFailValue<typeof fx>` when a factory needs to reference an effect shape without importing a separately named params, result, or error type.
+
 ## attach
 
 Creates a new effect that reads source stores and assembles params before running.

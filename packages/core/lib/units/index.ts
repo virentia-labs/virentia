@@ -7,10 +7,16 @@ export type {
   EffectCallArgs,
   EffectCallOptions,
   EffectDone,
+  EffectDoneValue,
   EffectFailed,
+  EffectFailValue,
   EffectFinally,
   EffectHandler,
   EffectHandlerContext,
+  EffectParams,
+  EffectVariantConfig,
+  EffectVariantIdentityConfig,
+  EffectVariantParams,
 } from "./effect";
 export { event } from "./event";
 export type { Event, EventCallable, EventPayload } from "./event";

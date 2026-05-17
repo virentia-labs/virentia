@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import { effect, event, reaction, scope, scoped, store } from "../lib";
+import type { EffectParams } from "../lib";
 
 describe("effect", () => {
   it("returns handler result and emits success units", async () => {
@@ -190,6 +191,116 @@ describe("effect", () => {
 
     await expect(scoped(firstScope, () => doubleFx(2))).resolves.toBe(4);
     await expect(scoped(secondScope, () => doubleFx(2))).resolves.toBe(20);
+  });
+
+  it("creates identity variants with independent lifecycle units", async () => {
+    const appScope = scope();
+    const requestFx = effect(async (params: { id: number }) => `item:${params.id}`);
+    const profileRequestFx = requestFx.variant("profileRequestFx");
+    const values: unknown[] = [];
+
+    expectTypeOf<EffectParams<typeof profileRequestFx>>().toEqualTypeOf<{ id: number }>();
+
+    reaction({
+      on: requestFx.doneData,
+      run(value) {
+        values.push(["base", value]);
+      },
+    });
+    reaction({
+      on: profileRequestFx.doneData,
+      run(value) {
+        values.push(["variant", value]);
+      },
+    });
+
+    await expect(scoped(appScope, () => profileRequestFx({ id: 7 }))).resolves.toBe("item:7");
+
+    expect(values).toEqual([["variant", "item:7"]]);
+    scoped(appScope, () => {
+      expect(requestFx.$pending.value).toBe(false);
+      expect(requestFx.$inFlight.value).toBe(0);
+      expect(profileRequestFx.$pending.value).toBe(false);
+      expect(profileRequestFx.$inFlight.value).toBe(0);
+    });
+  });
+
+  it("maps variant params in the current scope and reuses scoped base handlers", async () => {
+    const token = store("root-token");
+    const requestFx = effect((params: { id: number; token: string }) => {
+      return `real:${params.id}:${params.token}`;
+    });
+    const authorizedRequestFx = requestFx.variant("authorizedRequestFx", (id: number) => ({
+      id,
+      token: token.value,
+    }));
+    const configuredRequestFx = requestFx.variant({
+      name: "configuredRequestFx",
+      params(id: string) {
+        return {
+          id: Number(id),
+          token: token.value,
+        };
+      },
+    });
+    const appScope = scope({
+      values: [[token, "scope-token"]],
+      handlers: [
+        [
+          requestFx,
+          (params: { id: number; token: string }) => `mock:${params.id}:${params.token}`,
+        ],
+      ],
+    });
+
+    expectTypeOf<EffectParams<typeof authorizedRequestFx>>().toEqualTypeOf<number>();
+    expectTypeOf<EffectParams<typeof configuredRequestFx>>().toEqualTypeOf<string>();
+
+    await expect(scoped(appScope, () => authorizedRequestFx(3))).resolves.toBe(
+      "mock:3:scope-token",
+    );
+    await expect(scoped(appScope, () => configuredRequestFx("4"))).resolves.toBe(
+      "mock:4:scope-token",
+    );
+  });
+
+  it("keeps abort lifecycle on a variant separate from the base effect", async () => {
+    const appScope = scope();
+    const reason = new Error("cancel variant");
+    const requestFx = effect<number, string, Error>(
+      (_params, { signal }) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(signal.reason);
+            },
+            { once: true },
+          );
+        }),
+    );
+    const variantFx = requestFx.variant("variantFx", (value: string) => Number(value));
+    const values: unknown[] = [];
+
+    reaction({
+      on: requestFx.aborted,
+      run(value) {
+        values.push(["base", value]);
+      },
+    });
+    reaction({
+      on: variantFx.aborted,
+      run(value) {
+        values.push(["variant", value]);
+      },
+    });
+
+    const promise = scoped(appScope, () => variantFx("4"));
+    await waitForMicrotask();
+    await variantFx.abort(reason);
+
+    await expect(promise).rejects.toBe(reason);
+    expect(values).toEqual([["variant", { params: "4", reason }]]);
   });
 });
 
