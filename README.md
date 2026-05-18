@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="docs/public/logo.svg" alt="Virentia" width="112" height="112">
-</p>
-
 # Virentia
 
 State manager for complex business logic.
@@ -65,17 +61,11 @@ pnpm install
 pnpm test
 pnpm typecheck
 pnpm build
-pnpm docs:dev
 ```
 
 ## Documentation
 
-The documentation lives in `docs` and is built with VitePress.
-
-```sh
-pnpm docs:build
-pnpm docs:dev
-```
+The documentation lives in [virentia-labs/documentation](https://github.com/virentia-labs/documentation).
 
 ## License
 

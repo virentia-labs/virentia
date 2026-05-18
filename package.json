@@ -16,9 +16,6 @@
   },
   "scripts": {
     "build": "pnpm -r build",
-    "docs:build": "vitepress build docs",
-    "docs:dev": "vitepress dev docs",
-    "docs:preview": "vitepress preview docs",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint .",
@@ -32,13 +29,11 @@
   "devDependencies": {
     "@babel/core": "7.29.0",
     "@changesets/cli": "2.31.0",
-    "@vue-flow/core": "^1.48.2",
     "effector": "23.4.4",
     "oxfmt": "^0.48.0",
     "oxlint": "^1.63.0",
     "tsdown": "^0.21.10",
     "typescript": "^6.0.3",
-    "vitepress": "^1.6.4",
     "vitest": "0.34.6"
   },
   "engines": {
