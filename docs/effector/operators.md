@@ -1,90 +1,43 @@
-# Operators
+# Effector operators
 
-The bridge includes common Effector-style operators.
-
-## sample
-
-Use `sample` to take state at the moment another unit fires.
+Use `effector.asEffector` when an Effector chain should call a Virentia unit.
 
 ```ts
 sample({
-  source: $count,
-  clock: submitted,
-  fn: (count, text) => `${text}:${count}`,
-  target: saved,
+  clock: effectorSubmitted,
+  source: $session,
+  fn: (session, id) => ({
+    id,
+    token: session.token,
+  }),
+  target: effector.asEffector(virentiaSubmitted),
 });
 ```
 
-With a filter:
+The returned unit is created in Effector and can be passed to Effector APIs.
+
+## Clock
+
+The same wrapper can be used as a clock:
 
 ```ts
 sample({
-  source: { prefix: $prefix, enabled: $enabled },
-  clock: submitted,
-  filter: ({ enabled }) => enabled,
-  fn: ({ prefix }, value) => `${prefix}${value}`,
-  target,
+  clock: effector.asEffector(virentiaSubmitted),
+  target: effectorSubmitted,
 });
 ```
 
-## combine
+Virentia events are forwarded after the current transaction finishes.
 
-Use `combine` for derived stores.
+## Association
 
-```ts
-const $fullName = combine(
-  { firstName: $firstName, lastName: $lastName },
-  ({ firstName, lastName }) => `${firstName} ${lastName}`,
-);
-```
-
-## split
-
-Use `split` to route one event into cases.
+Adapters need a pre-created association between a Virentia scope and an Effector scope:
 
 ```ts
-const routed = split(submitted, {
-  even: (value) => value % 2 === 0,
-  odd: (value) => value % 2 === 1,
+const association = effector.associate({
+  virentia: virentiaScope,
+  effector: effectorScope,
 });
 ```
 
-Unmatched payloads go to `routed.__`.
-
-## createApi
-
-Use `createApi` to create several events that update one store.
-
-```ts
-const api = createApi($count, {
-  add: (count, amount: number) => count + amount,
-  reset: () => 0,
-});
-
-api.add(1);
-api.reset();
-```
-
-## restore
-
-Use `restore` to store event payloads or effect results.
-
-```ts
-const submitted = createEvent<string>();
-const $value = restore(submitted, "initial");
-```
-
-## attach
-
-Use `attach` to add state to an effect call.
-
-```ts
-const requestFx = createEffect<{ token: string; id: number }, string>();
-const $token = createStore("root");
-
-const authorizedFx = attach({
-  source: $token,
-  effect: requestFx,
-  mapParams: (id: number, token: string) => ({ token, id }),
-});
-```
+The adapter reads the Effector scope from `stack.scope` while it runs and uses it to find the Virentia scope. If there is no pair, the adapter throws.

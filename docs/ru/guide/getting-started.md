@@ -6,7 +6,7 @@
 pnpm add @virentia/core
 ```
 
-`@virentia/react` нужен только там, где модель рендерится в React. `@virentia/effector` нужен только для compatibility layer с API в стиле Effector.
+`@virentia/react` нужен только там, где модель рендерится в React. `@virentia/effector` нужен только там, где модели Virentia должны работать рядом с существующими моделями Effector.
 
 ## Создание маленькой модели
 

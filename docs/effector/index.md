@@ -1,101 +1,109 @@
-# Effector Bridge
+# Effector compatibility
 
-`@virentia/effector` is an Effector-compatible facade on top of Virentia core. It is built for projects that already have Effector-shaped models and want a direct, explicit migration path.
+`@virentia/effector` lets Virentia models work with applications that already use Effector.
 
-<div class="compat-status-grid" aria-label="Effector compatibility status">
-  <div class="compat-status-card">
-    <span class="compat-status-kicker"><span class="compat-status-dot"></span>Runnable upstream</span>
-    <strong>100%</strong>
-    <span>409 / 409 enabled tests passing</span>
-  </div>
-  <div class="compat-status-card">
-    <span class="compat-status-kicker"><span class="compat-status-dot"></span>User-facing coverage</span>
-    <strong>97.85%</strong>
-    <span>public API behavior covered</span>
-  </div>
-  <div class="compat-status-card compat-status-card-muted">
-    <span class="compat-status-kicker"><span class="compat-status-dot"></span>Known failures</span>
-    <strong>0</strong>
-    <span>no hidden red tests</span>
-  </div>
-</div>
+Existing Effector code keeps importing from `effector`; Virentia models keep importing from `@virentia/core`. This package connects their scopes and forwards calls between units.
 
-::: tip Compatibility status
-The upstream diagnostic currently reports `409 passed / 259 skipped / 0 failed / 668 total`.
+## Install
 
-The stricter user-facing coverage is `97.85%`: skipped checks that only assert Effector internals, exact debug stacks, graphite shape, observable interop, or eager scheduler snapshots are not counted as compatibility promises.
-:::
-
-## Confidence Signals
-
-| Signal                      |              Result | Meaning                                                                            |
-| --------------------------- | ------------------: | ---------------------------------------------------------------------------------- |
-| 🟢 Runnable upstream tests  | `409 / 409` passing | Every enabled upstream compatibility test passes.                                  |
-| 🟢 Failed tests             |                 `0` | There are no known failing tests hidden in the suite.                              |
-| 🟢 User-facing coverage     |            `97.85%` | Public API behavior important to app code is almost fully covered.                 |
-| 🟡 Full upstream diagnostic |            `61.23%` | The skipped part is mostly Effector internals and exact scheduler/debug snapshots. |
-
-## What Is Covered
-
-| Area                                                                    | Status       |
-| ----------------------------------------------------------------------- | ------------ |
-| Events, stores, effects                                                 | ✅           |
-| `sample`, `combine`, `guard`, `split`, `merge`, `restore`, `createApi`  | ✅           |
-| `fork`, `allSettled`, `serialize`, `hydrate`, common `scopeBind` flows  | ✅           |
-| Domains, regions, `withRegion`, `clearNode`                             | ✅           |
-| `serialize: "ignore"`, custom serialize read/write, `onlyChanges: true` | ✅           |
-| `skipVoid` runtime/config behavior                                      | ✅           |
-| Exact Effector graphite/debug-stack identity                            | Not promised |
-| Exact eager intermediate ordering                                       | Not promised |
-
-## Remaining User-Facing Gaps
-
-| Gap                                      | Count |
-| ---------------------------------------- | ----: |
-| `attach` lifecycle ordering snapshots    |   `5` |
-| Async `scopeBind` propagation edge cases |   `3` |
-| Nested awaited `allSettled` transaction  |   `1` |
-
-## Import Change
-
-Prefer explicit imports over npm aliasing:
-
-```diff
--import { createEvent, createStore } from "effector";
-+import { createEvent, createStore } from "@virentia/effector";
+```sh
+pnpm add @virentia/effector effector @virentia/core
 ```
 
-If you use `effector/babel-plugin`, add `@virentia/effector` to the same import/factory configuration.
+## Create compatibility
 
-```js
-plugins: [
-  [
-    "effector/babel-plugin",
-    {
-      importName: ["effector", "@virentia/effector"],
-      factories: ["@virentia/effector", "patronum", "farfetched"],
-    },
-  ],
-];
-```
-
-## Counter
+Create the compatibility object once and keep it for the application lifetime:
 
 ```ts
-import { allSettled, createEvent, createStore, fork } from "@virentia/effector";
+import { createEffectorCompatibility } from "@virentia/effector";
 
-const incremented = createEvent<number>();
-const $count = createStore(0).on(incremented, (count, amount) => count + amount);
-const appScope = fork();
+export const effector = createEffectorCompatibility();
 
-await allSettled(incremented, {
-  scope: appScope,
-  params: 2,
-});
-
-console.log(appScope.getState($count)); // 2
+effector.link(virentiaSubmitted, effectorSubmitted, ({ id }) => id);
 ```
 
-## Main Difference
+Isolation lives in an association between a Virentia scope and an Effector scope:
 
-Virentia keeps the Effector public surface, but it does not clone Effector's internal graphite kernel. The bridge prioritizes observable application behavior and ecosystem compatibility over exact internal graph shape.
+```ts
+import { scope } from "@virentia/core";
+import { fork } from "effector";
+
+const association = effector.associate({
+  virentia: scope(),
+  effector: fork(),
+});
+```
+
+Effector units remain the same objects. `fork()` only creates isolated value storage for SSR, tests, and other boundaries. When an adapter runs inside the Effector graph, `@virentia/effector` reads the Effector scope from `stack.scope` and uses it to find the associated Virentia scope.
+
+Both scopes are required. If code tries to use compatibility helpers without an association, it throws instead of creating a hidden scope.
+
+The association does not call units by itself and does not participate in application execution. It only registers the scope pair and gives you a `dispose()` handle. Run code with the native tools of both runtimes:
+
+```ts
+await scoped(virentiaScope, () =>
+  allSettled(effectorSubmitted, {
+    scope: effectorScope,
+    params: "user:1",
+  }),
+);
+```
+
+In this run, the Virentia scope comes from `scoped`, and the Effector scope comes from `allSettled`. The compatibility layer only checks that this pair was associated.
+
+## Effector operators
+
+Virentia units can be used inside real Effector operators:
+
+```ts
+import { sample } from "effector";
+
+sample({
+  clock: effectorUserClicked,
+  source: $session,
+  fn: (session, userId) => ({
+    userId,
+    token: session.token,
+  }),
+  target: effector.asEffector(virentiaUserOpened),
+});
+```
+
+The wrapper is a normal Effector unit. Target support is still checked through `is.targetable`.
+
+## SSR
+
+Create one association per request and dispose it after rendering:
+
+```ts
+import { allSettled, fork } from "effector";
+import { scope, scoped } from "@virentia/core";
+
+const virentiaScope = scope();
+const effectorScope = fork();
+const association = effector.associate({
+  virentia: virentiaScope,
+  effector: effectorScope,
+});
+
+try {
+  await scoped(virentiaScope, () =>
+    allSettled(appStarted, {
+      scope: effectorScope,
+      params: request,
+    }),
+  );
+} finally {
+  association.dispose();
+}
+```
+
+Use Virentia snapshot tools for the Virentia scope and `serialize` from Effector for the Effector scope. The compatibility layer only remembers which scopes belong together.
+
+## Where the Effector scope comes from
+
+`@virentia/effector` does not try to discover a “current scope” from arbitrary Effector calls. The scope is available only while the Effector graph is executing.
+
+The adapter is a real Effector unit with a child node built on `step.run`. That step receives `stack`, reads `stack.scope`, and looks up an existing association. If Effector is launched without `fork`, `stack.scope` is empty; there is no isolated Effector scope to recover.
+
+Virentia-to-Effector adapters take the Effector scope from the association of the current Virentia scope and use `launch({ target, params, scope })`. If there is no pair, that is an integration error.

@@ -1,5 +1,11 @@
 # @virentia/effector
 
+## Unreleased
+
+### Breaking Changes
+
+- Replaced the experimental Effector facade with compatibility helpers for the real `effector` package.
+
 ## 0.1.1
 
 ### Patch Changes

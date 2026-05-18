@@ -1,79 +1,71 @@
 # Скоупы и сериализация
 
-В слое совместимости `fork()` создает scope.
+Effector и Virentia хранят состояние в разных scope. `@virentia/effector` хранит явную пару scope’ов:
 
 ```ts
-const appScope = fork();
-```
-
-## Начальное состояние
-
-Используйте `sid` стора, чтобы передать начальные значения объектом.
-
-```ts
-const $count = createStore(0, { sid: "count" });
-
-const appScope = fork({
-  values: {
-    count: 10,
-  },
+const association = effector.associate({
+  virentia: virentiaScope,
+  effector: effectorScope,
 });
 ```
 
-## Запуск юнита
+Объект `effector`, созданный через `createEffectorCompatibility`, остается один. Меняется только association: ее создают на границе жизненного цикла и освобождают через `dispose()`. После `dispose()` связь удаляется из registry и больше не находится через `ensureAssociation`.
+
+## Без неявных scope
+
+Пакет никогда не создает недостающий scope.
 
 ```ts
-await allSettled(incremented, {
-  scope: appScope,
-  params: 1,
-});
+effector.ensureAssociation({ effector: effectorScope });
 ```
 
-Эффекты возвращают объект со статусом.
+Такой код сработает только если Effector scope уже есть в association. Иначе будет ошибка.
+
+## SSR
+
+Создавайте association на каждый request внутри функции рендера:
 
 ```ts
-const result = await allSettled(loadFx, {
-  scope: appScope,
-  params: "user:1",
-});
+export async function render(request: Request) {
+  const virentiaScope = createVirentiaScope(request);
+  const effectorScope = fork();
 
-if (result.status === "done") {
-  console.log(result.value);
+  const association = effector.associate({
+    virentia: virentiaScope,
+    effector: effectorScope,
+  });
+
+  try {
+    await scoped(virentiaScope, () =>
+      allSettled(appStarted, {
+        scope: effectorScope,
+        params: request,
+      }),
+    );
+    return renderApp(association);
+  } finally {
+    association.dispose();
+  }
 }
 ```
 
-## Привязка callback
+Scope Virentia задается через `scoped`, scope Effector — через `allSettled`, `scopeBind` или Provider в UI. Association заранее связывает эти два scope и удаляется через `dispose()`.
 
-Используйте `scopeBind`, когда callback сработает позже.
+Scope Virentia сериализуется snapshot-механизмом Virentia, scope Effector — через `serialize` из Effector. Слой совместимости хранит только association между ними.
 
-```ts
-const boundIncrement = scopeBind(incremented, {
-  scope: appScope,
-});
+## Поздняя association
 
-setTimeout(() => {
-  void boundIncrement(1);
-});
-```
-
-## Сериализация
+Если порядок bootstrap мешает создать association сразу, сделайте это позже:
 
 ```ts
-const values = serialize(appScope);
-```
-
-Hydrate другого scope:
-
-```ts
-const nextScope = fork();
-
-hydrate(nextScope, { values });
-```
-
-Игнорировать выбранные сторы:
-
-```ts
-serialize(appScope, {
-  ignore: [$count],
+effector.associate({
+  virentia: virentiaScope,
+  effector: effectorScope,
 });
 ```
+
+Effector scope не создается автоматически и не подхватывается позже. Его нужно передать при создании association.
+
+## Scope Effector
+
+Слой совместимости не угадывает Effector scope из глобального состояния. Adapter-юнит читает `stack.scope` в `step.run`. Для SSR и тестов это scope из `fork()`. Для React это тот же scope, который передается в Effector Provider.

@@ -46,73 +46,9 @@ importers:
       '@virentia/core':
         specifier: workspace:*
         version: link:../core
-    devDependencies:
-      '@argon-router/core':
-        specifier: ^0.12.0
-        version: 0.12.0(effector-action@1.2.2(effector@23.4.4)(patronum@2.3.0(effector@23.4.4)))(effector@23.4.4)(patronum@2.3.0(effector@23.4.4))(query-string@9.3.1)
-      '@argon-router/paths':
-        specifier: ^0.12.0
-        version: 0.12.0
-      '@argon-router/react':
-        specifier: ^0.12.0
-        version: 0.12.0(effector-action@1.2.2(effector@23.4.4)(patronum@2.3.0(effector@23.4.4)))(effector-react@23.3.0(effector@23.4.4)(react@19.2.6))(effector@23.4.4)(patronum@2.3.0(effector@23.4.4))(query-string@9.3.1)(react@19.2.6)
-      '@effector-kit/models':
-        specifier: ^0.4.0
-        version: 0.4.0(effector-action@1.2.2(effector@23.4.4)(patronum@2.3.0(effector@23.4.4)))(effector@23.4.4)
-      '@effector-kit/react':
-        specifier: ^0.4.0
-        version: 0.4.0(effector-action@1.2.2(effector@23.4.4)(patronum@2.3.0(effector@23.4.4)))(effector-react@23.3.0(effector@23.4.4)(react@19.2.6))(effector@23.4.4)(react@19.2.6)
-      '@effector-reform/core':
-        specifier: ^0.17.0
-        version: 0.17.0(@withease/contracts@1.1.0)(effector@23.4.4)(patronum@2.3.0(effector@23.4.4))
-      '@effector-reform/react':
-        specifier: ^0.17.0
-        version: 0.17.0(@withease/contracts@1.1.0)(effector-react@23.3.0(effector@23.4.4)(react@19.2.6))(effector@23.4.4)(patronum@2.3.0(effector@23.4.4))(react@19.2.6)
-      '@farfetched/core':
-        specifier: ^0.15.0
-        version: 0.15.0(effector@23.4.4)
-      '@testing-library/react':
-        specifier: ^16.3.0
-        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
-      '@testing-library/user-event':
-        specifier: ^14.6.1
-        version: 14.6.1(@testing-library/dom@10.4.1)
-      '@withease/contracts':
-        specifier: ^1.1.0
-        version: 1.1.0
-      effector-action:
-        specifier: ^1.2.2
-        version: 1.2.2(effector@23.4.4)(patronum@2.3.0(effector@23.4.4))
-      effector-react:
-        specifier: ^23.3.0
-        version: 23.3.0(effector@23.4.4)(react@19.2.6)
-      effector-storage:
-        specifier: ^8.0.0
-        version: 8.0.0(effector@23.4.4)
-      fast-deep-equal:
-        specifier: ^3.1.3
-        version: 3.1.3
-      history:
-        specifier: ^5.3.0
-        version: 5.3.0
-      jsdom:
-        specifier: ^29.1.1
-        version: 29.1.1
-      patronum:
-        specifier: ^2.3.0
-        version: 2.3.0(effector@23.4.4)
-      query-string:
-        specifier: ^9.3.1
-        version: 9.3.1
-      react:
-        specifier: ^19.2.1
-        version: 19.2.6
-      react-dom:
-        specifier: ^19.2.1
-        version: 19.2.6(react@19.2.6)
-      zod:
-        specifier: ^4.4.3
-        version: 4.4.3
+      effector:
+        specifier: ^23.0.0
+        version: 23.4.4
 
   packages/inspector:
     dependencies:
@@ -250,24 +186,6 @@ packages:
   '@algolia/requester-node-http@5.52.1':
     resolution: {integrity: sha512-tqZXM+54rWo4mk5jL5Z/flE11nPmNEdXwFBM5py9DkOmbjeCNemfVd45FyM97XdzfZ0dl9uOJC6PYn1FpkeyQg==}
     engines: {node: '>= 14.0.0'}
-
-  '@argon-router/core@0.12.0':
-    resolution: {integrity: sha512-pJvULpPjidoPV0tReQ1BmGxOboKOxOtXJy4KZOfjn+KBpHRovPFDbKXaR29WPfwhEk9P4hNLUiEum3CW1ut7LQ==}
-    peerDependencies:
-      effector: '>=23'
-      effector-action: '>=1.2.2'
-      patronum: '>=2.2'
-      query-string: ^9.1.1
-
-  '@argon-router/paths@0.12.0':
-    resolution: {integrity: sha512-rh/RTZ8Xywyt10dCatO3U+kItJIVCwW6tluX80foksUdmx+NZILhVNnznx9WUZRYgHS2r0hYytga5RiXJx2dCw==}
-
-  '@argon-router/react@0.12.0':
-    resolution: {integrity: sha512-NfU1b3SqB4AH7ZmlqRX85CVCae4tLdZlgaKBLqV+goyOsvCBCAbw/lxUuP15qVGjvoyHprxYQyilse+N/KOacA==}
-    peerDependencies:
-      effector: '>=23'
-      effector-react: '>=23'
-      react: 18 || 19
 
   '@asamuzakjp/css-color@5.1.11':
     resolution: {integrity: sha512-KVw6qIiCTUQhByfTd78h2yD1/00waTmm9uy/R7Ck/ctUyAPj+AEDLkQIdJW0T8+qGgj3j5bpNKK7Q3G+LedJWg==}
@@ -494,33 +412,6 @@ packages:
       search-insights:
         optional: true
 
-  '@effector-kit/models@0.4.0':
-    resolution: {integrity: sha512-+efJs/AeQOivhkJST/dbmSbpQqFJWzV/v/zBbD+f57Lfx9YSBdu7amDioQGZ077e4JC678rT0hNT8ZBN5UXG1A==}
-    peerDependencies:
-      effector: '>=23.4.4'
-      effector-action: '>=1.2.2'
-
-  '@effector-kit/react@0.4.0':
-    resolution: {integrity: sha512-I7vJNW0qMr/WDNPBKcOM2BvB/R6crHjfT9piIZTjdOoBB42u73Jw8S12E0g2ffnknJDEevr4xLG7WBHfmnQAzg==}
-    peerDependencies:
-      effector: '>=23.4.4'
-      effector-react: '>=23.3.0'
-      react: '>=18'
-
-  '@effector-reform/core@0.17.0':
-    resolution: {integrity: sha512-2RDhm1SuMz1p/DvlwOF+AsUAUn/foOMGNC24fi0AMQPhkCu25bvom/l/WeSlljxIwR11H07dCjYSIfuOgRg5Nw==}
-    peerDependencies:
-      '@withease/contracts': '>=1.1.0 <2'
-      effector: '>=23.2.2 <24'
-      patronum: '>=2.2.0 <3'
-
-  '@effector-reform/react@0.17.0':
-    resolution: {integrity: sha512-KZcdMkPOg1eis7WanHJk+qVt9FZGpkBrwoNdfuW3sdN2BLi9utzr0sCPhOPg6MtWMfI/+pIitPLhmzf67I74Fg==}
-    peerDependencies:
-      effector: '>=23.2.2 <24'
-      effector-react: '>=23.2.1 <24'
-      react: '>=18.2.0 <20'
-
   '@emnapi/core@1.10.0':
     resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
 
@@ -676,11 +567,6 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
-
-  '@farfetched/core@0.15.0':
-    resolution: {integrity: sha512-VHjR5GskzPF8GWUUTFWblhk/trofAjmncyTpThRH9Iy3q5NknuTVp/yUWNeyupgfoEpRROUyTjkziFCeL7mreg==}
-    peerDependencies:
-      effector: ^23.0.0
 
   '@floating-ui/core@1.7.5':
     resolution: {integrity: sha512-1Ih4WTWyw0+lKyFMcBHGbb5U5FtuHJuujoyyr5zTaWS5EYMeT6Jb2AuDeftsCsEuchO+mM2ij5+q9crhydzLhQ==}
@@ -1366,12 +1252,6 @@ packages:
       '@types/react-dom':
         optional: true
 
-  '@testing-library/user-event@14.6.1':
-    resolution: {integrity: sha512-vq7fv0rnt+QTXgPxr5Hjc210p6YKq2kmdziLgnsZGgLJ9e6VAShx1pACLuRjd/AS/sr7phAR58OIIpf0LlmQNw==}
-    engines: {node: '>=12', npm: '>=6'}
-    peerDependencies:
-      '@testing-library/dom': '>=7.21.4'
-
   '@tybys/wasm-util@0.10.1':
     resolution: {integrity: sha512-9tTaPJLSiejZKx+Bmog4uSubteqTvFrVrURwkmHixBo0G4seD0zUxp98E1DzUBJxLQ3NPwXrGKDiVjwx/DpPsg==}
 
@@ -1581,9 +1461,6 @@ packages:
   '@vueuse/shared@12.8.2':
     resolution: {integrity: sha512-dznP38YzxZoNloI0qpEfpkms8knDtaoQ6Y/sfS0L7Yki4zh40LFHEhur0odJC6xTHG5dxWVPiUWBXn+wCG2s5w==}
 
-  '@withease/contracts@1.1.0':
-    resolution: {integrity: sha512-TwM/nMXUFaLTRT5MpJx1654L0PZGV1/hFr1Ykb9aUwdIAi5rnmLALyvSPaESjjzxwLOBQvlINQavFJpXITNaAw==}
-
   '@xyflow/react@12.10.2':
     resolution: {integrity: sha512-CgIi6HwlcHXwlkTpr0fxLv/0sRVNZ8IdwKLzzeCscaYBwpvfcH1QFOCeaTCuEn1FQEs/B8CjnTSjhs8udgmBgQ==}
     peerDependencies:
@@ -1784,10 +1661,6 @@ packages:
   decimal.js@10.6.0:
     resolution: {integrity: sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==}
 
-  decode-uri-component@0.4.1:
-    resolution: {integrity: sha512-+8VxcR21HhTy8nOt6jf20w0c9CADrw1O8d+VZ/YzzCt4bJ3uBjw+D1q2osAB8RnpwwaeYBxy0HyKQxD5JBMuuQ==}
-    engines: {node: '>=14.16'}
-
   deep-eql@4.1.4:
     resolution: {integrity: sha512-SUwdGfqdKOwxCPeVYjwSyRpJ7Z+fhpwIAtmCUdZIWZ/YP5R9WAsyuSgpLVDi9bjWoN2LXHNss/dk3urXtdQxGg==}
     engines: {node: '>=6'}
@@ -1832,24 +1705,6 @@ packages:
     peerDependenciesMeta:
       oxc-resolver:
         optional: true
-
-  effector-action@1.2.2:
-    resolution: {integrity: sha512-gX1MeRoLJawqzvQWSxHio87sEoORm23kV5+gBTzpQDLnZcgc5GUOiPNpiSpgBMFRRhSyi1d5ggh7bH+UYWlQcQ==}
-    peerDependencies:
-      effector: '>=23'
-      patronum: '>=2.1.0'
-
-  effector-react@23.3.0:
-    resolution: {integrity: sha512-QR0+x1EnbiWhO80Yc0GVF+I9xCYoxBm3t+QLB5Wg+1uY1Q1BrSWDmKvJaJJZ/+9BU4RAr25yS5J2EkdWnicu8g==}
-    engines: {node: '>=11.0.0'}
-    peerDependencies:
-      effector: ^23.0.0
-      react: '>=16.8.0 <20.0.0'
-
-  effector-storage@8.0.0:
-    resolution: {integrity: sha512-sCR6umIVbfbK+ipd6WYWCxdv5iJdpzirSQLbaqauUmVXUPZTBr3VlQ3UMIFzRsojGABCxaBTVOmPjt8qph4i5w==}
-    peerDependencies:
-      effector: ^23.0.0
 
   effector@23.4.4:
     resolution: {integrity: sha512-QkZboRN28K/iwxigDhlJcI3ux3aNbt8kYGGH/GkqWG0OlGeyuBhb7PdM89Iu+ogV8Lmz16xIlwnXR2UNWI6psg==}
@@ -1900,9 +1755,6 @@ packages:
   extendable-error@0.1.7:
     resolution: {integrity: sha512-UOiS2in6/Q0FK0R0q6UY9vYpQ21mr/Qn1KOnte7vsACuNJf514WvCCUHSRCPcgjPT2bAhNIJdlE6bVap1GKmeg==}
 
-  fast-deep-equal@3.1.3:
-    resolution: {integrity: sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==}
-
   fast-glob@3.3.3:
     resolution: {integrity: sha512-7MptL8U0cqcFdzIzwOTHoilX9x5BrNqye7Z/LuC7kCMRio1EMSyqRK3BEAUD7sXRq4iT4AzTVuZdhgQ2TCvYLg==}
     engines: {node: '>=8.6.0'}
@@ -1922,10 +1774,6 @@ packages:
   fill-range@7.1.1:
     resolution: {integrity: sha512-YsGpe3WHLK8ZYi4tWDg2Jy3ebRz2rXowDxnld4bkQB00cc/1Zw9AWnC0i9ztDJitivtQvaI9KaLyKrc+hBW0yg==}
     engines: {node: '>=8'}
-
-  filter-obj@5.1.0:
-    resolution: {integrity: sha512-qWeTREPoT7I0bifpPUXtxkZJ1XJzxWtfoWWkdVGqa+eCr3SHW/Ocp89o8vLvbUuQnadybJpjOKu4V+RwO6sGng==}
-    engines: {node: '>=14.16'}
 
   find-up@4.1.0:
     resolution: {integrity: sha512-PpOwAdQ/YlXQ2vj8a3h8IipDuYRi3wceVQQGYWxNINccq40Anw7BlsEXCMbt1Zt+OLA6Fq9suIpIWD0OsnISlw==}
@@ -1981,9 +1829,6 @@ packages:
 
   hast-util-whitespace@3.0.0:
     resolution: {integrity: sha512-88JUN06ipLwsnv+dVn+OIYOvAuvBMy/Qoi6O7mQHxdPXpjy+Cd6xRkWwux7DKO+4sYILtLBRIKgsdpS2gQc7qw==}
-
-  history@5.3.0:
-    resolution: {integrity: sha512-ZqaKwjjrAYUYfLG+htGaIIZ4nioX2L70ZUMIFysS3xvBsSG4x/n1V6TXV3N8ZYNuFGlDirFg32T7B6WOUPDYcQ==}
 
   hookable@5.5.3:
     resolution: {integrity: sha512-Yc+BQe8SvoXH1643Qez1zqLRmbA5rCL+sSmk6TVos0LWVfNIB7PGncdlId77WzLGSIB5KaWgTaNTs2lNVEI6VQ==}
@@ -2306,11 +2151,6 @@ packages:
   pathval@1.1.1:
     resolution: {integrity: sha512-Dp6zGqpTdETdR63lehJYPeIOqpiNBNtc7BpWSLrOje7UaIsE5aY92r/AunQA7rsXvet3lrJ3JnZX29UPTKXyKQ==}
 
-  patronum@2.3.0:
-    resolution: {integrity: sha512-BfKIOpoymVz6XnkOn8Fi5QZ1a3r/3lXdd8BcdHmYDbIXPTIRnD1EPFBFev/DheWnOge6/ZswEqgNF2ANLGOxLw==}
-    peerDependencies:
-      effector: ^23
-
   perfect-debounce@1.0.0:
     resolution: {integrity: sha512-xCy9V055GLEqoFaHoC1SoLIaLmWctgCUaBaWxDZ7/Zx4CTyX7cJQLJOok/orfjZAh9kEYpjJa4d0KcJmCbctZA==}
 
@@ -2364,10 +2204,6 @@ packages:
 
   quansync@1.0.0:
     resolution: {integrity: sha512-5xZacEEufv3HSTPQuchrvV6soaiACMFnq1H8wkVioctoH3TRha9Sz66lOxRwPK/qZj7HPiSveih9yAyh98gvqA==}
-
-  query-string@9.3.1:
-    resolution: {integrity: sha512-5fBfMOcDi5SA9qj5jZhWAcTtDfKF5WFdd2uD9nVNlbxVv1baq65aALy6qofpNEGELHvisjjasxQp7BlM9gvMzw==}
-    engines: {node: '>=18'}
 
   queue-microtask@1.2.3:
     resolution: {integrity: sha512-NuaNSa6flKT5JaSYQzJok04JzTL1CA6aGhv5rfLW3PgqA+M2ChpZQnAC8h8i4ZFkBS8X5RqkDBHA7r4hej3K9A==}
@@ -2548,10 +2384,6 @@ packages:
   speakingurl@14.0.1:
     resolution: {integrity: sha512-1POYv7uv2gXoyGFpBCmpDVSNV74IfsWlDW216UPjbWufNf+bSU6GdbDsxdcxtfwb4xlI3yxzOTKClUosxARYrQ==}
     engines: {node: '>=0.10.0'}
-
-  split-on-first@3.0.0:
-    resolution: {integrity: sha512-qxQJTx2ryR0Dw0ITYyekNQWpz6f8dGd7vffGNflQQ3Iqj9NJ6qiZ7ELpZsJ/QBhIVAiDfXdag3+Gp8RvWa62AA==}
-    engines: {node: '>=12'}
 
   sprintf-js@1.0.3:
     resolution: {integrity: sha512-D9cPgkvLlV3t3IzL0D0YLvGA9Ahk4PcvVwUbN0dSGr1aP0Nrt4AEnTUbuGvquEC0mA64Gqt1fzirlRs5ibXx8g==}
@@ -2963,9 +2795,6 @@ packages:
     resolution: {integrity: sha512-4LCcse/U2MHZ63HAJVE+v71o7yOdIe4cZ70Wpf8D/IyjDKYQLV5GD46B+hSTjJsvV5PztjvHoU580EftxjDZFQ==}
     engines: {node: '>=12.20'}
 
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
-
   zustand@4.5.7:
     resolution: {integrity: sha512-CHOUy7mu3lbD6o6LJLfllpjkzhHXSBlX8B9+qPddUsIfeF5S/UZ5q0kmCsnRqT1UHFQZchNFDDzMbQsuesHWlw==}
     engines: {node: '>=12.7.0'}
@@ -3098,27 +2927,6 @@ snapshots:
     dependencies:
       '@algolia/client-common': 5.52.1
 
-  '@argon-router/core@0.12.0(effector-action@1.2.2(effector@23.4.4)(patronum@2.3.0(effector@23.4.4)))(effector@23.4.4)(patronum@2.3.0(effector@23.4.4))(query-string@9.3.1)':
-    dependencies:
-      '@argon-router/paths': 0.12.0
-      effector: 23.4.4
-      effector-action: 1.2.2(effector@23.4.4)(patronum@2.3.0(effector@23.4.4))
-      patronum: 2.3.0(effector@23.4.4)
-      query-string: 9.3.1
-
-  '@argon-router/paths@0.12.0': {}
-
-  '@argon-router/react@0.12.0(effector-action@1.2.2(effector@23.4.4)(patronum@2.3.0(effector@23.4.4)))(effector-react@23.3.0(effector@23.4.4)(react@19.2.6))(effector@23.4.4)(patronum@2.3.0(effector@23.4.4))(query-string@9.3.1)(react@19.2.6)':
-    dependencies:
-      '@argon-router/core': 0.12.0(effector-action@1.2.2(effector@23.4.4)(patronum@2.3.0(effector@23.4.4)))(effector@23.4.4)(patronum@2.3.0(effector@23.4.4))(query-string@9.3.1)
-      effector: 23.4.4
-      effector-react: 23.3.0(effector@23.4.4)(react@19.2.6)
-      react: 19.2.6
-    transitivePeerDependencies:
-      - effector-action
-      - patronum
-      - query-string
-
   '@asamuzakjp/css-color@5.1.11':
     dependencies:
       '@asamuzakjp/generational-cache': 1.0.1
@@ -3126,6 +2934,7 @@ snapshots:
       '@csstools/css-color-parser': 4.1.0(@csstools/css-parser-algorithms@4.0.0(@csstools/css-tokenizer@4.0.0))(@csstools/css-tokenizer@4.0.0)
       '@csstools/css-parser-algorithms': 4.0.0(@csstools/css-tokenizer@4.0.0)
       '@csstools/css-tokenizer': 4.0.0
+    optional: true
 
   '@asamuzakjp/dom-selector@7.1.1':
     dependencies:
@@ -3134,10 +2943,13 @@ snapshots:
       bidi-js: 1.0.3
       css-tree: 3.2.1
       is-potential-custom-element-name: 1.0.1
+    optional: true
 
-  '@asamuzakjp/generational-cache@1.0.1': {}
+  '@asamuzakjp/generational-cache@1.0.1':
+    optional: true
 
-  '@asamuzakjp/nwsapi@2.3.9': {}
+  '@asamuzakjp/nwsapi@2.3.9':
+    optional: true
 
   '@babel/code-frame@7.29.0':
     dependencies:
@@ -3266,6 +3078,7 @@ snapshots:
   '@bramus/specificity@2.4.2':
     dependencies:
       css-tree: 3.2.1
+    optional: true
 
   '@changesets/apply-release-plan@7.1.1':
     dependencies:
@@ -3410,12 +3223,14 @@ snapshots:
       human-id: 4.1.3
       prettier: 2.8.8
 
-  '@csstools/color-helpers@6.0.2': {}
+  '@csstools/color-helpers@6.0.2':
+    optional: true
 
   '@csstools/css-calc@3.2.0(@csstools/css-parser-algorithms@4.0.0(@csstools/css-tokenizer@4.0.0))(@csstools/css-tokenizer@4.0.0)':
     dependencies:
       '@csstools/css-parser-algorithms': 4.0.0(@csstools/css-tokenizer@4.0.0)
       '@csstools/css-tokenizer': 4.0.0
+    optional: true
 
   '@csstools/css-color-parser@4.1.0(@csstools/css-parser-algorithms@4.0.0(@csstools/css-tokenizer@4.0.0))(@csstools/css-tokenizer@4.0.0)':
     dependencies:
@@ -3423,16 +3238,20 @@ snapshots:
       '@csstools/css-calc': 3.2.0(@csstools/css-parser-algorithms@4.0.0(@csstools/css-tokenizer@4.0.0))(@csstools/css-tokenizer@4.0.0)
       '@csstools/css-parser-algorithms': 4.0.0(@csstools/css-tokenizer@4.0.0)
       '@csstools/css-tokenizer': 4.0.0
+    optional: true
 
   '@csstools/css-parser-algorithms@4.0.0(@csstools/css-tokenizer@4.0.0)':
     dependencies:
       '@csstools/css-tokenizer': 4.0.0
+    optional: true
 
   '@csstools/css-syntax-patches-for-csstree@1.1.3(css-tree@3.2.1)':
     optionalDependencies:
       css-tree: 3.2.1
+    optional: true
 
-  '@csstools/css-tokenizer@4.0.0': {}
+  '@csstools/css-tokenizer@4.0.0':
+    optional: true
 
   '@docsearch/css@3.8.2': {}
 
@@ -3457,37 +3276,6 @@ snapshots:
       search-insights: 2.17.3
     transitivePeerDependencies:
       - '@algolia/client-search'
-
-  '@effector-kit/models@0.4.0(effector-action@1.2.2(effector@23.4.4)(patronum@2.3.0(effector@23.4.4)))(effector@23.4.4)':
-    dependencies:
-      effector: 23.4.4
-      effector-action: 1.2.2(effector@23.4.4)(patronum@2.3.0(effector@23.4.4))
-
-  '@effector-kit/react@0.4.0(effector-action@1.2.2(effector@23.4.4)(patronum@2.3.0(effector@23.4.4)))(effector-react@23.3.0(effector@23.4.4)(react@19.2.6))(effector@23.4.4)(react@19.2.6)':
-    dependencies:
-      '@effector-kit/models': 0.4.0(effector-action@1.2.2(effector@23.4.4)(patronum@2.3.0(effector@23.4.4)))(effector@23.4.4)
-      effector: 23.4.4
-      effector-react: 23.3.0(effector@23.4.4)(react@19.2.6)
-      react: 19.2.6
-    transitivePeerDependencies:
-      - effector-action
-
-  '@effector-reform/core@0.17.0(@withease/contracts@1.1.0)(effector@23.4.4)(patronum@2.3.0(effector@23.4.4))':
-    dependencies:
-      '@withease/contracts': 1.1.0
-      effector: 23.4.4
-      fast-deep-equal: 3.1.3
-      patronum: 2.3.0(effector@23.4.4)
-
-  '@effector-reform/react@0.17.0(@withease/contracts@1.1.0)(effector-react@23.3.0(effector@23.4.4)(react@19.2.6))(effector@23.4.4)(patronum@2.3.0(effector@23.4.4))(react@19.2.6)':
-    dependencies:
-      '@effector-reform/core': 0.17.0(@withease/contracts@1.1.0)(effector@23.4.4)(patronum@2.3.0(effector@23.4.4))
-      effector: 23.4.4
-      effector-react: 23.3.0(effector@23.4.4)(react@19.2.6)
-      react: 19.2.6
-    transitivePeerDependencies:
-      - '@withease/contracts'
-      - patronum
 
   '@emnapi/core@1.10.0':
     dependencies:
@@ -3574,11 +3362,8 @@ snapshots:
   '@esbuild/win32-x64@0.21.5':
     optional: true
 
-  '@exodus/bytes@1.15.0': {}
-
-  '@farfetched/core@0.15.0(effector@23.4.4)':
-    dependencies:
-      effector: 23.4.4
+  '@exodus/bytes@1.15.0':
+    optional: true
 
   '@floating-ui/core@1.7.5':
     dependencies:
@@ -4055,10 +3840,6 @@ snapshots:
       '@types/react': 19.2.14
       '@types/react-dom': 19.2.3(@types/react@19.2.14)
 
-  '@testing-library/user-event@14.6.1(@testing-library/dom@10.4.1)':
-    dependencies:
-      '@testing-library/dom': 10.4.1
-
   '@tybys/wasm-util@0.10.1':
     dependencies:
       tslib: 2.8.1
@@ -4304,8 +4085,6 @@ snapshots:
     transitivePeerDependencies:
       - typescript
 
-  '@withease/contracts@1.1.0': {}
-
   '@xyflow/react@12.10.2(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
       '@xyflow/system': 0.0.76
@@ -4389,6 +4168,7 @@ snapshots:
   bidi-js@1.0.3:
     dependencies:
       require-from-string: 2.0.2
+    optional: true
 
   birpc@2.9.0: {}
 
@@ -4458,6 +4238,7 @@ snapshots:
     dependencies:
       mdn-data: 2.27.1
       source-map-js: 1.2.1
+    optional: true
 
   csstype@3.2.3: {}
 
@@ -4503,14 +4284,14 @@ snapshots:
       whatwg-url: 16.0.1
     transitivePeerDependencies:
       - '@noble/hashes'
+    optional: true
 
   debug@4.4.3:
     dependencies:
       ms: 2.1.3
 
-  decimal.js@10.6.0: {}
-
-  decode-uri-component@0.4.1: {}
+  decimal.js@10.6.0:
+    optional: true
 
   deep-eql@4.1.4:
     dependencies:
@@ -4540,21 +4321,6 @@ snapshots:
 
   dts-resolver@2.1.3: {}
 
-  effector-action@1.2.2(effector@23.4.4)(patronum@2.3.0(effector@23.4.4)):
-    dependencies:
-      effector: 23.4.4
-      patronum: 2.3.0(effector@23.4.4)
-
-  effector-react@23.3.0(effector@23.4.4)(react@19.2.6):
-    dependencies:
-      effector: 23.4.4
-      react: 19.2.6
-      use-sync-external-store: 1.6.0(react@19.2.6)
-
-  effector-storage@8.0.0(effector@23.4.4):
-    dependencies:
-      effector: 23.4.4
-
   effector@23.4.4: {}
 
   electron-to-chromium@1.5.354: {}
@@ -4570,7 +4336,8 @@ snapshots:
 
   entities@7.0.1: {}
 
-  entities@8.0.0: {}
+  entities@8.0.0:
+    optional: true
 
   esbuild@0.21.5:
     optionalDependencies:
@@ -4610,8 +4377,6 @@ snapshots:
 
   extendable-error@0.1.7: {}
 
-  fast-deep-equal@3.1.3: {}
-
   fast-glob@3.3.3:
     dependencies:
       '@nodelib/fs.stat': 2.0.5
@@ -4631,8 +4396,6 @@ snapshots:
   fill-range@7.1.1:
     dependencies:
       to-regex-range: 5.0.1
-
-  filter-obj@5.1.0: {}
 
   find-up@4.1.0:
     dependencies:
@@ -4713,10 +4476,6 @@ snapshots:
     dependencies:
       '@types/hast': 3.0.4
 
-  history@5.3.0:
-    dependencies:
-      '@babel/runtime': 7.29.2
-
   hookable@5.5.3: {}
 
   hookable@6.1.1: {}
@@ -4726,6 +4485,7 @@ snapshots:
       '@exodus/bytes': 1.15.0
     transitivePeerDependencies:
       - '@noble/hashes'
+    optional: true
 
   html-void-elements@3.0.0: {}
 
@@ -4747,7 +4507,8 @@ snapshots:
 
   is-number@7.0.0: {}
 
-  is-potential-custom-element-name@1.0.1: {}
+  is-potential-custom-element-name@1.0.1:
+    optional: true
 
   is-subdir@1.2.0:
     dependencies:
@@ -4795,6 +4556,7 @@ snapshots:
       xml-name-validator: 5.0.0
     transitivePeerDependencies:
       - '@noble/hashes'
+    optional: true
 
   jsesc@3.1.0: {}
 
@@ -4865,7 +4627,8 @@ snapshots:
     dependencies:
       get-func-name: 2.0.2
 
-  lru-cache@11.3.6: {}
+  lru-cache@11.3.6:
+    optional: true
 
   lru-cache@5.1.1:
     dependencies:
@@ -4891,7 +4654,8 @@ snapshots:
       unist-util-visit: 5.1.0
       vfile: 6.0.3
 
-  mdn-data@2.27.1: {}
+  mdn-data@2.27.1:
+    optional: true
 
   merge2@1.4.1: {}
 
@@ -5019,6 +4783,7 @@ snapshots:
   parse5@8.0.1:
     dependencies:
       entities: 8.0.0
+    optional: true
 
   path-exists@4.0.0: {}
 
@@ -5031,10 +4796,6 @@ snapshots:
   pathe@2.0.3: {}
 
   pathval@1.1.1: {}
-
-  patronum@2.3.0(effector@23.4.4):
-    dependencies:
-      effector: 23.4.4
 
   perfect-debounce@1.0.0: {}
 
@@ -5076,17 +4837,12 @@ snapshots:
 
   property-information@7.1.0: {}
 
-  punycode@2.3.1: {}
+  punycode@2.3.1:
+    optional: true
 
   quansync@0.2.11: {}
 
   quansync@1.0.0: {}
-
-  query-string@9.3.1:
-    dependencies:
-      decode-uri-component: 0.4.1
-      filter-obj: 5.1.0
-      split-on-first: 3.0.0
 
   queue-microtask@1.2.3: {}
 
@@ -5150,7 +4906,8 @@ snapshots:
     dependencies:
       regex-utilities: 2.3.0
 
-  require-from-string@2.0.2: {}
+  require-from-string@2.0.2:
+    optional: true
 
   resolve-from@5.0.0: {}
 
@@ -5260,6 +5017,7 @@ snapshots:
   saxes@6.0.0:
     dependencies:
       xmlchars: 2.2.0
+    optional: true
 
   scheduler@0.27.0: {}
 
@@ -5303,8 +5061,6 @@ snapshots:
 
   speakingurl@14.0.1: {}
 
-  split-on-first@3.0.0: {}
-
   sprintf-js@1.0.3: {}
 
   stackback@0.0.2: {}
@@ -5330,7 +5086,8 @@ snapshots:
     dependencies:
       copy-anything: 4.0.5
 
-  symbol-tree@3.2.4: {}
+  symbol-tree@3.2.4:
+    optional: true
 
   tabbable@6.4.0: {}
 
@@ -5353,11 +5110,13 @@ snapshots:
 
   tinyspy@2.2.1: {}
 
-  tldts-core@7.0.30: {}
+  tldts-core@7.0.30:
+    optional: true
 
   tldts@7.0.30:
     dependencies:
       tldts-core: 7.0.30
+    optional: true
 
   to-regex-range@5.0.1:
     dependencies:
@@ -5366,10 +5125,12 @@ snapshots:
   tough-cookie@6.0.1:
     dependencies:
       tldts: 7.0.30
+    optional: true
 
   tr46@6.0.0:
     dependencies:
       punycode: 2.3.1
+    optional: true
 
   tree-kill@1.2.2: {}
 
@@ -5421,7 +5182,8 @@ snapshots:
 
   undici-types@7.19.2: {}
 
-  undici@7.25.0: {}
+  undici@7.25.0:
+    optional: true
 
   unist-util-is@6.0.1:
     dependencies:
@@ -5632,12 +5394,15 @@ snapshots:
   w3c-xmlserializer@5.0.0:
     dependencies:
       xml-name-validator: 5.0.0
+    optional: true
 
-  webidl-conversions@8.0.1: {}
+  webidl-conversions@8.0.1:
+    optional: true
 
   whatwg-mimetype@3.0.0: {}
 
-  whatwg-mimetype@5.0.0: {}
+  whatwg-mimetype@5.0.0:
+    optional: true
 
   whatwg-url@16.0.1:
     dependencies:
@@ -5646,6 +5411,7 @@ snapshots:
       webidl-conversions: 8.0.1
     transitivePeerDependencies:
       - '@noble/hashes'
+    optional: true
 
   which@2.0.2:
     dependencies:
@@ -5658,15 +5424,15 @@ snapshots:
 
   ws@8.20.0: {}
 
-  xml-name-validator@5.0.0: {}
+  xml-name-validator@5.0.0:
+    optional: true
 
-  xmlchars@2.2.0: {}
+  xmlchars@2.2.0:
+    optional: true
 
   yallist@3.1.1: {}
 
   yocto-queue@1.2.2: {}
-
-  zod@4.4.3: {}
 
   zustand@4.5.7(@types/react@19.2.14)(react@19.2.6):
     dependencies:

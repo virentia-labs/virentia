@@ -120,6 +120,14 @@ type EffectOutcome<Params, Done, Fail> =
       error: Fail;
     };
 
+export function effect<Done, Fail = unknown>(
+  handler: () => Done | PromiseLike<Done>,
+  name?: string,
+): Effect<void, Done, Fail>;
+export function effect<Params, Done, Fail = unknown>(
+  handler: EffectHandler<Params, Done>,
+  name?: string,
+): Effect<Params, Done, Fail>;
 export function effect<Params, Done, Fail = unknown>(
   handler: EffectHandler<Params, Done>,
   name?: string,
@@ -460,7 +468,7 @@ function resolveVariantParams<Params>(
   first?: string | EffectVariantIdentityConfig | EffectVariantParams<unknown, Params>,
   second?: EffectVariantParams<unknown, Params>,
 ): EffectVariantParams<unknown, Params> | undefined {
-  if (typeof first === "function") return first;
+  if (typeof first === "function") return first as EffectVariantParams<unknown, Params>;
   if (typeof second === "function") return second;
   if (typeof first === "object" && first !== null && "params" in first) {
     return (first as EffectVariantConfig<unknown, Params>).params;

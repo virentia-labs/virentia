@@ -105,7 +105,7 @@ export function attach(config: {
     | ((source: any, params: any, ctx: EffectHandlerContext) => any);
   mapParams?: (params: any, source?: any) => any;
 }): Effect<any, any, any> {
-  return effect((params: any, ctx) => {
+  return effect((params: any, ctx: EffectHandlerContext) => {
     const hasSource = config.source !== undefined;
     const sourceValue = hasSource ? readSource(config.source as AttachSourceShape) : undefined;
 

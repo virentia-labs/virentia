@@ -1,4 +1,4 @@
-import { requireActiveScope, runScopeTask } from "./internal";
+import { getActiveScope, requireActiveScope, runScopeTask } from "./internal";
 import type { Scope } from "./types";
 import { registerInspectorScope } from "../kernel/inspector";
 import type { Effect, EffectHandler } from "../units/effect";
@@ -40,6 +40,10 @@ export function scope(options: ScopeOptions = {}): Scope {
   registerInspectorScope(nextScope);
 
   return nextScope;
+}
+
+export function getCurrentScope(): Scope | null {
+  return getActiveScope();
 }
 
 export type ScopedRunner = (<T>(fn: () => T) => T) & {

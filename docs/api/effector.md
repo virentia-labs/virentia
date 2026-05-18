@@ -1,199 +1,64 @@
 # @virentia/effector API
 
-`@virentia/effector` is the Effector-shaped bridge package.
+`@virentia/effector` connects Virentia units with units from the real `effector` package.
 
-## createEvent
-
-Use `createEvent` for model events and notifications in Effector-shaped models.
+## createEffectorCompatibility
 
 ```ts
-const submitted = createEvent<string>("submitted");
+const effector = createEffectorCompatibility();
+```
 
-submitted.watch((value) => {
-  console.log(value);
+Creates a compatibility object. It stores links and adapters that will be applied to each association. Create it once for the application.
+
+## effector.associate
+
+```ts
+const association = effector.associate({
+  virentia: virentiaScope,
+  effector: effectorScope,
 });
 ```
 
-Events support `map`, `filter`, `filterMap`, and `prepend`.
+Creates an association for a scope pair. When an adapter unit runs inside the Effector graph, it reads `stack.scope` and looks up the existing association. Call `association.dispose()` when it is no longer needed.
+
+## effector.ensureAssociation
 
 ```ts
-const numbers = submitted.filterMap((value) => Number(value) || undefined);
-const positive = numbers.filter((value) => value > 0);
-const label = positive.map((value) => `#${value}`);
+const association = effector.ensureAssociation({ effector: effectorScope });
 ```
 
-## createStore
+Finds an existing association. Throws if it does not exist.
 
-Use `createStore` for scoped state while keeping the Effector-style API.
+The association does not call units and does not participate in application execution. Start Effector through `allSettled`, `scopeBind`, `launch`, or the UI Provider, and start Virentia through `scoped` and `allSettled` from `@virentia/core`.
+
+## effector.link
 
 ```ts
-const incremented = createEvent<number>();
-const reset = createEvent<void>();
-
-const $count = createStore(0, { sid: "count" })
-  .on(incremented, (count, amount) => count + amount)
-  .reset(reset);
+const unlink = effector.link(virentiaEvent, effectorEvent, ({ id }) => id);
 ```
 
-Read and write state:
+Installs a link for every association created by this compatibility object.
 
-```ts
-$count.getState();
-$count.setState(10);
-```
-
-Stores expose `updates`, `map`, `on`, `reset`, and `watch`.
-
-## createEffect
-
-Use `createEffect` for async work with Effector-shaped lifecycle units.
-
-```ts
-const loadUserFx = createEffect<string, { id: string; name: string }>(async (id) => {
-  const response = await fetch(`/api/users/${id}`);
-  return response.json();
-});
-```
-
-Effects expose:
-
-```ts
-loadUserFx.done;
-loadUserFx.fail;
-loadUserFx.finally;
-loadUserFx.doneData;
-loadUserFx.failData;
-loadUserFx.pending;
-loadUserFx.inFlight;
-```
-
-Replace or set the handler:
-
-```ts
-loadUserFx.use(async (id) => ({ id, name: "Ada" }));
-```
-
-## fork and allSettled
-
-Use `fork` to create a scope. Use `allSettled` to run a unit inside that scope and wait for async work.
-
-```ts
-const appScope = fork({
-  values: {
-    count: 10,
-  },
-});
-
-await allSettled(incremented, {
-  scope: appScope,
-  params: 2,
-});
-
-console.log(appScope.getState($count)); // 12
-```
-
-Effects return status objects:
-
-```ts
-const result = await allSettled(loadUserFx, {
-  scope: appScope,
-  params: "user:1",
-});
-```
-
-## sample
-
-Use `sample` when one unit should take state from another unit at the moment it fires.
+## effector.asEffector
 
 ```ts
 sample({
-  source: $count,
-  clock: submitted,
-  filter: (count) => count > 0,
-  fn: (count, text) => `${text}:${count}`,
-  target: saved,
+  clock: effectorEvent,
+  target: effector.asEffector(virentiaEvent),
 });
 ```
 
-## combine
+Returns an Effector wrapper for a Virentia unit. The wrapper reads the Effector scope from `stack.scope` and uses it to find the Virentia scope.
 
-Use `combine` when a value is always derived from several stores.
-
-```ts
-const $fullName = combine(
-  { firstName: $firstName, lastName: $lastName },
-  ({ firstName, lastName }) => `${firstName} ${lastName}`,
-);
-```
-
-## split
-
-Use `split` when one event should be routed into named cases.
+## effector.asVirentia
 
 ```ts
-const routed = split(submitted, {
-  short: (text) => text.length < 10,
-  long: (text) => text.length >= 10,
+reaction({
+  on: effector.asVirentia(effectorEvent),
+  run(payload) {},
 });
 ```
 
-## createApi and restore
+Returns a Virentia wrapper for an Effector unit.
 
-Use `restore` to turn event payloads into state. Use `createApi` to create several events that update one store.
-
-```ts
-const changed = createEvent<string>();
-const $value = restore(changed, "");
-
-const api = createApi($value, {
-  upper: (value) => value.toUpperCase(),
-  append: (value, suffix: string) => `${value}${suffix}`,
-});
-```
-
-## attach
-
-Use `attach` when an effect call needs store state added to its params.
-
-```ts
-const authorizedFx = attach({
-  source: $token,
-  effect: requestFx,
-  mapParams: (id: number, token: string) => ({ id, token }),
-});
-```
-
-## serialize and hydrate
-
-Use these for transferring scoped state between runtimes, usually server to client or one saved session to another scope.
-
-```ts
-const values = serialize(appScope);
-
-const nextScope = fork();
-hydrate(nextScope, { values });
-```
-
-## scopeBind
-
-Use `scopeBind` when a callback fires later but must run a unit in a known scope.
-
-```ts
-const boundSubmit = scopeBind(submitted, { scope: appScope });
-
-await boundSubmit("hello");
-```
-
-## is
-
-Use `is` guards when writing helpers that accept unknown units.
-
-```ts
-is.unit(submitted);
-is.event(submitted);
-is.store($count);
-is.effect(loadUserFx);
-is.targetable($count);
-```
-
-`is.targetable` returns true for callable events, writable stores, and effects.
+If an adapter cannot find an association from the current Virentia scope or the Effector scope from `stack.scope`, the package throws.

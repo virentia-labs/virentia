@@ -16,7 +16,7 @@ Virentia helps describe application rules outside the UI: stores keep state, eve
 
 - `@virentia/core` — stores, events, effects, reactions, scopes, owners, lazy models, and low-level graph primitives.
 - `@virentia/react` — React bindings for core models: `ScopeProvider`, `useUnit`, `useModel`, `component`, and model caches.
-- `@virentia/effector` — an Effector-shaped compatibility layer powered by `@virentia/core`.
+- `@virentia/effector` — compatibility between Virentia scopes and the real Effector runtime.
 
 ## Example
 

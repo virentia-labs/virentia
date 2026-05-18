@@ -1,90 +1,43 @@
-# Операторы
+# Операторы Effector
 
-Слой совместимости включает распространенные операторы в стиле Effector.
-
-## sample
-
-Используйте `sample`, чтобы взять состояние в момент, когда сработал другой юнит.
+Используйте `effector.asEffector`, когда цепочка Effector должна вызвать юнит Virentia.
 
 ```ts
 sample({
-  source: $count,
-  clock: submitted,
-  fn: (count, text) => `${text}:${count}`,
-  target: saved,
+  clock: effectorSubmitted,
+  source: $session,
+  fn: (session, id) => ({
+    id,
+    token: session.token,
+  }),
+  target: effector.asEffector(virentiaSubmitted),
 });
 ```
 
-С filter:
+Возвращенный юнит создан в Effector, поэтому его можно передавать в API Effector.
+
+## Clock
+
+Эту же обертку можно использовать как clock:
 
 ```ts
 sample({
-  source: { prefix: $prefix, enabled: $enabled },
-  clock: submitted,
-  filter: ({ enabled }) => enabled,
-  fn: ({ prefix }, value) => `${prefix}${value}`,
-  target,
+  clock: effector.asEffector(virentiaSubmitted),
+  target: effectorSubmitted,
 });
 ```
 
-## combine
+События Virentia передаются после завершения текущей транзакции.
 
-Используйте `combine` для derived-сторов.
+## Association
 
-```ts
-const $fullName = combine(
-  { firstName: $firstName, lastName: $lastName },
-  ({ firstName, lastName }) => `${firstName} ${lastName}`,
-);
-```
-
-## split
-
-Используйте `split`, чтобы разложить одно событие по веткам.
+Адаптерам нужна заранее созданная association между scope Virentia и scope Effector:
 
 ```ts
-const routed = split(submitted, {
-  even: (value) => value % 2 === 0,
-  odd: (value) => value % 2 === 1,
+const association = effector.associate({
+  virentia: virentiaScope,
+  effector: effectorScope,
 });
 ```
 
-Payloads без совпадения попадут в `routed.__`.
-
-## createApi
-
-Используйте `createApi`, чтобы создать несколько событий, обновляющих один стор.
-
-```ts
-const api = createApi($count, {
-  add: (count, amount: number) => count + amount,
-  reset: () => 0,
-});
-
-api.add(1);
-api.reset();
-```
-
-## restore
-
-Используйте `restore`, чтобы хранить payload события или результат эффекта.
-
-```ts
-const submitted = createEvent<string>();
-const $value = restore(submitted, "initial");
-```
-
-## attach
-
-Используйте `attach`, чтобы добавить состояние из стора в вызов эффекта.
-
-```ts
-const requestFx = createEffect<{ token: string; id: number }, string>();
-const $token = createStore("root");
-
-const authorizedFx = attach({
-  source: $token,
-  effect: requestFx,
-  mapParams: (id: number, token: string) => ({ token, id }),
-});
-```
+Effector scope адаптер достает из `stack.scope` во время запуска и использует его для поиска scope Virentia. Если пары нет, адаптер бросит ошибку.

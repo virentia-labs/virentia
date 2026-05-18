@@ -7,7 +7,7 @@ const enNav = [
   { text: "Guide", link: "/guide/getting-started" },
   { text: "Core", link: "/core/" },
   { text: "React", link: "/react/" },
-  { text: "Effector", link: "/effector/" },
+  { text: "Effector compatibility", link: "/effector/" },
   { text: "API", link: "/api/core" },
   { text: "Recipes", link: "/recipes/counter" },
 ];
@@ -16,7 +16,7 @@ const ruNav = [
   { text: "Руководство", link: "/ru/guide/getting-started" },
   { text: "Ядро", link: "/ru/core/" },
   { text: "React", link: "/ru/react/" },
-  { text: "Effector", link: "/ru/effector/" },
+  { text: "Совместимость с Effector", link: "/ru/effector/" },
   { text: "API", link: "/ru/api/core" },
   { text: "Рецепты", link: "/ru/recipes/counter" },
 ];
@@ -120,7 +120,7 @@ const ruSidebar = [
     ],
   },
   {
-    text: "Совместимость с effector",
+    text: "Совместимость с Effector",
     items: [
       { text: "Обзор", link: "/ru/effector/" },
       { text: "Операторы", link: "/ru/effector/operators" },

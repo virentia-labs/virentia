@@ -1,44 +1,53 @@
 # Миграция
 
-## Сохранение формы Effector API
+Не заменяйте импорты `effector` глобально.
 
-```diff
--import { createEvent, createStore } from "effector";
-+import { createEvent, createStore } from "@virentia/effector";
-```
-
-## Перенос одной модели в ядро
-
-```diff
--const incremented = createEvent<number>();
--const $count = createStore(0).on(incremented, (count, amount) => count + amount);
-+const incremented = event<number>();
-+const count = store(0);
-+
-+reaction({
-+  on: incremented,
-+  run(amount) {
-+    count.value += amount;
-+  },
-+});
-```
-
-## Разница на границе запуска
-
-Ядро:
+Существующий код Effector продолжает использовать настоящий пакет:
 
 ```ts
-await allSettled(incremented, {
-  scope,
-  payload: 1,
+import { createEvent, createStore } from "effector";
+
+export const effectorSubmitted = createEvent<string>();
+export const $userId = createStore("").on(effectorSubmitted, (_, id) => id);
+```
+
+Новые модели Virentia пишутся отдельно:
+
+```ts
+import { event, store } from "@virentia/core";
+
+export const virentiaSubmitted = event<{ id: string }>();
+export const userId = store("");
+```
+
+После этого части связываются явно:
+
+```ts
+import { createEffectorCompatibility } from "@virentia/effector";
+
+export const effector = createEffectorCompatibility();
+
+effector.link(virentiaSubmitted, effectorSubmitted, ({ id }) => id);
+```
+
+Association создается там, где известен scope Virentia:
+
+```ts
+const association = effector.associate({
+  virentia: virentiaScope,
+  effector: effectorScope,
 });
 ```
 
-Слой совместимости Effector:
+Adapter читает Effector scope из `stack.scope`, когда запускается внутри Effector-графа, и по нему находит scope Virentia. Так приложение можно переносить постепенно. Библиотеки Effector продолжают работать с настоящим Effector, а модели Virentia остаются в своем scope.
+
+## Операторы Effector
+
+Если существующая цепочка Effector должна вызвать юнит Virentia, используйте `effector.asEffector`:
 
 ```ts
-await allSettled(incremented, {
-  scope,
-  params: 1,
+sample({
+  clock: effectorSubmitted,
+  target: effector.asEffector(virentiaSubmitted),
 });
 ```

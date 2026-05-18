@@ -6,7 +6,7 @@ Install the package that owns your state model first:
 pnpm add @virentia/core
 ```
 
-Add `@virentia/react` only when you render models in React. Add `@virentia/effector` only when you want the compatibility layer for Effector-style code.
+Add `@virentia/react` only when you render models in React. Add `@virentia/effector` only when Virentia models need to work with existing Effector models.
 
 ## Small Model
 

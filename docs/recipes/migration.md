@@ -1,44 +1,53 @@
-# Migration Notes
+# Migration notes
 
-## Effector API Shape
+Do not replace `effector` imports globally.
 
-```diff
--import { createEvent, createStore } from "effector";
-+import { createEvent, createStore } from "@virentia/effector";
-```
-
-## One Model In Core
-
-```diff
--const incremented = createEvent<number>();
--const $count = createStore(0).on(incremented, (count, amount) => count + amount);
-+const incremented = event<number>();
-+const count = store(0);
-+
-+reaction({
-+  on: incremented,
-+  run(amount) {
-+    count.value += amount;
-+  },
-+});
-```
-
-## Boundary Difference
-
-Core:
+Keep existing Effector code on the real package:
 
 ```ts
-await allSettled(incremented, {
-  scope,
-  payload: 1,
+import { createEvent, createStore } from "effector";
+
+export const effectorSubmitted = createEvent<string>();
+export const $userId = createStore("").on(effectorSubmitted, (_, id) => id);
+```
+
+Write new Virentia code separately:
+
+```ts
+import { event, store } from "@virentia/core";
+
+export const virentiaSubmitted = event<{ id: string }>();
+export const userId = store("");
+```
+
+Then connect the parts explicitly:
+
+```ts
+import { createEffectorCompatibility } from "@virentia/effector";
+
+export const effector = createEffectorCompatibility();
+
+effector.link(virentiaSubmitted, effectorSubmitted, ({ id }) => id);
+```
+
+Create an association where the Virentia scope is known:
+
+```ts
+const association = effector.associate({
+  virentia: virentiaScope,
+  effector: effectorScope,
 });
 ```
 
-Effector bridge:
+The adapter reads the Effector scope from `stack.scope` when it runs inside the Effector graph and uses it to find the Virentia scope. This lets you move models gradually. Effector libraries keep using real Effector, while Virentia models stay in their own scope.
+
+## Effector operators
+
+Use `effector.asEffector` when existing Effector code needs to call a Virentia unit:
 
 ```ts
-await allSettled(incremented, {
-  scope,
-  params: 1,
+sample({
+  clock: effectorSubmitted,
+  target: effector.asEffector(virentiaSubmitted),
 });
 ```
