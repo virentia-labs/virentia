@@ -184,7 +184,7 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
     </Group>
   ) : (
     <Text size="xs" c="dimmed" mt={6}>
-      Не выбраны
+      None selected
     </Text>
   );
   const shellStyle = useMemo(
@@ -476,7 +476,7 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
             onClick={() => openTriggerModal(contextMenu.nodeId)}
             type="button"
           >
-            Инициировать вызов
+            Trigger unit
           </button>
         </Paper>
       ) : null}
@@ -485,10 +485,10 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
         <Box className="virentia-inspector__bottom-toolbar">
           <Box>
             <Text fw={650} size="sm">
-              Выбор точек останова
+              Select breakpoints
             </Text>
             <Text size="xs" c="dimmed">
-              Доступны только юниты из цепочки {triggerNode?.name ?? ""}
+              Only units from the {triggerNode?.name ?? ""} chain are available
             </Text>
           </Box>
           <Group gap="xs">
@@ -498,10 +498,10 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
               variant="subtle"
               onClick={() => finishBreakpointSelection(false)}
             >
-              Отменить
+              Cancel
             </Button>
             <Button color="green" size="xs" onClick={() => finishBreakpointSelection(true)}>
-              Принять
+              Apply
             </Button>
           </Group>
         </Box>
@@ -521,7 +521,7 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
         padding="sm"
         radius="sm"
         size={420}
-        title={triggerNode ? `Вызов: ${triggerNode.name}` : "Вызов юнита"}
+        title={triggerNode ? `Trigger: ${triggerNode.name}` : "Trigger unit"}
       >
         {triggerStage === "payload" ? (
           <Stack gap="xs">
@@ -542,24 +542,24 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
               <Group align="flex-start" justify="space-between" gap="xs" wrap="nowrap">
                 <Box>
                   <Text fw={650} size="xs">
-                    Точки останова
+                    Breakpoints
                   </Text>
                   <Text size="xs" c="dimmed">
-                    Цепочка остановится после выбранных юнитов
+                    The chain will stop after the selected units
                   </Text>
                 </Box>
                 <Button color="green" size="xs" variant="light" onClick={startBreakpointSelection}>
-                  Выбрать
+                  Select
                 </Button>
               </Group>
               {breakpointSummary}
             </Paper>
             <Group justify="space-between" mt={4}>
               <Button color="gray" size="xs" variant="subtle" onClick={requestCloseTriggerFlow}>
-                Отменить
+                Cancel
               </Button>
               <Button color="green" size="xs" onClick={acceptPayload}>
-                Принять
+                Continue
               </Button>
             </Group>
           </Stack>
@@ -579,14 +579,14 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
               <Group align="flex-start" justify="space-between" gap="xs" wrap="nowrap">
                 <Box>
                   <Text fw={650} size="xs">
-                    Точки останова
+                    Breakpoints
                   </Text>
                   <Text size="xs" c="dimmed">
-                    Можно изменить перед вызовом
+                    You can change them before triggering
                   </Text>
                 </Box>
                 <Button color="green" size="xs" variant="light" onClick={startBreakpointSelection}>
-                  Выбрать
+                  Select
                 </Button>
               </Group>
               {breakpointSummary}
@@ -598,10 +598,10 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
             ) : null}
             <Group justify="space-between" mt={4}>
               <Button color="gray" size="xs" variant="subtle" onClick={requestCloseTriggerFlow}>
-                Отменить
+                Cancel
               </Button>
               <Button color="green" size="xs" onClick={() => void triggerSelectedNode()}>
-                Вызвать
+                Trigger
               </Button>
             </Group>
           </Stack>
@@ -610,11 +610,13 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
         {triggerStage === "result" ? (
           <Stack gap="xs">
             <Badge color={triggerResult?.ok ? "green" : "red"} size="xs" variant="light">
-              {triggerResult?.ok ? "Вызов выполнен" : (triggerResult?.error?.preview ?? "Ошибка")}
+              {triggerResult?.ok
+                ? "Triggered successfully"
+                : (triggerResult?.error?.preview ?? "Error")}
             </Badge>
             <Group justify="end">
               <Button color="green" size="xs" onClick={requestCloseTriggerFlow}>
-                Закрыть
+                Close
               </Button>
             </Group>
           </Stack>
