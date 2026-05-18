@@ -7,7 +7,7 @@ const queryChanged = event<string>();
 const submitted = event<void>();
 ```
 
-A good event sounds like a fact: `queryChanged`, `submitted`, `messageReceived`, `routeOpened`. A weaker event often sounds like a technical command: `setQuery`, `updateState`, `handleSubmit`. A command ties the model to a mutation method. A fact lets the model have several rules.
+A good event usually names either a fact or a domain intent. Facts sound like something that already happened: `queryChanged`, `submitted`, `messageReceived`, `routeOpened`. Intents are useful when the model exposes a small public command, for example `open`, `close`, or `submit` in a modal model. What is worth avoiding is a technical setter like `setQuery` or `updateState`: it ties the model to a mutation method instead of the meaning of the action.
 
 ## State Changes Live In Reactions
 

@@ -6,7 +6,7 @@
 
 State manager for complex business logic.
 
-Virentia helps describe application rules outside the UI: stores keep state, events name facts, effects run external work, and reactions connect them into behavior. The same model can be reused in an app, test, server request, widget, tab, or cached screen without sharing state.
+Virentia helps describe application rules outside the UI: stores keep state, events name domain actions, effects run external work, and reactions connect them into behavior. The same model can be reused in an app, test, server request, widget, tab, or cached screen without sharing state.
 
 ## Links
 

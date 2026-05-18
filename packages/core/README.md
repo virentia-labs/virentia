@@ -5,7 +5,7 @@ Core package for Virentia state models.
 Use it to describe business state without depending on React, routing, or any other UI layer. A model is built from small primitives:
 
 - stores remember values;
-- events name facts that happened;
+- events name facts or domain intents;
 - effects run external async work;
 - reactions describe rules between stores, events, and effects;
 - scopes hold concrete values for one app, request, test, widget, or cached screen;

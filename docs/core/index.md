@@ -26,9 +26,9 @@ Here `count` is a store, `incremented` is an event, and `reaction` is the rule. 
 
 ## Split Responsibility
 
-A store holds a value. An event reports a fact. An effect starts work that will finish later. A reaction connects those pieces into behavior.
+A store holds a value. An event reports a fact or a domain intent. An effect starts work that will finish later. A reaction connects those pieces into behavior.
 
-If you are about to add a method like `setCount`, name the event in task language instead: `incremented`, `reset`, `submitted`, `messageReceived`. The model should talk about the meaning of what happened, not the technical way to mutate a field.
+If you are about to add a method like `setCount`, name the event in task language instead: `incremented`, `reset`, `open`, `submitted`, `messageReceived`. The model should talk about the meaning of the action, not the technical way to mutate a field.
 
 ## Value Storage
 

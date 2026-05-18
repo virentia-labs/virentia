@@ -348,7 +348,7 @@ owner((dispose) => {
 });
 ```
 
-Attach cleanup to an existing owner:
+Attach cleanup to an existing owner. `withOwner(owner, fn)` makes the given owner current only while `fn` runs:
 
 ```ts
 const model = owner((dispose, currentOwner) => {

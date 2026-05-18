@@ -68,6 +68,28 @@ const timerModel = owner(() => {
 });
 ```
 
-Используйте `withOwner`, когда helper должен привязать очистку к уже существующему владельцу. Так helper остается переиспользуемым и не отвечает за весь жизненный цикл модели.
+Используйте `withOwner`, когда вспомогательная функция должна привязать очистку к уже существующему владельцу. Он временно делает этого владельца текущим на время переданной функции, поэтому `onCleanup` внутри нее регистрируется на жизненный цикл модели.
+
+```ts
+import { onCleanup, owner, withOwner, type Owner } from "@virentia/core";
+
+const model = owner((dispose, modelOwner) => {
+  return { dispose, owner: modelOwner };
+});
+
+function connectSocket(modelOwner: Owner) {
+  withOwner(modelOwner, () => {
+    const socket = new WebSocket("/events");
+
+    onCleanup(() => {
+      socket.close();
+    });
+  });
+}
+
+connectSocket(model.owner);
+```
+
+Так вспомогательная функция остается переиспользуемой и не отвечает за весь жизненный цикл модели.
 
 Владельцы нужны не только для борьбы с утечками. Они делают решение о жизненном цикле видимым: эта модель временная, эта работа принадлежит ей, а здесь ей разрешено исчезнуть.

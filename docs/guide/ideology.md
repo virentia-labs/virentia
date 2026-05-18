@@ -10,7 +10,7 @@ Imperative code is useful. It naturally describes “do this, then that”, it f
 
 The problem starts when imperative code becomes the only way to describe business logic. If the UI sets loading, catches errors, clears results, and decides which request to cancel, the model spreads across call sites. That code is harder to test without the interface, harder to reuse on the server, and harder to change without accidental regressions.
 
-Virentia takes a balanced position: imperative code stays at boundaries and inside named rules, while causality is expressed through model primitives. An event names what happened. A reaction describes a rule. An effect exposes the lifecycle of external work. A store remembers the result. This does not make code “pure” for its own sake; it makes business logic observable and portable.
+Virentia takes a balanced position: imperative code stays at boundaries and inside named rules, while causality is expressed through model primitives. An event names a meaningful domain action. A reaction describes a rule. An effect exposes the lifecycle of external work. A store remembers the result. This does not make code “pure” for its own sake; it makes business logic observable and portable.
 
 ## Static Shape
 
@@ -24,7 +24,7 @@ Virentia keeps the useful part of static shape: stores, events, effects, and rea
 
 A store is for memory. It answers a simple question: what should the model remember between events? A store value is not a global variable; the concrete value lives in a scope. That lets the same model run in a test, SSR request, widget, or cached screen without sharing state.
 
-An event is for facts. It does not need to say how a field should change. A good event names what happened: `submitted`, `messageReceived`, `queryChanged`. Because of that, one event can start several rules, and the model does not collapse into a set of setters.
+An event names something meaningful for the model: usually a fact that happened, sometimes a public intent like `open` or `close`. It does not need to say how a field should change. Because of that, one event can start several rules, and the model does not collapse into a set of setters.
 
 An effect is for external async work. A request, storage call, worker, timer, or analytics event usually has a lifecycle: start, success, failure, cancellation, pending state. If that lifecycle stays in the UI, it quickly spreads. An effect makes it part of the model.
 

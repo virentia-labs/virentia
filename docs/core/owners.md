@@ -68,6 +68,28 @@ const timerModel = owner(() => {
 });
 ```
 
-Use `withOwner` when a helper needs to attach cleanup to an owner that already exists. This keeps helper code reusable without making it responsible for the whole model lifetime.
+Use `withOwner` when a helper needs to attach cleanup to an owner that already exists. It temporarily makes that owner current while the callback runs, so `onCleanup` inside the helper is registered on the model lifetime.
+
+```ts
+import { onCleanup, owner, withOwner, type Owner } from "@virentia/core";
+
+const model = owner((dispose, modelOwner) => {
+  return { dispose, owner: modelOwner };
+});
+
+function connectSocket(modelOwner: Owner) {
+  withOwner(modelOwner, () => {
+    const socket = new WebSocket("/events");
+
+    onCleanup(() => {
+      socket.close();
+    });
+  });
+}
+
+connectSocket(model.owner);
+```
+
+This keeps helper code reusable without making it responsible for the whole model lifetime.
 
 Owners are not only about avoiding leaks. They make lifecycle decisions visible: this model is temporary, this work belongs to it, and this is the point where it is allowed to disappear.
