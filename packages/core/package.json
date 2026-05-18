@@ -5,13 +5,13 @@
   "keywords": [],
   "homepage": "https://movpushmov.dev/virentia/core/",
   "bugs": {
-    "url": "https://github.com/movpushmov/virentia/issues"
+    "url": "https://github.com/virentia-labs/virentia/issues"
   },
   "license": "MIT",
   "author": "movpushmov",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/movpushmov/virentia.git",
+    "url": "git+https://github.com/virentia-labs/virentia.git",
     "directory": "packages/core"
   },
   "files": [
