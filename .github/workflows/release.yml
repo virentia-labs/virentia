@@ -1,12 +1,7 @@
-name: Release packages
+name: Release
 
 on:
   workflow_dispatch:
-
-permissions:
-  contents: write
-  pull-requests: write
-  id-token: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -14,8 +9,12 @@ concurrency:
 
 jobs:
   release:
-    if: github.repository == 'movpushmov/virentia'
+    name: Release
     runs-on: ubuntu-latest
+    if: github.repository == 'movpushmov/virentia' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      id-token: write
 
     steps:
       - name: Checkout
@@ -23,23 +22,35 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup pnpm
+      - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 11.0.9
+          run_install: false
 
-      - name: Setup Node
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
+      - name: Set up npm
+        run: npm install -g npm@latest
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Lint
-        run: pnpm lint
+      - name: Verify release commit
+        run: |
+          pending_changesets="$(find .changeset -maxdepth 1 -name "*.md" ! -name "README.md" -print)"
+
+          if [ -n "$pending_changesets" ]; then
+            echo "Pending changesets found:"
+            echo "$pending_changesets"
+            echo "Run pnpm prepare-release locally, commit the generated release changes, and rerun this workflow."
+            exit 1
+          fi
 
       - name: Typecheck
         run: pnpm typecheck
@@ -50,12 +61,15 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Create release PR or publish
-        uses: changesets/action@v1
-        with:
-          version: pnpm version-packages
-          publish: pnpm release
-          title: "chore: version packages"
-          commit: "chore: version packages"
+      - name: Configure release git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Publish packages
+        run: pnpm release
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"
+
+      - name: Push release tags
+        run: git push --follow-tags
