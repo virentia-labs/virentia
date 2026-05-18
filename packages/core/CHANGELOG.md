@@ -1,5 +1,11 @@
 # @virentia/core
 
+## 0.2.0
+
+### Minor Changes
+
+- feat: inspector, react controlled models and devtools
+
 ## 0.1.1
 
 ### Patch Changes
