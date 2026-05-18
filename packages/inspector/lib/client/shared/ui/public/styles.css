@@ -159,7 +159,7 @@ body {
 .virentia-inspector__node-label {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
 .virentia-inspector__node-name {
@@ -171,6 +171,24 @@ body {
 .virentia-inspector__node-type {
   color: var(--mantine-color-dark-2);
   font-size: 11px;
+}
+
+.virentia-inspector__node-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.virentia-inspector__node-key {
+  border: 1px solid rgba(64, 192, 87, 0.34);
+  border-radius: 4px;
+  color: var(--mantine-color-green-3);
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 4px;
 }
 
 .virentia-inspector__timeline-row {

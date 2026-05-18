@@ -49,6 +49,7 @@ export type InspectorListener = (event: InspectorEvent) => void;
 export interface InspectorNodeMeta {
   type?: string;
   name?: string;
+  key?: boolean;
   callable?: boolean;
   writable?: boolean;
   internal?: boolean;
@@ -63,6 +64,7 @@ export interface InspectorNodeSnapshot {
   id: string;
   name: string;
   type: string;
+  key: boolean;
   callable: boolean;
   writable: boolean;
   internal: boolean;
@@ -385,6 +387,7 @@ export function getInspectorSnapshot(): InspectorSnapshot {
       id,
       name: meta.name ?? `${type} ${id.replace("node:", "#")}`,
       type,
+      key: meta.key ?? false,
       callable: meta.callable ?? false,
       writable: meta.writable ?? false,
       internal: meta.internal ?? false,

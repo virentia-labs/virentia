@@ -88,6 +88,7 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
   const [timeline, setTimeline] = useState<DevtoolsTimelineEvent[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [breakpointIds, setBreakpointIds] = useState<string[]>([]);
+  const [showAllUnits, setShowAllUnits] = useState(false);
   const [showIsolatedUnits, setShowIsolatedUnits] = useState(false);
   const [triggerNodeId, setTriggerNodeId] = useState<string | null>(null);
   const [triggerStage, setTriggerStage] = useState<TriggerStage | null>(null);
@@ -139,9 +140,13 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
     };
   }, [props.channel]);
 
+  const keyFilteredSnapshot = useMemo(
+    () => (showAllUnits ? snapshot : hideNonKeyNodes(snapshot)),
+    [showAllUnits, snapshot],
+  );
   const visibleSnapshot = useMemo(
-    () => (showIsolatedUnits ? snapshot : hideIsolatedNodes(snapshot)),
-    [showIsolatedUnits, snapshot],
+    () => (showIsolatedUnits ? keyFilteredSnapshot : hideIsolatedNodes(keyFilteredSnapshot)),
+    [keyFilteredSnapshot, showIsolatedUnits],
   );
   const selectedFlow = useMemo(
     () =>
@@ -377,6 +382,13 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
               <Title order={4}>Virentia</Title>
             </Group>
             <Group gap="xs">
+              <Switch
+                checked={showAllUnits}
+                color="green"
+                label="Show all units"
+                onChange={(event) => setShowAllUnits(event.currentTarget.checked)}
+                size="xs"
+              />
               <Switch
                 checked={showIsolatedUnits}
                 color="green"
@@ -700,6 +712,12 @@ function useFlowGraph(
 function hideIsolatedNodes(snapshot: DevtoolsSnapshot): DevtoolsSnapshot {
   const connectedNodeIds = new Set<string>();
 
+  for (const node of snapshot.nodes) {
+    if (node.key) {
+      connectedNodeIds.add(node.id);
+    }
+  }
+
   for (const edge of snapshot.edges) {
     if (edge.kind === "reactive") {
       connectedNodeIds.add(edge.source);
@@ -720,5 +738,18 @@ function hideIsolatedNodes(snapshot: DevtoolsSnapshot): DevtoolsSnapshot {
       (edge) => connectedNodeIds.has(edge.source) && connectedNodeIds.has(edge.target),
     ),
     nodes: snapshot.nodes.filter((node) => connectedNodeIds.has(node.id)),
+  };
+}
+
+function hideNonKeyNodes(snapshot: DevtoolsSnapshot): DevtoolsSnapshot {
+  const visibleNodeIds = new Set(snapshot.nodes.filter((node) => node.key).map((node) => node.id));
+
+  return {
+    ...snapshot,
+    breakpoints: snapshot.breakpoints.filter((id) => visibleNodeIds.has(id)),
+    edges: snapshot.edges.filter(
+      (edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target),
+    ),
+    nodes: snapshot.nodes.filter((node) => visibleNodeIds.has(node.id)),
   };
 }

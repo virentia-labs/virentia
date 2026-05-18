@@ -17,15 +17,26 @@ export interface EventCallable<T = void> extends Event<T> {
   (...payload: EventPayload<T>): Promise<void>;
 }
 
-export function event<T = void>(name?: string): EventCallable<T> {
-  return createEvent<T>(name) as EventCallable<T>;
+export interface EventDevtoolsOptions {
+  name?: string;
+  key?: boolean;
 }
 
-function createEvent<T>(name?: string): Event<T> {
+export function event<T = void>(name?: string): EventCallable<T>;
+export function event<T = void>(devtools?: EventDevtoolsOptions): EventCallable<T>;
+export function event<T = void>(
+  devtools?: string | EventDevtoolsOptions,
+): EventCallable<T> {
+  return createEvent<T>(devtools) as EventCallable<T>;
+}
+
+function createEvent<T>(devtools?: string | EventDevtoolsOptions): Event<T> {
+  const options = normalizeDevtoolsOptions(devtools);
   const node = createNode({
     meta: withInspectorMeta(undefined, {
       type: "event",
-      name,
+      name: options.name,
+      key: options.key,
       callable: true,
     }),
   });
@@ -130,4 +141,10 @@ function deriveName(source: Node, operation: string): string | undefined {
   const name = readInspectorNodeMeta(source).name;
 
   return name ? `${name}.${operation}` : undefined;
+}
+
+function normalizeDevtoolsOptions(
+  devtools: string | EventDevtoolsOptions | undefined,
+): EventDevtoolsOptions {
+  return typeof devtools === "string" ? { name: devtools } : (devtools ?? {});
 }

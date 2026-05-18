@@ -147,6 +147,47 @@ describe("devtools", () => {
     devtools.dispose();
   });
 
+  it("marks key units in snapshots", () => {
+    const submitted = event<number>({ name: "submitted", key: true });
+    const count = store(0, undefined, { name: "count", key: true });
+    const doubled = computed(() => count.value * 2, undefined, { name: "doubled", key: true });
+    const saveFx = effect(async (value: number) => value, { name: "saveFx", key: true });
+    const devtools = installVirentiaDevtools({
+      channel: "test-devtools-key-units",
+    });
+    const snapshot = devtools.snapshot();
+
+    expect(submitted.node).toBeDefined();
+    expect(doubled.node).toBeDefined();
+    expect(saveFx.node).toBeDefined();
+    expect(snapshot.nodes).toContainEqual(
+      expect.objectContaining({
+        name: "submitted",
+        key: true,
+      }),
+    );
+    expect(snapshot.nodes).toContainEqual(
+      expect.objectContaining({
+        name: "count",
+        key: true,
+      }),
+    );
+    expect(snapshot.nodes).toContainEqual(
+      expect.objectContaining({
+        name: "doubled",
+        key: true,
+      }),
+    );
+    expect(snapshot.nodes).toContainEqual(
+      expect.objectContaining({
+        name: "saveFx",
+        key: true,
+      }),
+    );
+
+    devtools.dispose();
+  });
+
   it("stops a chain after a selected breakpoint node", async () => {
     const devtools = installVirentiaDevtools({
       channel: "test-devtools-breakpoint",

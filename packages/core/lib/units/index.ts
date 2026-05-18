@@ -6,6 +6,7 @@ export type {
   EffectAborted,
   EffectCallArgs,
   EffectCallOptions,
+  EffectDevtoolsOptions,
   EffectDone,
   EffectDoneValue,
   EffectFailed,
@@ -19,7 +20,7 @@ export type {
   EffectVariantParams,
 } from "./effect";
 export { event } from "./event";
-export type { Event, EventCallable, EventPayload } from "./event";
+export type { Event, EventCallable, EventDevtoolsOptions, EventPayload } from "./event";
 export { lazyModel } from "./lazy";
 export { computed, seedScopeStoreValue, store } from "./store";
-export type { Store, StoreSubscriber, StoreWritable } from "./store";
+export type { Store, StoreDevtoolsOptions, StoreSubscriber, StoreWritable } from "./store";

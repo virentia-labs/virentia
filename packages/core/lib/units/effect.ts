@@ -58,11 +58,18 @@ export type EffectVariantParams<Call, BaseParams> = (call: Call) => BaseParams;
 
 export interface EffectVariantConfig<Call, BaseParams> {
   name?: string;
+  key?: boolean;
   params: EffectVariantParams<Call, BaseParams>;
 }
 
 export interface EffectVariantIdentityConfig {
   name?: string;
+  key?: boolean;
+}
+
+export interface EffectDevtoolsOptions {
+  name?: string;
+  key?: boolean;
 }
 
 export interface Effect<Params, Done, Fail = unknown> {
@@ -97,10 +104,13 @@ interface EffectCallState<Params, Done> {
   params: Params;
   scope: Scope;
   controller: AbortController;
+  completed: boolean;
   resolve(result: Done): void;
   reject(error: unknown): void;
   cleanup(): void;
 }
+
+let currentEffectCall: EffectCallState<unknown, unknown> | null = null;
 
 interface EffectInternal<Params, Done> {
   [effectHandlerRunner](params: Params, ctx: EffectHandlerContext): Done | PromiseLike<Done>;
@@ -124,14 +134,24 @@ export function effect<Done, Fail = unknown>(
   handler: () => Done | PromiseLike<Done>,
   name?: string,
 ): Effect<void, Done, Fail>;
+export function effect<Done, Fail = unknown>(
+  handler: () => Done | PromiseLike<Done>,
+  devtools?: EffectDevtoolsOptions,
+): Effect<void, Done, Fail>;
 export function effect<Params, Done, Fail = unknown>(
   handler: EffectHandler<Params, Done>,
   name?: string,
 ): Effect<Params, Done, Fail>;
 export function effect<Params, Done, Fail = unknown>(
   handler: EffectHandler<Params, Done>,
-  name?: string,
+  devtools?: EffectDevtoolsOptions,
+): Effect<Params, Done, Fail>;
+export function effect<Params, Done, Fail = unknown>(
+  handler: EffectHandler<Params, Done>,
+  devtools?: string | EffectDevtoolsOptions,
 ): Effect<Params, Done, Fail> {
+  const options = normalizeDevtoolsOptions(devtools);
+  const name = options.name;
   const activeCalls = new Set<EffectCallState<Params, Done>>();
   const $inFlight = readonlyStore(0, undefined, { name: name ? `${name}.$inFlight` : undefined });
   const $pending = readonlyStore(false, undefined, { name: name ? `${name}.$pending` : undefined });
@@ -150,14 +170,14 @@ export function effect<Params, Done, Fail = unknown>(
     first?: string | EffectVariantIdentityConfig | EffectVariantParams<unknown, Params>,
     second?: EffectVariantParams<unknown, Params>,
   ) => {
-    const variantName = resolveVariantName(first);
+    const variantDevtools = resolveVariantDevtools(first);
     const mapParams = resolveVariantParams(first, second);
 
     return effect<unknown, Done, Fail>((call, ctx) => {
       const params = mapParams ? mapParams(call) : (call as Params);
 
       return runEffectHandler(result, params, ctx);
-    }, variantName);
+    }, variantDevtools);
   }) as Effect<Params, Done, Fail>["variant"];
 
   const createCall = (
@@ -173,30 +193,18 @@ export function effect<Params, Done, Fail = unknown>(
       params,
       scope,
       controller,
+      completed: false,
       resolve,
       reject,
       cleanup: () => {},
     };
 
+    if (currentEffectCall) {
+      attachAbortSignal(call, currentEffectCall.controller.signal);
+    }
+
     if (options?.signal) {
-      const signal = options.signal;
-      const abortFromParent = () => {
-        const reason = getAbortReason(signal);
-
-        if (!controller.signal.aborted) {
-          controller.abort(reason);
-          emitAbort(call, reason);
-        }
-      };
-
-      if (signal.aborted) {
-        abortFromParent();
-      } else {
-        signal.addEventListener("abort", abortFromParent, { once: true });
-        call.cleanup = () => {
-          signal.removeEventListener("abort", abortFromParent);
-        };
-      }
+      attachAbortSignal(call, options.signal);
     }
 
     return call;
@@ -218,7 +226,7 @@ export function effect<Params, Done, Fail = unknown>(
 
   const abortActive = (reason?: unknown): void => {
     for (const call of activeCalls) {
-      if (call.controller.signal.aborted) continue;
+      if (call.completed || call.controller.signal.aborted) continue;
 
       call.controller.abort(reason);
       emitAbort(call, getAbortReason(call.controller.signal));
@@ -246,53 +254,31 @@ export function effect<Params, Done, Fail = unknown>(
       const call = ctx.value as EffectCallState<Params, Done>;
 
       if (call.controller.signal.aborted) {
-        return {
-          status: "fail",
-          call,
-          params: call.params,
-          error: getAbortReason(call.controller.signal) as Fail,
-        } satisfies EffectOutcome<Params, Done, Fail>;
+        return failCall(call, getAbortReason(call.controller.signal) as Fail);
       }
 
       try {
         const handlerForScope = getScopeHandler(call.scope, result) ?? handler;
-        const resultValue = handlerForScope(call.params, {
-          signal: call.controller.signal,
-          scope: call.scope,
-        });
+        const resultValue = runWithCurrentEffectCall(call, () =>
+          handlerForScope(call.params, {
+            signal: call.controller.signal,
+            scope: call.scope,
+          }),
+        );
 
         if (isPromiseLike(resultValue)) {
-          return Promise.resolve(resultValue).then(
-            (done) =>
-              ({
-                status: "done",
-                call,
-                params: call.params,
-                result: done,
-              }) satisfies EffectOutcome<Params, Done, Fail>,
-            (error) =>
-              ({
-                status: "fail",
-                call,
-                params: call.params,
-                error: error as Fail,
-              }) satisfies EffectOutcome<Params, Done, Fail>,
-          );
+          return Promise.race([
+            Promise.resolve(resultValue).then(
+              (done) => doneCall(call, done),
+              (error) => failCall(call, error as Fail),
+            ),
+            waitForAbort(call),
+          ]);
         }
 
-        return {
-          status: "done",
-          call,
-          params: call.params,
-          result: resultValue,
-        } satisfies EffectOutcome<Params, Done, Fail>;
+        return doneCall(call, resultValue);
       } catch (error) {
-        return {
-          status: "fail",
-          call,
-          params: call.params,
-          error: error as Fail,
-        } satisfies EffectOutcome<Params, Done, Fail>;
+        return failCall(call, error as Fail);
       }
     },
   });
@@ -350,6 +336,7 @@ export function effect<Params, Done, Fail = unknown>(
     meta: withInspectorMeta(undefined, {
       type: "effect",
       name,
+      key: options.key,
       callable: true,
     }),
     run: (ctx) => {
@@ -423,6 +410,78 @@ export function effect<Params, Done, Fail = unknown>(
       role,
     });
   }
+
+  function attachAbortSignal(call: EffectCallState<Params, Done>, signal: AbortSignal): void {
+    if (signal === call.controller.signal) {
+      return;
+    }
+
+    const abortFromParent = () => {
+      const reason = getAbortReason(signal);
+
+      if (!call.completed && !call.controller.signal.aborted) {
+        call.controller.abort(reason);
+        emitAbort(call, reason);
+      }
+    };
+
+    if (signal.aborted) {
+      abortFromParent();
+      return;
+    }
+
+    signal.addEventListener("abort", abortFromParent, { once: true });
+    addCallCleanup(call, () => {
+      signal.removeEventListener("abort", abortFromParent);
+    });
+  }
+
+  function doneCall(
+    call: EffectCallState<Params, Done>,
+    result: Done,
+  ): EffectOutcome<Params, Done, Fail> {
+    call.completed = true;
+
+    return {
+      status: "done",
+      call,
+      params: call.params,
+      result,
+    };
+  }
+
+  function failCall(
+    call: EffectCallState<Params, Done>,
+    error: Fail,
+  ): EffectOutcome<Params, Done, Fail> {
+    call.completed = true;
+
+    return {
+      status: "fail",
+      call,
+      params: call.params,
+      error,
+    };
+  }
+
+  function waitForAbort(
+    call: EffectCallState<Params, Done>,
+  ): Promise<EffectOutcome<Params, Done, Fail>> {
+    if (call.controller.signal.aborted) {
+      return Promise.resolve(failCall(call, getAbortReason(call.controller.signal) as Fail));
+    }
+
+    return new Promise((resolve) => {
+      const settleAborted = () => {
+        resolve(failCall(call, getAbortReason(call.controller.signal) as Fail));
+      };
+
+      call.controller.signal.addEventListener("abort", settleAborted, { once: true });
+      addCallCleanup(call, () => {
+        call.controller.signal.removeEventListener("abort", settleAborted);
+      });
+    });
+  }
 }
 
 export function runEffectHandler<Params, Done>(
@@ -455,13 +514,53 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   );
 }
 
-function resolveVariantName(
-  value?: string | EffectVariantIdentityConfig | EffectVariantParams<unknown, unknown>,
-): string | undefined {
-  if (typeof value === "string") return value;
-  if (typeof value === "object" && value !== null) return value.name;
+function runWithCurrentEffectCall<Params, Done, T>(
+  call: EffectCallState<Params, Done>,
+  fn: () => T,
+): T {
+  const previous = currentEffectCall;
 
-  return undefined;
+  currentEffectCall = call as EffectCallState<unknown, unknown>;
+
+  try {
+    return fn();
+  } finally {
+    currentEffectCall = previous;
+  }
+}
+
+function addCallCleanup<Params, Done>(
+  call: EffectCallState<Params, Done>,
+  cleanup: () => void,
+): void {
+  const previousCleanup = call.cleanup;
+
+  call.cleanup = () => {
+    previousCleanup();
+    cleanup();
+  };
+}
+
+function resolveVariantDevtools(
+  value?: string | EffectVariantIdentityConfig | EffectVariantParams<unknown, unknown>,
+): EffectDevtoolsOptions {
+  if (typeof value === "string") return { name: value };
+  if (typeof value === "object" && value !== null) {
+    return {
+      name: value.name,
+      key: value.key,
+    };
+  }
+
+  return {};
+}
+
+function normalizeDevtoolsOptions(
+  devtools: string | EffectDevtoolsOptions | undefined,
+): EffectDevtoolsOptions {
+  if (typeof devtools === "string") return { name: devtools };
+
+  return devtools ?? {};
 }
 
 function resolveVariantParams<Params>(

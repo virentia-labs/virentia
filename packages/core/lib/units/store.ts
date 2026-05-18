@@ -29,6 +29,7 @@ export type StoreWrite<T> = T extends object ? T : { value: T };
 export type StoreSubscriber<T> = (value: T, scope: Scope) => void;
 export interface StoreDevtoolsOptions {
   name?: string;
+  key?: boolean;
 }
 
 export type Store<T> = StoreView<T> & StoreApi<T>;
@@ -51,6 +52,7 @@ interface StoreOptions<T> {
   skipToken?: T;
   hasSkipToken: boolean;
   name?: string;
+  key?: boolean;
 }
 
 interface ComputedOptions<T> extends Omit<StoreOptions<T>, "writable"> {
@@ -76,6 +78,7 @@ export function store<T>(
     skipToken,
     hasSkipToken: arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined),
     name: devtools?.name,
+    key: devtools?.key,
   }) as StoreWritable<T>;
 }
 
@@ -109,6 +112,7 @@ export function readonlyStore<T>(
     skipToken,
     hasSkipToken: arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined),
     name: devtools?.name,
+    key: devtools?.key,
   });
 }
 
@@ -117,6 +121,7 @@ export function computed<T>(fn: () => T, skipToken?: T, devtools?: StoreDevtools
     skipToken,
     hasSkipToken: arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined),
     name: devtools?.name,
+    key: devtools?.key,
   });
 }
 
@@ -127,6 +132,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
     meta: withInspectorMeta(undefined, {
       type: "store",
       name: options.name,
+      key: options.key,
       callable: true,
       writable: options.writable,
     }),
@@ -355,6 +361,7 @@ function createComputed<T>(
     meta: withInspectorMeta(undefined, {
       type: "computed",
       name: options.name,
+      key: options.key,
     }),
     run: (ctx) => {
       if (!ctx.scope) {

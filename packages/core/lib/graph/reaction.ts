@@ -53,12 +53,14 @@ export interface Reaction {
 export interface ReactionConfig<Payload, On extends UnitList<Payload> = UnitList<Payload>> {
   on: On;
   name?: string;
+  key?: boolean;
   scope?: Scope | readonly Scope[];
   run: (payload: Payload) => void;
 }
 
 export interface AutoReactionConfig {
   name?: string;
+  key?: boolean;
   scope?: Scope | readonly Scope[];
   run(): void;
 }
@@ -89,6 +91,7 @@ export function reaction(
   const explicit = typeof input === "object" && "on" in input;
   const runHandler = typeof input === "function" ? input : input.run;
   const name = typeof input === "object" ? input.name : undefined;
+  const key = typeof input === "object" ? input.key : undefined;
   const configuredScopes = typeof input === "object" && input.scope ? toArray(input.scope) : null;
   const allowedScopes = configuredScopes ? new Set(configuredScopes) : null;
   const currentDependencies = new Set<Node>();
@@ -98,6 +101,7 @@ export function reaction(
     meta: withInspectorMeta(undefined, {
       type: "reaction",
       name,
+      key,
       internal: false,
     }),
     run: (ctx) => {

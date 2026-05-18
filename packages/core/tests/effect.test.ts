@@ -92,22 +92,7 @@ describe("effect", () => {
   it("aborts active calls and emits aborted", async () => {
     const appScope = scope();
     const reason = new Error("stop");
-    const waitFx = effect<void, string, Error>(
-      (_, { signal }) =>
-        new Promise((resolve, reject) => {
-          signal.addEventListener(
-            "abort",
-            () => {
-              reject(signal.reason);
-            },
-            { once: true },
-          );
-
-          if (signal.aborted) {
-            reject(signal.reason);
-          }
-        }),
-    );
+    const waitFx = effect<string, Error>(() => new Promise<string>(() => {}));
     const values: unknown[] = [];
 
     reaction({
@@ -135,6 +120,55 @@ describe("effect", () => {
     scoped(appScope, () => {
       expect(waitFx.$pending.value).toBe(false);
       expect(waitFx.$inFlight.value).toBe(0);
+    });
+  });
+
+  it("cascades abort to effects called by an active effect", async () => {
+    const appScope = scope();
+    const reason = new Error("stop tree");
+    const values: unknown[] = [];
+    const leafFx = effect<string, Error>(() => new Promise<string>(() => {}));
+    const middleFx = effect(() => leafFx());
+    const rootFx = effect(() => middleFx());
+
+    reaction({
+      on: rootFx.aborted,
+      run(value) {
+        values.push(["root", value]);
+      },
+    });
+    reaction({
+      on: middleFx.aborted,
+      run(value) {
+        values.push(["middle", value]);
+      },
+    });
+    reaction({
+      on: leafFx.aborted,
+      run(value) {
+        values.push(["leaf", value]);
+      },
+    });
+
+    const promise = scoped(appScope, () => rootFx());
+    await waitForMicrotask();
+    await rootFx.abort(reason);
+
+    await expect(promise).rejects.toBe(reason);
+    expect(values).toEqual(
+      expect.arrayContaining([
+        ["root", { params: undefined, reason }],
+        ["middle", { params: undefined, reason }],
+        ["leaf", { params: undefined, reason }],
+      ]),
+    );
+    scoped(appScope, () => {
+      expect(rootFx.$pending.value).toBe(false);
+      expect(rootFx.$inFlight.value).toBe(0);
+      expect(middleFx.$pending.value).toBe(false);
+      expect(middleFx.$inFlight.value).toBe(0);
+      expect(leafFx.$pending.value).toBe(false);
+      expect(leafFx.$inFlight.value).toBe(0);
     });
   });
 
