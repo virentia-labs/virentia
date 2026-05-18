@@ -75,6 +75,23 @@ export const Counter = component({
 });
 ```
 
+`component` also exposes `.create()` and accepts a `model` prop for controlled usage.
+The created model owns its scope and should be disposed by the caller.
+
+```tsx
+const Parent = component({
+  model() {
+    const counter = Counter.create({ step: 2 });
+
+    return { counter };
+  },
+
+  view({ model }) {
+    return <Counter step={2} model={model.counter} />;
+  },
+});
+```
+
 ## Model Caches
 
 Use `createModelCache` when a model should survive unmount and be reused by key: chats, tabs, detail screens, media players, or previews.

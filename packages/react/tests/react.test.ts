@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { allSettled, event, reaction, scope, scoped, store } from "@virentia/core";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { act, createElement, type ReactNode } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { component, createModelCache, ScopeProvider, useProvidedScope, useUnit } from "../lib";
@@ -158,6 +158,112 @@ describe("@virentia/react", () => {
     view.unmount();
 
     expect(lifecycle).toEqual(["mounted:1", "unmounted:0"]);
+  });
+
+  it("creates controlled component models outside React", async () => {
+    const appScope = scope();
+    const lifecycle: string[] = [];
+
+    function createCounterModel(context: ModelContext<{ step: number }>) {
+      const clicked = event<void>();
+      const count = store(0);
+
+      reaction({
+        on: clicked,
+        run() {
+          count.value += context.props.step;
+        },
+      });
+
+      reaction({
+        on: context.mounted,
+        run() {
+          lifecycle.push(`mounted:${context.mounts.value}`);
+        },
+      });
+
+      reaction({
+        on: context.unmounted,
+        run() {
+          lifecycle.push(`unmounted:${context.mounts.value}`);
+        },
+      });
+
+      return { clicked, count };
+    }
+
+    const Counter = component({
+      model: createCounterModel,
+      view({ model }) {
+        return createElement("button", { onClick: () => model.clicked() }, model.count);
+      },
+    });
+    const model = scoped(appScope, () => Counter.create({ step: 2 }));
+    const view = render(createElement(Counter, { step: 2, model }));
+
+    expect(lifecycle).toEqual(["mounted:1"]);
+
+    await scoped(appScope, () => model.clicked());
+    await waitFor(() => expect(button().textContent).toBe("2"));
+
+    view.rerender(createElement(Counter, { step: 5, model }));
+
+    await scoped(appScope, () => model.clicked());
+    await waitFor(() => expect(button().textContent).toBe("7"));
+
+    view.unmount();
+
+    await scoped(appScope, () => model.clicked());
+
+    scoped(appScope, () => {
+      expect(model.count.value).toBe(12);
+    });
+    expect(lifecycle).toEqual(["mounted:1", "unmounted:0"]);
+
+    model.dispose();
+  });
+
+  it("passes child component models through parent component models", async () => {
+    const appScope = scope();
+
+    function createCounterModel(context: ModelContext<{ step: number }>) {
+      const clicked = event<void>();
+      const count = store(0);
+
+      reaction({
+        on: clicked,
+        run() {
+          count.value += context.props.step;
+        },
+      });
+
+      return { clicked, count };
+    }
+
+    const Counter = component({
+      model: createCounterModel,
+      view({ model }) {
+        return createElement("button", { onClick: () => model.clicked() }, model.count);
+      },
+    });
+    const Parent = component({
+      model() {
+        const counter = Counter.create({ step: 1 });
+
+        return { counter };
+      },
+      view({ model }) {
+        return createElement(Counter, { step: 2, model: model.counter });
+      },
+    });
+
+    renderWithScope(appScope, createElement(Parent, {}));
+
+    await act(async () => {
+      fireEvent.click(button());
+    });
+
+    expect(button().textContent).toBe("2");
   });
 
   it("keeps cached models alive across unmounts until the cache deletes them", async () => {

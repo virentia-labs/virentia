@@ -16,3 +16,7 @@ export function useProvidedScope(): Scope {
 
   return scope;
 }
+
+export function useOptionalProvidedScope(): Scope | null {
+  return useContext(ScopeContext);
+}

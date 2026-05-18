@@ -1,9 +1,10 @@
-import { event, owner, store, scoped, type Scope } from "@virentia/core";
+import { event, owner, store, scoped, type DisposableOwner, type Scope } from "@virentia/core";
 import { useEffect, useMemo } from "react";
 import { getOrCreateCachedInstance } from "./model-cache";
 import { useProvidedScope } from "./scope";
 import type {
   CacheOptions,
+  ComponentModel,
   ModelContext,
   ModelFactory,
   ModelInstance,
@@ -35,10 +36,10 @@ export function useModel(
 
   const instance = useModelInstance(modelOrFactory, props, scope, options);
 
-  return useReactiveModel(instance.model, scope);
+  return useReactiveModel(instance.model, instance.scope);
 }
 
-function useModelInstance<Props, Key, Model extends object>(
+export function useModelInstance<Props, Key, Model extends object>(
   factory: ModelFactory<Props, Model, Key>,
   props: Props,
   scope: Scope,
@@ -56,6 +57,19 @@ function useModelInstance<Props, Key, Model extends object>(
 
     return createModelInstance(factory, props, scope, undefined as Key);
   }, [cache, key, scope]);
+  const disposeOnUnmount = !cached;
+
+  useModelInstanceLifecycle(instance, props, { disposeOnUnmount });
+
+  return instance;
+}
+
+export function useModelInstanceLifecycle<Props, Key, Model extends object>(
+  instance: ModelInstance<Props, Model, Key>,
+  props: Props,
+  options: { disposeOnUnmount: boolean },
+): void {
+  const scope = instance.scope;
 
   useIsomorphicLayoutEffect(() => {
     writeStore(instance.props, props, scope);
@@ -73,16 +87,14 @@ function useModelInstance<Props, Key, Model extends object>(
         void instance.unmounted();
       });
 
-      if (!cached) {
+      if (options.disposeOnUnmount) {
         instance.dispose();
       }
     };
-  }, [cached, instance, scope]);
-
-  return instance;
+  }, [instance, options.disposeOnUnmount, scope]);
 }
 
-function createModelInstance<Props, Key, Model extends object>(
+export function createModelInstance<Props, Key, Model extends object>(
   factory: ModelFactory<Props, Model, Key>,
   props: Props,
   scope: Scope,
@@ -112,11 +124,37 @@ function createModelInstance<Props, Key, Model extends object>(
   });
 }
 
-function useReactiveModel<Model extends object>(model: Model, scope: Scope): ReactiveModel<Model> {
+export function exposeModelInstance<Props, Key, Model extends object>(
+  instance: ModelInstance<Props, Model, Key>,
+): ComponentModel<Model> {
+  const model = instance.model as ComponentModel<Model> & ModelWithInstance<Props, Model, Key>;
+
+  Object.defineProperty(model, modelInstanceSymbol, {
+    configurable: true,
+    value: instance,
+  });
+  defineHidden(model, "dispose", () => instance.dispose());
+  defineHidden(model, disposeSymbol, () => instance.dispose());
+
+  return model;
+}
+
+export function readExposedModelInstance<Props, Key, Model extends object>(
+  model: ComponentModel<Model>,
+): ModelInstance<Props, Model, Key> | null {
+  return (model as ModelWithInstance<Props, Model, Key>)[modelInstanceSymbol] ?? null;
+}
+
+export function useReactiveModel<Model extends object>(
+  model: Model,
+  scope: Scope,
+): ReactiveModel<Model> {
   const result: Record<PropertyKey, unknown> = {};
 
   for (const key of Reflect.ownKeys(model)) {
-    if (key === "dispose" || key === disposeSymbol) {
+    const descriptor = Reflect.getOwnPropertyDescriptor(model, key);
+
+    if (key === "dispose" || key === disposeSymbol || (descriptor && !descriptor.enumerable)) {
       continue;
     }
 
@@ -129,9 +167,30 @@ function useReactiveModel<Model extends object>(model: Model, scope: Scope): Rea
 const disposeSymbol =
   typeof Symbol.dispose === "symbol" ? Symbol.dispose : Symbol.for("Symbol.dispose");
 
+const modelInstanceSymbol = Symbol("virentia.react.modelInstance");
+
+type ModelWithInstance<Props, Model extends object, Key> = {
+  [modelInstanceSymbol]?: ModelInstance<Props, Model, Key>;
+};
+
+function defineHidden(target: DisposableOwner, key: PropertyKey, value: unknown): void {
+  if (key in target) {
+    return;
+  }
+
+  Object.defineProperty(target, key, {
+    configurable: true,
+    value,
+  });
+}
+
 function useModelValue(value: unknown, scope: Scope): unknown {
   if (isUnitLike(value)) {
     return useUnitWithScope(value, scope);
+  }
+
+  if (isComponentModel(value)) {
+    return value;
   }
 
   if (isPlainObject(value)) {
@@ -139,4 +198,12 @@ function useModelValue(value: unknown, scope: Scope): unknown {
   }
 
   return value;
+}
+
+function isComponentModel(value: unknown): value is ComponentModel<object> {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as ModelWithInstance<unknown, object, unknown>)[modelInstanceSymbol],
+  );
 }

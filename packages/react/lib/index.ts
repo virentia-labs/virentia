@@ -9,6 +9,10 @@ export type {
   ModelFactory,
   ModelInstance,
   ReactiveModel,
+  ComponentCreate,
+  ComponentModel,
+  ComponentPublicProps,
+  VirentiaComponent,
   UnitLike,
   UnitValue,
 } from "./types";

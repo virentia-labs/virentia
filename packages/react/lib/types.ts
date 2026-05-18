@@ -3,14 +3,17 @@ import type {
   EffectCallArgs,
   EventCallable,
   EventPayload,
+  DisposableOwner,
   Owner,
   Scope,
   Store,
   StoreWritable,
 } from "@virentia/core";
-import type { ComponentType } from "react";
+import type { ComponentType, FC } from "react";
 
 export type UnitLike = Store<any> | StoreWritable<any> | EventCallable<any> | Effect<any, any, any>;
+
+declare const componentModelBrand: unique symbol;
 
 export type UnitValue<Unit> = Unit extends Store<infer State> | StoreWritable<infer State>
   ? State
@@ -21,13 +24,16 @@ export type UnitValue<Unit> = Unit extends Store<infer State> | StoreWritable<in
       : never;
 
 export type ReactiveModel<Model> = {
-  readonly [Key in keyof Model as Key extends "dispose" ? never : Key]: Model[Key] extends UnitLike
-    ? UnitValue<Model[Key]>
-    : Model[Key] extends (...args: any[]) => any
-      ? Model[Key]
-      : Model[Key] extends object
-        ? ReactiveModel<Model[Key]>
-        : Model[Key];
+  readonly [Key in keyof Model as Key extends "dispose" ? never : Key]: Model[Key] extends
+    ComponentModel<infer ChildModel>
+    ? ComponentModel<ChildModel>
+    : Model[Key] extends UnitLike
+      ? UnitValue<Model[Key]>
+      : Model[Key] extends (...args: any[]) => any
+        ? Model[Key]
+        : Model[Key] extends object
+          ? ReactiveModel<Model[Key]>
+          : Model[Key];
 };
 
 export interface ModelContext<Props, Key = undefined> {
@@ -69,6 +75,24 @@ export type UnitShape<Shape> = Shape extends readonly unknown[]
 export type CacheOptions<Props, Key, Model extends object> = {
   readonly cache: ModelCache<Key, Props, Model>;
   readonly key: Key;
+};
+
+export type ComponentModel<Model extends object> = Model & DisposableOwner & {
+  readonly [componentModelBrand]: true;
+};
+
+export type ComponentPublicProps<Props, Model extends object> = Omit<Props, "model"> & {
+  readonly model?: ComponentModel<Model>;
+};
+
+export interface ComponentCreate<Props, Model extends object> {
+  (props: Props): ComponentModel<Model>;
+}
+
+export type VirentiaComponent<Props, Model extends object> = FC<
+  ComponentPublicProps<Props, Model>
+> & {
+  readonly create: ComponentCreate<Props, Model>;
 };
 
 export type ComponentConfig<Props, Model extends object> = {
