@@ -19,6 +19,48 @@ interface CounterModel {
 }
 
 describe("lazyModel", () => {
+  it("exposes scoped pending store while the model is loading", async () => {
+    const appScope = scope();
+    let resolveModel!: (model: CounterModel) => void;
+    const loaded = new Promise<CounterModel>((resolve) => {
+      resolveModel = resolve;
+    });
+    const model = lazyModel<CounterModel>(() => loaded);
+
+    scoped(appScope, () => {
+      expect(model.pending.value).toBe(false);
+    });
+
+    const loading = allSettled(model.incremented, {
+      scope: appScope,
+      payload: 2,
+    });
+
+    await waitForMicrotask();
+
+    scoped(appScope, () => {
+      expect(model.pending.value).toBe(true);
+    });
+
+    const incremented = event<number>();
+    const count = store(0);
+
+    reaction({
+      on: incremented,
+      run(amount: number) {
+        count.value += amount;
+      },
+    });
+
+    resolveModel({ count, incremented });
+    await loading;
+
+    scoped(appScope, () => {
+      expect(model.pending.value).toBe(false);
+      expect(model.count.value).toBe(2);
+    });
+  });
+
   it("loads a model when a lazy unit is launched and forwards payload", async () => {
     const appScope = scope();
     let loads = 0;
@@ -152,3 +194,7 @@ describe("lazyModel", () => {
     }).toThrow("Lazy unit is not loaded yet");
   });
 });
+
+function waitForMicrotask(): Promise<void> {
+  return Promise.resolve();
+}

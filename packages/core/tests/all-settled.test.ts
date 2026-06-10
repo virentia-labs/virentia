@@ -24,8 +24,8 @@ describe("allSettled", () => {
 
     expect(values).toEqual([6]);
     scoped(appScope, () => {
-      expect(doubleFx.$pending.value).toBe(false);
-      expect(doubleFx.$inFlight.value).toBe(0);
+      expect(doubleFx.pending.value).toBe(false);
+      expect(doubleFx.inFlight.value).toBe(0);
     });
   });
 

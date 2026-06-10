@@ -17,7 +17,7 @@ export function isVirentiaUnit(value: unknown): value is VirentiaUnit<any> {
 }
 
 export function isVirentiaEffect(value: unknown): value is virentia.Effect<any, any, any> {
-  return Boolean(isVirentiaUnit(value) && "doneData" in value && "$pending" in value);
+  return Boolean(isVirentiaUnit(value) && "doneData" in value && "pending" in value);
 }
 
 export function isObjectLike(value: unknown): value is object {

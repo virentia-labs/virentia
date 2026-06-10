@@ -22,8 +22,8 @@ describe("attach", () => {
 
     expect(result).toBe("scoped:42");
     scoped(appScope, () => {
-      expect(authorizedFx.$pending.value).toBe(false);
-      expect(requestFx.$pending.value).toBe(false);
+      expect(authorizedFx.pending.value).toBe(false);
+      expect(requestFx.pending.value).toBe(false);
     });
   });
 

@@ -115,7 +115,7 @@ describe("reactive integration", () => {
       expect(query.value).toBe("virentia");
       expect(status.value).toBe("ready");
       expect(results.items).toEqual(["virentia:first", "virentia:second"]);
-      expect(searchFx.$pending.value).toBe(false);
+      expect(searchFx.pending.value).toBe(false);
     });
   });
 
@@ -240,7 +240,7 @@ describe("reactive integration", () => {
 
     scoped(appScope, () => {
       expect(model.count.value).toBe(2);
-      expect(model.saveFx.$pending.value).toBe(false);
+      expect(model.saveFx.pending.value).toBe(false);
     });
     expect(savedValues).toEqual([2]);
   });

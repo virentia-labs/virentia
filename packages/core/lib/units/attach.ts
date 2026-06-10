@@ -141,7 +141,7 @@ function readSource(source: AttachSourceShape): unknown {
 
 function isEffect(value: unknown): value is Effect<any, any, any> {
   return (
-    typeof value === "function" && "doneData" in value && "failData" in value && "$pending" in value
+    typeof value === "function" && "doneData" in value && "failData" in value && "pending" in value
   );
 }
 

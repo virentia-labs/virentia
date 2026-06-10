@@ -1,18 +1,26 @@
-import { createNode } from "../kernel";
+import { createNode, run } from "../kernel";
 import type { Node } from "../kernel";
 import { withInspectorMeta } from "../kernel/inspector";
+import type { Scope } from "../scope";
 import { scoped } from "../scope";
-import { requireActiveScope } from "../scope/internal";
-import type { StoreSubscriber } from "./store";
+import { getActiveScope, requireActiveScope } from "../scope/internal";
+import { readonlyStore } from "./store";
+import type { Store, StoreSubscriber } from "./store";
 
 const lazyUnitInternal = Symbol("virentia.lazyUnitInternal");
 
 type AnyFunction = (this: unknown, ...args: any[]) => unknown;
-type LazyLoader<T> = () => T | PromiseLike<T>;
+export type LazyModelLoader<Model extends object> = () => Model | PromiseLike<Model>;
+
+export type LazyModel<Model extends object> = Model & {
+  readonly pending: Store<boolean>;
+};
+
+type LazyLoader<T> = (scope?: Scope | null) => T | PromiseLike<T>;
 
 interface LazyResolver<T> {
   hasValue(): boolean;
-  load(): Promise<T>;
+  load(scope?: Scope | null): Promise<T>;
   prime(value: T): void;
   value(): T;
   watch(fn: (value: T) => void): void;
@@ -27,11 +35,21 @@ interface MirroredNextList {
   mirror(target: Node): void;
 }
 
-export function lazyModel<Model extends object>(loader: LazyLoader<Model>): Model {
-  const resolver = createLazyResolver(loader);
+export function lazyModel<Model extends object>(loader: LazyModelLoader<Model>): LazyModel<Model> {
+  const pending = readonlyStore(false, undefined, { name: "lazyModel.pending" });
+  const resolver = createLazyResolver(
+    () => loader(),
+    (scope, value) => {
+      void run({
+        unit: pending.node,
+        payload: value,
+        scope,
+      });
+    },
+  );
   const units = new Map<PropertyKey, unknown>();
 
-  return new Proxy(Object.create(null) as Model, {
+  return new Proxy(Object.create(null) as LazyModel<Model>, {
     get(target, property, receiver) {
       if (property === "then") {
         return undefined;
@@ -39,6 +57,10 @@ export function lazyModel<Model extends object>(loader: LazyLoader<Model>): Mode
 
       if (property === Symbol.toStringTag) {
         return "LazyModel";
+      }
+
+      if (property === "pending") {
+        return pending;
       }
 
       if (property in target) {
@@ -60,8 +82,8 @@ export function lazyModel<Model extends object>(loader: LazyLoader<Model>): Mode
       let unit = units.get(property);
 
       if (!unit) {
-        unit = createLazyUnit(() =>
-          resolver.load().then((model) => Reflect.get(model, property, model)),
+        unit = createLazyUnit((scope) =>
+          resolver.load(scope).then((model) => Reflect.get(model, property, model)),
         );
         units.set(property, unit);
 
@@ -74,6 +96,8 @@ export function lazyModel<Model extends object>(loader: LazyLoader<Model>): Mode
     },
 
     has(target, property) {
+      if (property === "pending") return true;
+
       if (property in target) return true;
 
       return resolver.hasValue() && property in resolver.value();
@@ -81,13 +105,20 @@ export function lazyModel<Model extends object>(loader: LazyLoader<Model>): Mode
 
     ownKeys(target) {
       if (resolver.hasValue()) {
-        return Reflect.ownKeys(resolver.value());
+        return withPendingKey(Reflect.ownKeys(resolver.value()));
       }
 
-      return Reflect.ownKeys(target);
+      return withPendingKey(Reflect.ownKeys(target));
     },
 
     getOwnPropertyDescriptor(target, property) {
+      if (property === "pending") {
+        return {
+          configurable: true,
+          enumerable: true,
+        };
+      }
+
       if (property in target) {
         return Reflect.getOwnPropertyDescriptor(target, property);
       }
@@ -115,7 +146,7 @@ function createLazyUnit<T>(loader: LazyLoader<T>): T {
       callable: true,
     }),
     run: async (ctx) => {
-      const unit = await resolveUnit();
+      const unit = await resolveUnit(ctx.scope);
 
       ctx.stop();
       ctx.launch(unit.node, ctx.value);
@@ -126,7 +157,7 @@ function createLazyUnit<T>(loader: LazyLoader<T>): T {
   const target = (...args: unknown[]) => {
     const scope = requireActiveScope();
 
-    return resolver.load().then((unit) => {
+    return resolver.load(scope).then((unit) => {
       primeUnit(unit);
 
       if (typeof unit !== "function") {
@@ -241,8 +272,8 @@ function createLazyUnit<T>(loader: LazyLoader<T>): T {
     },
   }) as T;
 
-  async function resolveUnit(): Promise<{ node: Node }> {
-    const unit = await resolver.load();
+  async function resolveUnit(scope?: Scope | null): Promise<{ node: Node }> {
+    const unit = await resolver.load(scope);
 
     primeUnit(unit);
 
@@ -267,8 +298,8 @@ function createLazyUnit<T>(loader: LazyLoader<T>): T {
     let child = children.get(property);
 
     if (!child) {
-      child = createLazyUnit(() =>
-        resolver.load().then((unit) => Reflect.get(unit as object, property, unit as object)),
+      child = createLazyUnit((scope) =>
+        resolver.load(scope).then((unit) => Reflect.get(unit as object, property, unit as object)),
       );
       children.set(property, child);
 
@@ -282,8 +313,8 @@ function createLazyUnit<T>(loader: LazyLoader<T>): T {
 
   function createDerivedLazyUnit(property: PropertyKey, args: unknown[]): unknown {
     let primed = false;
-    const child = createLazyUnit(() => {
-      return resolver.load().then((unit) => {
+    const child = createLazyUnit((scope) => {
+      return resolver.load(scope).then((unit) => {
         const method = Reflect.get(unit as object, property, unit as object);
 
         if (typeof method !== "function") {
@@ -330,7 +361,7 @@ function createLazyUnit<T>(loader: LazyLoader<T>): T {
     let active = true;
     let unsubscribe: (() => void) | null = null;
 
-    void resolver.load().then((unit) => {
+    void resolver.load(getActiveScope()).then((unit) => {
       if (!active) return;
 
       primeUnit(unit);
@@ -349,11 +380,16 @@ function createLazyUnit<T>(loader: LazyLoader<T>): T {
   }
 }
 
-function createLazyResolver<T>(loader: LazyLoader<T>): LazyResolver<T> {
+function createLazyResolver<T>(
+  loader: LazyLoader<T>,
+  setPending?: (scope: Scope, value: boolean) => void,
+): LazyResolver<T> {
   const watchers = new Set<(value: T) => void>();
+  const pendingScopes = new Set<Scope>();
   let loaded = false;
   let value: T;
   let promise: Promise<T> | null = null;
+  let loading = false;
   const primeValue = (next: T): void => {
     if (loaded) {
       return;
@@ -372,18 +408,32 @@ function createLazyResolver<T>(loader: LazyLoader<T>): LazyResolver<T> {
       return loaded;
     },
 
-    load() {
+    load(scope) {
       if (loaded) {
         return Promise.resolve(value);
       }
 
+      if (scope && loading) {
+        markScopePending(scope);
+      }
+
       if (!promise) {
+        loading = true;
+
+        if (scope) {
+          markScopePending(scope);
+        }
+
         promise = Promise.resolve()
-          .then(loader)
+          .then(() => loader(scope))
           .then((result) => {
             primeValue(result);
 
             return result;
+          })
+          .finally(() => {
+            loading = false;
+            flushPendingScopes();
           });
       }
 
@@ -411,6 +461,23 @@ function createLazyResolver<T>(loader: LazyLoader<T>): LazyResolver<T> {
       watchers.add(fn);
     },
   };
+
+  function markScopePending(scope: Scope): void {
+    if (pendingScopes.has(scope)) {
+      return;
+    }
+
+    pendingScopes.add(scope);
+    setPending?.(scope, true);
+  }
+
+  function flushPendingScopes(): void {
+    for (const scope of pendingScopes) {
+      setPending?.(scope, false);
+    }
+
+    pendingScopes.clear();
+  }
 }
 
 function createMirroredNextList(): MirroredNextList {
@@ -513,9 +580,11 @@ function isObject(value: unknown): value is object {
   return (typeof value === "object" || typeof value === "function") && value !== null;
 }
 
+function withPendingKey(keys: Array<string | symbol>): Array<string | symbol> {
+  return keys.includes("pending") ? keys : ["pending", ...keys];
+}
+
 const nestedUnitKeys = new Set<PropertyKey>([
-  "$inFlight",
-  "$pending",
   "abort",
   "aborted",
   "done",
@@ -524,6 +593,8 @@ const nestedUnitKeys = new Set<PropertyKey>([
   "failData",
   "failed",
   "finally",
+  "inFlight",
+  "pending",
   "settled",
   "started",
 ]);

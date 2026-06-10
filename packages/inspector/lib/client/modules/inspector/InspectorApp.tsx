@@ -41,7 +41,7 @@ import {
   type ReactiveSelection,
 } from "../../shared/graph";
 import { TimelineRow, UnitFlowNode, type UnitFlowNodeModel } from "../../shared/ui";
-import { $recording, recordingChanged } from "./model";
+import { recording as recordingStore, recordingChanged } from "./model";
 
 export interface VirentiaInspectorProps {
   channel?: string;
@@ -100,7 +100,7 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [rightPanelWidth, setRightPanelWidth] = useState(rightPanelLimits.default);
-  const recording = useUnit($recording);
+  const recording = useUnit(recordingStore);
   const setRecording = useUnit(recordingChanged);
   const clientRef = useRef<VirentiaInspectorClient | null>(null);
   const recordingRef = useRef(recording);

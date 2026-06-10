@@ -76,8 +76,8 @@ export interface Effect<Params, Done, Fail = unknown> {
   (...call: EffectCallArgs<Params>): Promise<Done>;
 
   readonly node: Node;
-  readonly $pending: Store<boolean>;
-  readonly $inFlight: Store<number>;
+  readonly pending: Store<boolean>;
+  readonly inFlight: Store<number>;
   readonly started: Event<Params>;
   readonly done: Event<EffectDone<Params, Done>>;
   readonly failed: Event<EffectFailed<Params, Fail>>;
@@ -153,8 +153,10 @@ export function effect<Params, Done, Fail = unknown>(
   const options = normalizeDevtoolsOptions(devtools);
   const name = options.name;
   const activeCalls = new Set<EffectCallState<Params, Done>>();
-  const $inFlight = readonlyStore(0, undefined, { name: name ? `${name}.$inFlight` : undefined });
-  const $pending = readonlyStore(false, undefined, { name: name ? `${name}.$pending` : undefined });
+  const inFlightStore = readonlyStore(0, undefined, {
+    name: name ? `${name}.inFlight` : undefined,
+  });
+  const pending = readonlyStore(false, undefined, { name: name ? `${name}.pending` : undefined });
   const started = event<Params>(name ? `${name}.started` : undefined);
   const done = event<EffectDone<Params, Done>>(name ? `${name}.done` : undefined);
   const failed = event<EffectFailed<Params, Fail>>(name ? `${name}.failed` : undefined);
@@ -212,8 +214,8 @@ export function effect<Params, Done, Fail = unknown>(
 
   const setInFlight = (scope: Scope, next: number): void => {
     inFlight = next;
-    void run({ unit: $inFlight.node, payload: next, scope });
-    void run({ unit: $pending.node, payload: next > 0, scope });
+    void run({ unit: inFlightStore.node, payload: next, scope });
+    void run({ unit: pending.node, payload: next > 0, scope });
   };
 
   const emitAbort = (call: EffectCallState<Params, Done>, reason: unknown): void => {
@@ -358,8 +360,8 @@ export function effect<Params, Done, Fail = unknown>(
 
   node.next = [executeNode];
 
-  linkEffectSubunit("$pending", $pending.node);
-  linkEffectSubunit("$inFlight", $inFlight.node);
+  linkEffectSubunit("pending", pending.node);
+  linkEffectSubunit("inFlight", inFlightStore.node);
   linkEffectSubunit("started", started.node);
   linkEffectSubunit("done", done.node);
   linkEffectSubunit("failed", failed.node);
@@ -381,8 +383,8 @@ export function effect<Params, Done, Fail = unknown>(
       }),
     {
       node,
-      $pending,
-      $inFlight,
+      pending,
+      inFlight: inFlightStore,
       started,
       done,
       failed,

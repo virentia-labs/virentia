@@ -90,19 +90,19 @@ describe("devtools", () => {
   });
 
   it("deduplicates stale named units recreated by hot reload", () => {
-    store(0, undefined, { name: "counter.$count" });
-    computed(() => 1, undefined, { name: "counter.$doubled" });
+    store(0, undefined, { name: "counter.count" });
+    computed(() => 1, undefined, { name: "counter.doubled" });
 
-    const nextCount = store(1, undefined, { name: "counter.$count" });
+    const nextCount = store(1, undefined, { name: "counter.count" });
     const nextDoubled = computed(() => nextCount.value * 2, undefined, {
-      name: "counter.$doubled",
+      name: "counter.doubled",
     });
     const devtools = installVirentiaDevtools({
       channel: "test-devtools-deduplicate-named-units",
     });
     const snapshot = devtools.snapshot();
-    const countNodes = snapshot.nodes.filter((node) => node.name === "counter.$count");
-    const doubledNodes = snapshot.nodes.filter((node) => node.name === "counter.$doubled");
+    const countNodes = snapshot.nodes.filter((node) => node.name === "counter.count");
+    const doubledNodes = snapshot.nodes.filter((node) => node.name === "counter.doubled");
 
     expect(nextDoubled.node).toBeDefined();
     expect(countNodes).toHaveLength(1);

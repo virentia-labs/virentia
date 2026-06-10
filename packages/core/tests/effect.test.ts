@@ -43,8 +43,8 @@ describe("effect", () => {
       ["finally", { status: "done", params: 3, result: 6 }],
     ]);
     scoped(appScope, () => {
-      expect(doubleFx.$pending.value).toBe(false);
-      expect(doubleFx.$inFlight.value).toBe(0);
+      expect(doubleFx.pending.value).toBe(false);
+      expect(doubleFx.inFlight.value).toBe(0);
     });
   });
 
@@ -84,8 +84,8 @@ describe("effect", () => {
       ["settled", { status: "fail", params: 3, error }],
     ]);
     scoped(appScope, () => {
-      expect(failFx.$pending.value).toBe(false);
-      expect(failFx.$inFlight.value).toBe(0);
+      expect(failFx.pending.value).toBe(false);
+      expect(failFx.inFlight.value).toBe(0);
     });
   });
 
@@ -118,8 +118,8 @@ describe("effect", () => {
       ["failData", reason],
     ]);
     scoped(appScope, () => {
-      expect(waitFx.$pending.value).toBe(false);
-      expect(waitFx.$inFlight.value).toBe(0);
+      expect(waitFx.pending.value).toBe(false);
+      expect(waitFx.inFlight.value).toBe(0);
     });
   });
 
@@ -163,12 +163,12 @@ describe("effect", () => {
       ]),
     );
     scoped(appScope, () => {
-      expect(rootFx.$pending.value).toBe(false);
-      expect(rootFx.$inFlight.value).toBe(0);
-      expect(middleFx.$pending.value).toBe(false);
-      expect(middleFx.$inFlight.value).toBe(0);
-      expect(leafFx.$pending.value).toBe(false);
-      expect(leafFx.$inFlight.value).toBe(0);
+      expect(rootFx.pending.value).toBe(false);
+      expect(rootFx.inFlight.value).toBe(0);
+      expect(middleFx.pending.value).toBe(false);
+      expect(middleFx.inFlight.value).toBe(0);
+      expect(leafFx.pending.value).toBe(false);
+      expect(leafFx.inFlight.value).toBe(0);
     });
   });
 
@@ -185,7 +185,7 @@ describe("effect", () => {
     );
     const pendingValues: boolean[] = [];
 
-    saveFx.$pending.subscribe((next) => {
+    saveFx.pending.subscribe((next) => {
       pendingValues.push(next);
     });
     reaction({
@@ -202,8 +202,8 @@ describe("effect", () => {
     expect(pendingValues).toEqual([true]);
     scoped(appScope, () => {
       expect(value.value).toBe(1);
-      expect(saveFx.$pending.value).toBe(true);
-      expect(saveFx.$inFlight.value).toBe(1);
+      expect(saveFx.pending.value).toBe(true);
+      expect(saveFx.inFlight.value).toBe(1);
     });
 
     resolveFx("ok");
@@ -211,8 +211,8 @@ describe("effect", () => {
 
     expect(pendingValues).toEqual([true, false]);
     scoped(appScope, () => {
-      expect(saveFx.$pending.value).toBe(false);
-      expect(saveFx.$inFlight.value).toBe(0);
+      expect(saveFx.pending.value).toBe(false);
+      expect(saveFx.inFlight.value).toBe(0);
     });
   });
 
@@ -252,10 +252,10 @@ describe("effect", () => {
 
     expect(values).toEqual([["variant", "item:7"]]);
     scoped(appScope, () => {
-      expect(requestFx.$pending.value).toBe(false);
-      expect(requestFx.$inFlight.value).toBe(0);
-      expect(profileRequestFx.$pending.value).toBe(false);
-      expect(profileRequestFx.$inFlight.value).toBe(0);
+      expect(requestFx.pending.value).toBe(false);
+      expect(requestFx.inFlight.value).toBe(0);
+      expect(profileRequestFx.pending.value).toBe(false);
+      expect(profileRequestFx.inFlight.value).toBe(0);
     });
   });
 
@@ -280,10 +280,7 @@ describe("effect", () => {
     const appScope = scope({
       values: [[token, "scope-token"]],
       handlers: [
-        [
-          requestFx,
-          (params: { id: number; token: string }) => `mock:${params.id}:${params.token}`,
-        ],
+        [requestFx, (params: { id: number; token: string }) => `mock:${params.id}:${params.token}`],
       ],
     });
 
