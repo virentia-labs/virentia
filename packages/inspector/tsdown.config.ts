@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     cli: "lib/server/cli.ts",
     index: "lib/client/index.ts",
+    effector: "lib/effector/index.ts",
   },
   outDir: "dist",
   format: ["esm", "cjs"],
@@ -17,6 +18,8 @@ export default defineConfig({
       "@virentia/core/devtools",
       "@virentia/react",
       "@xyflow/react",
+      "effector",
+      "effector/inspect",
       "react",
       "react-dom",
     ],

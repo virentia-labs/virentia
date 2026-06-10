@@ -31,6 +31,11 @@
       "import": "./dist/index.mjs",
       "require": "./dist/index.cjs"
     },
+    "./effector": {
+      "types": "./dist/effector.d.mts",
+      "import": "./dist/effector.mjs",
+      "require": "./dist/effector.cjs"
+    },
     "./styles.css": "./dist/styles.css"
   },
   "publishConfig": {
@@ -39,7 +44,9 @@
   "scripts": {
     "build": "tsdown && cp lib/client/shared/ui/public/styles.css dist/styles.css && vite build",
     "dev": "vite",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@mantine/core": "^9.1.1",
@@ -57,7 +64,13 @@
     "vite": "^8.0.12"
   },
   "peerDependencies": {
+    "effector": "^23.0.0",
     "react": ">=18",
     "react-dom": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "effector": {
+      "optional": true
+    }
   }
 }

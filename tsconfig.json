@@ -15,6 +15,7 @@
       "@virentia/core/devtools": ["packages/core/lib/devtools.ts"],
       "@virentia/effector": ["packages/effector/lib/index.ts"],
       "@virentia/inspector": ["packages/inspector/lib/index.ts"],
+      "@virentia/inspector/effector": ["packages/inspector/lib/effector/index.ts"],
       "@virentia/react": ["packages/react/lib/index.ts"]
     }
   },
@@ -27,6 +28,7 @@
     "packages/effector/tsdown.config.ts",
     "packages/inspector/lib/**/*.ts",
     "packages/inspector/lib/**/*.tsx",
+    "packages/inspector/tests/**/*.ts",
     "packages/inspector/tsdown.config.ts",
     "packages/inspector/vite.config.ts",
     "packages/react/lib/**/*.ts",
