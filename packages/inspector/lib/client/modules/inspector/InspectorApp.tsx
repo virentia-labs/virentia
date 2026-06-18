@@ -7,6 +7,7 @@ import {
   Modal,
   Paper,
   ScrollArea,
+  Select,
   Stack,
   Switch,
   Text,
@@ -51,6 +52,10 @@ const nodeTypes = {
   unit: UnitFlowNode,
 } satisfies NodeTypes;
 
+// Sentinel for the scope <Select>: "no specific scope". Filtering shows every
+// event; triggering runs the unit scope-less (scopeId: null).
+const allScopesValue = "__all__";
+
 const rightPanelLimits = {
   default: 300,
   min: 210,
@@ -90,6 +95,7 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
   const [breakpointIds, setBreakpointIds] = useState<string[]>([]);
   const [showAllUnits, setShowAllUnits] = useState(false);
   const [showIsolatedUnits, setShowIsolatedUnits] = useState(false);
+  const [scopeFilter, setScopeFilter] = useState<string>(allScopesValue);
   const [triggerNodeId, setTriggerNodeId] = useState<string | null>(null);
   const [triggerStage, setTriggerStage] = useState<TriggerStage | null>(null);
   const [triggerModalOpened, setTriggerModalOpened] = useState(false);
@@ -199,12 +205,36 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
       }) as CSSProperties,
     [rightPanelWidth],
   );
+  const scopeOptions = useMemo(
+    () => [
+      { value: allScopesValue, label: "All scopes" },
+      ...snapshot.scopes.map((scope) => ({ value: scope.id, label: scope.name })),
+    ],
+    [snapshot.scopes],
+  );
+  const triggerScopeId = scopeFilter === allScopesValue ? null : scopeFilter;
+  const visibleTimeline = useMemo(
+    () =>
+      scopeFilter === allScopesValue
+        ? timeline
+        : timeline.filter((event) => event.scopeId === scopeFilter),
+    [scopeFilter, timeline],
+  );
 
   useEffect(() => {
     if (selectedNodeId && !visibleSnapshot.nodes.some((node) => node.id === selectedNodeId)) {
       setSelectedNodeId(null);
     }
   }, [selectedNodeId, visibleSnapshot.nodes]);
+
+  useEffect(() => {
+    if (
+      scopeFilter !== allScopesValue &&
+      !snapshot.scopes.some((scope) => scope.id === scopeFilter)
+    ) {
+      setScopeFilter(allScopesValue);
+    }
+  }, [scopeFilter, snapshot.scopes]);
 
   const beginDrawerResize = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>): void => {
@@ -326,13 +356,12 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
     }
 
     const previousBreakpoints = breakpointIds;
-    const scopeId = snapshot.scopes[0]?.id ?? null;
 
     updateBreakpoints(draftBreakpointIds);
 
     const result = await clientRef.current?.triggerUnit({
       nodeId: triggerNodeId,
-      scopeId,
+      scopeId: triggerScopeId,
       payload: parsed.payload,
     });
 
@@ -380,6 +409,19 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
           <Box className="virentia-inspector__topbar">
             <Group gap="xs" wrap="nowrap">
               <Title order={4}>Virentia</Title>
+              {snapshot.scopes.length ? (
+                <Select
+                  allowDeselect={false}
+                  aria-label="Scope"
+                  checkIconPosition="right"
+                  comboboxProps={{ width: 220, position: "bottom-start" }}
+                  data={scopeOptions}
+                  onChange={(value) => setScopeFilter(value ?? allScopesValue)}
+                  size="xs"
+                  value={scopeFilter}
+                  w={150}
+                />
+              ) : null}
             </Group>
             <Group gap="xs">
               <Switch
@@ -466,7 +508,7 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
             </Group>
           </Group>
           <ScrollArea h="calc(100vh - 66px)" type="auto">
-            {timeline.map((item) => (
+            {visibleTimeline.map((item) => (
               <TimelineRow event={item} key={item.id} />
             ))}
           </ScrollArea>
