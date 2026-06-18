@@ -1,5 +1,16 @@
 # @virentia/effector
 
+## 0.3.0
+
+### Minor Changes
+
+- v0.3.0
+
+### Patch Changes
+
+- Updated dependencies
+  - @virentia/core@0.3.0
+
 ## 0.2.1
 
 ### Patch Changes
