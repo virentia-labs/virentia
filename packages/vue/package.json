@@ -1,0 +1,50 @@
+{
+  "name": "@virentia/vue",
+  "version": "0.1.0",
+  "description": "",
+  "keywords": [],
+  "homepage": "https://movpushmov.dev/virentia/vue/",
+  "bugs": {
+    "url": "https://github.com/virentia-labs/virentia/issues"
+  },
+  "license": "MIT",
+  "author": "movpushmov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/virentia-labs/virentia.git",
+    "directory": "packages/vue"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@virentia/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@vue/test-utils": "^2.4.6",
+    "happy-dom": "^20.0.10",
+    "vue": "^3.5.13"
+  },
+  "peerDependencies": {
+    "vue": ">=3.3"
+  }
+}
