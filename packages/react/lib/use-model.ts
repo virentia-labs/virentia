@@ -1,4 +1,13 @@
-import { event, owner, store, scoped, type DisposableOwner, type Scope } from "@virentia/core";
+import {
+  event,
+  owner,
+  reactive,
+  store,
+  scoped,
+  type DisposableOwner,
+  type ReactiveWritable,
+  type Scope,
+} from "@virentia/core";
 import { useEffect, useMemo } from "react";
 import { getOrCreateCachedInstance } from "./model-cache";
 import { useProvidedScope } from "./scope";
@@ -101,7 +110,8 @@ export function createModelInstance<Props, Key, Model extends object>(
   key: Key,
 ): ModelInstance<Props, Model, Key> {
   return owner((dispose, modelOwner) => {
-    const propsStore = store(props);
+    // Props are always an object, so the store exposes fields directly (`props.foo`).
+    const propsStore = reactive(props as object) as unknown as ReactiveWritable<Props>;
     const mounted = event<void>();
     const unmounted = event<void>();
     const mounts = store(0);
@@ -203,7 +213,7 @@ function useModelValue(value: unknown, scope: Scope): unknown {
 function isComponentModel(value: unknown): value is ComponentModel<object> {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      (value as ModelWithInstance<unknown, object, unknown>)[modelInstanceSymbol],
+    typeof value === "object" &&
+    (value as ModelWithInstance<unknown, object, unknown>)[modelInstanceSymbol],
   );
 }

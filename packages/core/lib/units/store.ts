@@ -22,9 +22,17 @@ const committedStoreUpdate = Symbol("virentia.committedStoreUpdate");
 const storeReaders = new WeakMap<object, () => unknown>();
 const storeScopeWriters = new WeakMap<object, (scope: Scope, value: unknown) => void>();
 
-export type StoreView<T> = T extends object ? Readonly<T> : { readonly value: T };
+// A `store` is always accessed through `.value`, regardless of whether it holds
+// a primitive or an object. For direct field access on object state use `reactive`.
+export type StoreView<T> = { readonly value: T };
 
-export type StoreWrite<T> = T extends object ? T : { value: T };
+export type StoreWrite<T> = { value: T };
+
+// A `reactive` exposes the object state directly: fields are read and written on
+// the unit itself, without a `.value` indirection.
+export type ReactiveView<T> = Readonly<T>;
+
+export type ReactiveWrite<T> = T;
 
 export type StoreSubscriber<T> = (value: T, scope: Scope) => void;
 export interface StoreDevtoolsOptions {
@@ -38,6 +46,12 @@ export type StoreWritable<T> = StoreWrite<T> &
     readonly writable: true;
   };
 
+export type Reactive<T> = ReactiveView<T> & StoreApi<T>;
+export type ReactiveWritable<T> = ReactiveWrite<T> &
+  StoreApi<T> & {
+    readonly writable: true;
+  };
+
 export interface StoreApi<T> {
   readonly node: Node;
   readonly writable: boolean;
@@ -47,15 +61,18 @@ export interface StoreApi<T> {
   filterMap<Next>(fn: (value: T) => Next, skipToken: Next): Store<Next>;
 }
 
+type StoreMode = "ref" | "reactive";
+
 interface StoreOptions<T> {
   writable: boolean;
+  mode: StoreMode;
   skipToken?: T;
   hasSkipToken: boolean;
   name?: string;
   key?: boolean;
 }
 
-interface ComputedOptions<T> extends Omit<StoreOptions<T>, "writable"> {
+interface ComputedOptions<T> extends Omit<StoreOptions<T>, "writable" | "mode"> {
   initialValue?: T;
   hasInitialValue?: boolean;
 }
@@ -75,6 +92,7 @@ export function store<T>(
 ): StoreWritable<T> {
   return createStore(initial, {
     writable: true,
+    mode: "ref",
     skipToken,
     hasSkipToken: arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined),
     name: devtools?.name,
@@ -109,11 +127,42 @@ export function readonlyStore<T>(
 ): Store<T> {
   return createStore(initial, {
     writable: false,
+    mode: "ref",
     skipToken,
     hasSkipToken: arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined),
     name: devtools?.name,
     key: devtools?.key,
   });
+}
+
+export function reactive<T extends object>(
+  initial: T,
+  skipToken?: T,
+  devtools?: StoreDevtoolsOptions,
+): ReactiveWritable<T> {
+  return createStore(initial, {
+    writable: true,
+    mode: "reactive",
+    skipToken,
+    hasSkipToken: arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined),
+    name: devtools?.name,
+    key: devtools?.key,
+  }) as unknown as ReactiveWritable<T>;
+}
+
+export function readonlyReactive<T extends object>(
+  initial: T,
+  skipToken?: T,
+  devtools?: StoreDevtoolsOptions,
+): Reactive<T> {
+  return createStore(initial, {
+    writable: false,
+    mode: "reactive",
+    skipToken,
+    hasSkipToken: arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined),
+    name: devtools?.name,
+    key: devtools?.key,
+  }) as unknown as Reactive<T>;
 }
 
 export function computed<T>(fn: () => T, skipToken?: T, devtools?: StoreDevtoolsOptions): Store<T> {
@@ -254,11 +303,10 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
     const scope = requireActiveScope();
     const state = readState(scope, id, initial);
 
-    if (!isObject(state) && property !== "value") {
-      throw new Error("Primitive store value must be written through .value");
-    }
-
-    const next = isObject(state) ? assignProperty(state, property, value) : (value as T);
+    // In "ref" mode the proxy `set` trap guarantees `property === "value"`, so the
+    // whole value is replaced. In "reactive" mode a single field is updated.
+    const next =
+      options.mode === "reactive" ? assignProperty(state, property, value) : (value as T);
 
     if (options.hasSkipToken && Object.is(next, options.skipToken)) {
       return true;
@@ -269,11 +317,14 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
     }
 
     withTransaction(() => {
-      writeTransactionStore({
-        id,
-        scope,
-        commit: (value) => commitState(scope, value),
-      }, next);
+      writeTransactionStore(
+        {
+          id,
+          scope,
+          commit: (value) => commitState(scope, value),
+        },
+        next,
+      );
     });
 
     return true;
@@ -452,7 +503,10 @@ function createComputed<T>(
       );
     },
   };
-  const proxy = new Proxy(api, createStoreProxyHandlers({ writable: false }, readComputed));
+  const proxy = new Proxy(
+    api,
+    createStoreProxyHandlers({ writable: false, mode: "ref" }, readComputed),
+  );
 
   storeReaders.set(proxy as object, readComputed);
 
@@ -542,10 +596,23 @@ function createComputed<T>(
 }
 
 function createStoreProxyHandlers<T>(
-  options: Pick<StoreOptions<T>, "writable">,
+  options: Pick<StoreOptions<T>, "writable" | "mode">,
   read: () => T,
   write?: (property: PropertyKey, value: unknown) => boolean,
 ): ProxyHandler<StoreApi<T>> {
+  const { mode } = options;
+
+  // Whether `property` is a state key exposed by the proxy (not a `StoreApi` member).
+  const hasStateKey = (property: PropertyKey): boolean => {
+    if (mode === "ref") {
+      return property === "value";
+    }
+
+    const state = read();
+
+    return isObject(state) && property in state;
+  };
+
   return {
     get(target, property, receiver) {
       if (property in target) {
@@ -554,15 +621,11 @@ function createStoreProxyHandlers<T>(
 
       const state = read();
 
-      if (isObject(state)) {
-        return Reflect.get(state, property);
+      if (mode === "ref") {
+        return property === "value" ? state : undefined;
       }
 
-      if (property === "value") {
-        return state;
-      }
-
-      return undefined;
+      return isObject(state) ? Reflect.get(state, property) : undefined;
     },
 
     set(target, property, value) {
@@ -574,20 +637,20 @@ function createStoreProxyHandlers<T>(
         throw new Error("Store is read-only");
       }
 
+      if (mode === "ref" && property !== "value") {
+        throw new Error("Store value must be written through .value");
+      }
+
       return write ? write(property, value) : false;
     },
 
     has(target, property) {
-      if (property in target) return true;
-
-      const state = read();
-
-      return isObject(state) && property in state;
+      return property in target || hasStateKey(property);
     },
 
     ownKeys(target) {
-      const state = read();
-      const stateKeys = isObject(state) ? Reflect.ownKeys(state) : ["value"];
+      const stateKeys =
+        mode === "ref" ? ["value"] : isObject(read()) ? Reflect.ownKeys(read() as object) : [];
 
       return [...Reflect.ownKeys(target), ...stateKeys];
     },
@@ -595,6 +658,10 @@ function createStoreProxyHandlers<T>(
     getOwnPropertyDescriptor(target, property) {
       if (property in target) {
         return Reflect.getOwnPropertyDescriptor(target, property);
+      }
+
+      if (!hasStateKey(property)) {
+        return undefined;
       }
 
       return {

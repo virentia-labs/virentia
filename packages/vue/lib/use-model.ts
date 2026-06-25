@@ -1,4 +1,13 @@
-import { event, owner, scoped, store, type DisposableOwner, type Scope } from "@virentia/core";
+import {
+  event,
+  owner,
+  reactive,
+  scoped,
+  store,
+  type DisposableOwner,
+  type ReactiveWritable,
+  type Scope,
+} from "@virentia/core";
 import { onMounted, onUnmounted, toValue, watch, type MaybeRefOrGetter } from "vue";
 import { getOrCreateCachedInstance } from "./model-cache";
 import { useProvidedScope } from "./scope";
@@ -102,7 +111,8 @@ export function createModelInstance<Props, Key, Model extends object>(
   key: Key,
 ): ModelInstance<Props, Model, Key> {
   return owner((dispose, modelOwner) => {
-    const propsStore = store(props);
+    // Props are always an object, so the store exposes fields directly (`props.foo`).
+    const propsStore = reactive(props as object) as unknown as ReactiveWritable<Props>;
     const mounted = event<void>();
     const unmounted = event<void>();
     const mounts = store(0);

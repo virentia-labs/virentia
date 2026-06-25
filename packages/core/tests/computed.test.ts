@@ -142,7 +142,7 @@ describe("computed", () => {
     }));
 
     scoped(appScope, () => {
-      expect(user.label).toBe("Ada Lovelace");
+      expect(user.value.label).toBe("Ada Lovelace");
     });
   });
 });

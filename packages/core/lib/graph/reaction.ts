@@ -7,7 +7,7 @@ import { collectNodes } from "./deps";
 import { registerCleanup } from "./owner";
 import type { Effect } from "../units/effect";
 import type { Event, EventCallable } from "../units/event";
-import type { Store, StoreWritable } from "../units/store";
+import type { Reactive, ReactiveWritable, Store, StoreWritable } from "../units/store";
 
 export interface Unit<_T = unknown> {
   readonly node: Node;
@@ -20,6 +20,8 @@ export type WatchableUnit<T> = Unit<T> & {
 export type SourceUnit<T> =
   | Store<T>
   | StoreWritable<T>
+  | Reactive<T>
+  | ReactiveWritable<T>
   | EventCallable<T>
   | Event<T>
   | Effect<T, any, any>
@@ -31,15 +33,19 @@ export type UnitInput<T> =
     ? Value
     : T extends StoreWritable<infer Value>
       ? Value
-      : T extends EventCallable<infer Payload>
-        ? Payload
-        : T extends Event<infer Payload>
-          ? Payload
-          : T extends Effect<infer Params, infer _Done, infer _Fail>
-            ? Params
-            : T extends Unit<infer Payload>
+      : T extends ReactiveWritable<infer Value>
+        ? Value
+        : T extends Reactive<infer Value>
+          ? Value
+          : T extends EventCallable<infer Payload>
+            ? Payload
+            : T extends Event<infer Payload>
               ? Payload
-              : never;
+              : T extends Effect<infer Params, infer _Done, infer _Fail>
+                ? Params
+                : T extends Unit<infer Payload>
+                  ? Payload
+                  : never;
 
 export type SourceInput<T> = T extends readonly (infer Item)[] ? UnitInput<Item> : UnitInput<T>;
 
@@ -73,6 +79,10 @@ export function reaction<Payload>(
   config: ReactionConfig<Payload, StoreWritable<Payload>>,
 ): Reaction;
 export function reaction<Payload>(config: ReactionConfig<Payload, Store<Payload>>): Reaction;
+export function reaction<Payload>(
+  config: ReactionConfig<Payload, ReactiveWritable<Payload>>,
+): Reaction;
+export function reaction<Payload>(config: ReactionConfig<Payload, Reactive<Payload>>): Reaction;
 export function reaction<Payload>(
   config: ReactionConfig<Payload, EventCallable<Payload>>,
 ): Reaction;

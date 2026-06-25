@@ -5,35 +5,45 @@ import type {
   EventCallable,
   EventPayload,
   Owner,
+  Reactive,
+  ReactiveWritable,
   Scope,
   Store,
   StoreWritable,
 } from "@virentia/core";
 import type { Component, Ref } from "vue";
 
-export type UnitLike = Store<any> | StoreWritable<any> | EventCallable<any> | Effect<any, any, any>;
+export type AnyStore<State = any> =
+  | Store<State>
+  | StoreWritable<State>
+  | Reactive<State>
+  | ReactiveWritable<State>;
+
+export type UnitLike = AnyStore | EventCallable<any> | Effect<any, any, any>;
 
 declare const componentModelBrand: unique symbol;
 
 /** Raw value a unit carries: store state, or the bound callable for an
  * event/effect. Mirrors `@virentia/react`'s `UnitValue`. */
-export type UnitValue<Unit> = Unit extends Store<infer State> | StoreWritable<infer State>
-  ? State
-  : Unit extends EventCallable<infer Payload>
-    ? (...payload: EventPayload<Payload>) => Promise<void>
-    : Unit extends Effect<infer Params, infer Done, any>
-      ? (...args: EffectCallArgs<Params>) => Promise<Done>
-      : never;
+export type UnitValue<Unit> =
+  Unit extends AnyStore<infer State>
+    ? State
+    : Unit extends EventCallable<infer Payload>
+      ? (...payload: EventPayload<Payload>) => Promise<void>
+      : Unit extends Effect<infer Params, infer Done, any>
+        ? (...args: EffectCallArgs<Params>) => Promise<Done>
+        : never;
 
 /** How a unit is exposed inside a Vue setup: stores become reactive refs,
  * events/effects become scope-bound callables. */
-export type UnitRef<Unit> = Unit extends Store<infer State> | StoreWritable<infer State>
-  ? Readonly<Ref<State>>
-  : Unit extends EventCallable<infer Payload>
-    ? (...payload: EventPayload<Payload>) => Promise<void>
-    : Unit extends Effect<infer Params, infer Done, any>
-      ? (...args: EffectCallArgs<Params>) => Promise<Done>
-      : never;
+export type UnitRef<Unit> =
+  Unit extends AnyStore<infer State>
+    ? Readonly<Ref<State>>
+    : Unit extends EventCallable<infer Payload>
+      ? (...payload: EventPayload<Payload>) => Promise<void>
+      : Unit extends Effect<infer Params, infer Done, any>
+        ? (...args: EffectCallArgs<Params>) => Promise<Done>
+        : never;
 
 export type ReactiveModel<Model> = {
   readonly [Key in keyof Model as Key extends "dispose"
@@ -52,7 +62,7 @@ export type ReactiveModel<Model> = {
 export interface ModelContext<Props, Key = undefined> {
   readonly scope: Scope;
   readonly owner: Owner;
-  readonly props: StoreWritable<Props>;
+  readonly props: ReactiveWritable<Props>;
   readonly mounted: EventCallable<void>;
   readonly unmounted: EventCallable<void>;
   readonly mounts: StoreWritable<number>;

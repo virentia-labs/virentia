@@ -4,17 +4,21 @@ import {
   type EffectCallArgs,
   type EventCallable,
   type EventPayload,
+  type Reactive,
+  type ReactiveWritable,
   type Scope,
   type Store,
   type StoreWritable,
 } from "@virentia/core";
 import { getCurrentScope as getCurrentVueScope, onScopeDispose, shallowRef, type Ref } from "vue";
 import { useProvidedScope } from "./scope";
-import type { UnitLike, UnitShape } from "./types";
+import type { AnyStore, UnitLike, UnitShape } from "./types";
 import { isStoreUnit, isUnitLike, readStore } from "./utils";
 
 export function useUnit<State>(unit: StoreWritable<State>): Readonly<Ref<State>>;
 export function useUnit<State>(unit: Store<State>): Readonly<Ref<State>>;
+export function useUnit<State>(unit: ReactiveWritable<State>): Readonly<Ref<State>>;
+export function useUnit<State>(unit: Reactive<State>): Readonly<Ref<State>>;
 export function useUnit<Payload>(
   unit: EventCallable<Payload>,
 ): (...payload: EventPayload<Payload>) => Promise<void>;
@@ -60,7 +64,7 @@ export function bindUnit(unit: UnitLike, scope: Scope): unknown {
   return (...args: any[]) => scoped(scope, () => (unit as (...rest: any[]) => unknown)(...args));
 }
 
-function bindStoreRef<T>(unit: Store<T> | StoreWritable<T>, scope: Scope): Readonly<Ref<T>> {
+function bindStoreRef<T>(unit: AnyStore<T>, scope: Scope): Readonly<Ref<T>> {
   const state = shallowRef<T>(readStore(unit, scope));
   const unsubscribe = unit.subscribe((_value, nextScope) => {
     if (nextScope !== scope) {

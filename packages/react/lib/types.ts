@@ -5,27 +5,37 @@ import type {
   EventPayload,
   DisposableOwner,
   Owner,
+  Reactive,
+  ReactiveWritable,
   Scope,
   Store,
   StoreWritable,
 } from "@virentia/core";
 import type { ComponentType, FC } from "react";
 
-export type UnitLike = Store<any> | StoreWritable<any> | EventCallable<any> | Effect<any, any, any>;
+export type AnyStore<State = any> =
+  | Store<State>
+  | StoreWritable<State>
+  | Reactive<State>
+  | ReactiveWritable<State>;
+
+export type UnitLike = AnyStore | EventCallable<any> | Effect<any, any, any>;
 
 declare const componentModelBrand: unique symbol;
 
-export type UnitValue<Unit> = Unit extends Store<infer State> | StoreWritable<infer State>
-  ? State
-  : Unit extends EventCallable<infer Payload>
-    ? (...payload: EventPayload<Payload>) => Promise<void>
-    : Unit extends Effect<infer Params, infer Done, any>
-      ? (...args: EffectCallArgs<Params>) => Promise<Done>
-      : never;
+export type UnitValue<Unit> =
+  Unit extends AnyStore<infer State>
+    ? State
+    : Unit extends EventCallable<infer Payload>
+      ? (...payload: EventPayload<Payload>) => Promise<void>
+      : Unit extends Effect<infer Params, infer Done, any>
+        ? (...args: EffectCallArgs<Params>) => Promise<Done>
+        : never;
 
 export type ReactiveModel<Model> = {
-  readonly [Key in keyof Model as Key extends "dispose" ? never : Key]: Model[Key] extends
-    ComponentModel<infer ChildModel>
+  readonly [Key in keyof Model as Key extends "dispose"
+    ? never
+    : Key]: Model[Key] extends ComponentModel<infer ChildModel>
     ? ComponentModel<ChildModel>
     : Model[Key] extends UnitLike
       ? UnitValue<Model[Key]>
@@ -39,7 +49,7 @@ export type ReactiveModel<Model> = {
 export interface ModelContext<Props, Key = undefined> {
   readonly scope: Scope;
   readonly owner: Owner;
-  readonly props: StoreWritable<Props>;
+  readonly props: ReactiveWritable<Props>;
   readonly mounted: EventCallable<void>;
   readonly unmounted: EventCallable<void>;
   readonly mounts: StoreWritable<number>;
@@ -77,9 +87,10 @@ export type CacheOptions<Props, Key, Model extends object> = {
   readonly key: Key;
 };
 
-export type ComponentModel<Model extends object> = Model & DisposableOwner & {
-  readonly [componentModelBrand]: true;
-};
+export type ComponentModel<Model extends object> = Model &
+  DisposableOwner & {
+    readonly [componentModelBrand]: true;
+  };
 
 export type ComponentPublicProps<Props, Model extends object> = Omit<Props, "model"> & {
   readonly model?: ComponentModel<Model>;

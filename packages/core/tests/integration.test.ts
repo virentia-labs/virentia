@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allSettled, effect, event, owner, reaction, scope, store, scoped } from "../lib";
+import { allSettled, effect, event, owner, reaction, reactive, scope, store, scoped } from "../lib";
 
 describe("reactive integration", () => {
   it("updates a counter from events and publishes derived values", async () => {
@@ -76,7 +76,7 @@ describe("reactive integration", () => {
     const submitted = event();
     const query = store("");
     const status = store<"idle" | "loading" | "ready">("idle");
-    const results = store({ items: [] as string[] });
+    const results = reactive({ items: [] as string[] });
     const searchFx = effect(async (text: string) => {
       await Promise.resolve();
       return [`${text}:first`, `${text}:second`];

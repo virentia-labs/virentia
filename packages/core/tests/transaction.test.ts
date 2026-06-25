@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allSettled, event, reaction, scope, scoped, store } from "../lib";
+import { allSettled, event, reaction, reactive, scope, scoped, store } from "../lib";
 
 describe("transactions", () => {
   it("commits several store writes once at the end of a transaction", async () => {
@@ -35,7 +35,7 @@ describe("transactions", () => {
     const featureTogglePressed = event();
     const featureEnabled = event();
     const legacyModeDisabled = event();
-    const metrics = store({ items: [] as string[] });
+    const metrics = reactive({ items: [] as string[] });
     const snapshots: string[][] = [];
 
     reaction({

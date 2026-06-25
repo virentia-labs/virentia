@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reaction, run, scope, store, scoped } from "../lib";
+import { reaction, reactive, run, scope, store, scoped } from "../lib";
 
 describe("store", () => {
   it("keeps proxy state isolated per scope", () => {
@@ -26,7 +26,7 @@ describe("store", () => {
 
   it("writes object stores through regular property assignment", () => {
     const appScope = scope();
-    const user = store({ name: "Ada", age: 36 });
+    const user = reactive({ name: "Ada", age: 36 });
     const values: unknown[] = [];
     user.subscribe((value) => {
       values.push(value);
@@ -48,7 +48,7 @@ describe("store", () => {
     const counter = store(0);
     const doubled = counter.map((value) => value * 2);
 
-    const writePrimitiveProperty = () => {
+    const writeNonValueProperty = () => {
       scoped(appScope, () => {
         (counter as unknown as { count: number }).count = 1;
       });
@@ -59,7 +59,7 @@ describe("store", () => {
       });
     };
 
-    expect(writePrimitiveProperty).toThrow("Primitive store value must be written through .value");
+    expect(writeNonValueProperty).toThrow("Store value must be written through .value");
     expect(writeReadonlyStore).toThrow("Store is read-only");
   });
 

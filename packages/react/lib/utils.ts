@@ -3,17 +3,17 @@ import {
   scoped,
   type Effect,
   type EventCallable,
+  type ReactiveWritable,
   type Scope,
-  type Store,
   type StoreWritable,
 } from "@virentia/core";
 import { useEffect, useLayoutEffect, type ComponentType } from "react";
-import type { UnitLike } from "./types";
+import type { AnyStore, UnitLike } from "./types";
 
 export const useIsomorphicLayoutEffect =
   typeof window === "undefined" ? useEffect : useLayoutEffect;
 
-export function readStore<T>(unit: Store<T> | StoreWritable<T>, scope: Scope): T {
+export function readStore<T>(unit: AnyStore<T>, scope: Scope): T {
   return scoped(scope, () => {
     const keys = Reflect.ownKeys(unit).filter((key) => !nativeStoreKeys.has(key));
 
@@ -31,7 +31,11 @@ export function readStore<T>(unit: Store<T> | StoreWritable<T>, scope: Scope): T
   });
 }
 
-export function writeStore<T>(unit: StoreWritable<T>, value: T, scope: Scope): void {
+export function writeStore<T>(
+  unit: StoreWritable<T> | ReactiveWritable<T>,
+  value: T,
+  scope: Scope,
+): void {
   void run({
     unit: unit.node,
     payload: value,
@@ -43,7 +47,7 @@ export function isUnitLike(value: unknown): value is UnitLike {
   return isStoreUnit(value) || isCallableUnit(value);
 }
 
-export function isStoreUnit(value: unknown): value is Store<any> | StoreWritable<any> {
+export function isStoreUnit(value: unknown): value is AnyStore {
   return Boolean(
     value &&
     (typeof value === "object" || typeof value === "function") &&
@@ -73,10 +77,7 @@ export function getComponentName(view: ComponentType<any>): string {
   return `Virentia(${view.displayName ?? view.name ?? "Component"})`;
 }
 
-function isArraySnapshot(
-  unit: Store<any> | StoreWritable<any>,
-  keys: readonly PropertyKey[],
-): boolean {
+function isArraySnapshot(unit: AnyStore, keys: readonly PropertyKey[]): boolean {
   return (
     keys.includes("length") &&
     keys.every(

@@ -2,17 +2,21 @@ import {
   scoped,
   type Effect,
   type EventCallable,
+  type Reactive,
+  type ReactiveWritable,
   type Scope,
   type Store,
   type StoreWritable,
 } from "@virentia/core";
 import { useCallback, useRef, useSyncExternalStore } from "react";
 import { useProvidedScope } from "./scope";
-import type { UnitLike, UnitShape, UnitValue } from "./types";
+import type { AnyStore, UnitLike, UnitShape, UnitValue } from "./types";
 import { isStoreUnit, isUnitLike, readStore } from "./utils";
 
 export function useUnit<State>(unit: StoreWritable<State>): State;
 export function useUnit<State>(unit: Store<State>): State;
+export function useUnit<State>(unit: ReactiveWritable<State>): State;
+export function useUnit<State>(unit: Reactive<State>): State;
 export function useUnit<Payload>(unit: EventCallable<Payload>): UnitValue<EventCallable<Payload>>;
 export function useUnit<Params, Done, Fail>(
   unit: Effect<Params, Done, Fail>,
@@ -59,7 +63,7 @@ function useSingleUnit(unit: UnitLike, scope: Scope): unknown {
   );
 }
 
-function useStoreUnit<T>(unit: Store<T> | StoreWritable<T>, scope: Scope): T {
+function useStoreUnit<T>(unit: AnyStore<T>, scope: Scope): T {
   const snapshotRef = useRef(readStore(unit, scope));
 
   snapshotRef.current = readStore(unit, scope);
