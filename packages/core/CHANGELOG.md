@@ -1,5 +1,11 @@
 # @virentia/core
 
+## 0.3.1
+
+### Patch Changes
+
+- fix: react strict mode, unref stores and type fails
+
 ## 0.3.0
 
 ### Minor Changes

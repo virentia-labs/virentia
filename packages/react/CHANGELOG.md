@@ -1,5 +1,13 @@
 # @virentia/react
 
+## 0.2.3
+
+### Patch Changes
+
+- fix: react strict mode, unref stores and type fails
+- Updated dependencies
+  - @virentia/core@0.3.1
+
 ## 0.2.2
 
 ### Patch Changes

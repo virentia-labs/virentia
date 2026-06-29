@@ -1,5 +1,13 @@
 # @virentia/vue
 
+## 0.2.1
+
+### Patch Changes
+
+- fix: react strict mode, unref stores and type fails
+- Updated dependencies
+  - @virentia/core@0.3.1
+
 ## 0.2.0
 
 ### Minor Changes
