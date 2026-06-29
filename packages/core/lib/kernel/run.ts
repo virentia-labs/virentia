@@ -155,10 +155,7 @@ export async function run(options: RunOptions): Promise<void> {
 
   registerInspectorScope(scope);
 
-  const drain =
-    activeDrain && runningNodeDepth === 0
-      ? activeDrain
-      : createDrainContext();
+  const drain = activeDrain && runningNodeDepth === 0 ? activeDrain : createDrainContext();
 
   for (const node of units) {
     push(drain, {
@@ -198,8 +195,6 @@ export async function run(options: RunOptions): Promise<void> {
     if (isPromiseLike(result)) {
       await result;
     }
-  } catch (error) {
-    throw error;
   } finally {
     currentPage = previousPage;
     setActiveScope(previousScope);

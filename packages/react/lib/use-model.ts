@@ -8,7 +8,7 @@ import {
   type ReactiveWritable,
   type Scope,
 } from "@virentia/core";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { getOrCreateCachedInstance } from "./model-cache";
 import { useProvidedScope } from "./scope";
 import type {
@@ -80,27 +80,49 @@ export function useModelInstanceLifecycle<Props, Key, Model extends object>(
 ): void {
   const scope = instance.scope;
 
+  // Tracks live mounts per instance. React StrictMode (and fast remounts) run
+  // unmount immediately followed by remount with no render in between, so the
+  // `useMemo`-cached instance is reused. Disposing synchronously on the fake
+  // unmount would tear down the model's reactions irreversibly and the reused
+  // instance would be dead. We defer disposal to a microtask and skip it if the
+  // instance got remounted (mount count back above zero).
+  const mountCountsRef = useRef<WeakMap<object, number> | null>(null);
+
+  if (mountCountsRef.current === null) {
+    mountCountsRef.current = new WeakMap<object, number>();
+  }
+
+  const mountCounts = mountCountsRef.current;
+
   useIsomorphicLayoutEffect(() => {
     writeStore(instance.props, props, scope);
   }, [instance, props, scope]);
 
   useEffect(() => {
+    mountCounts.set(instance, (mountCounts.get(instance) ?? 0) + 1);
+
     scoped(scope, () => {
       instance.mounts.value += 1;
       void instance.mounted();
     });
 
     return () => {
+      mountCounts.set(instance, Math.max(0, (mountCounts.get(instance) ?? 1) - 1));
+
       scoped(scope, () => {
         instance.mounts.value = Math.max(0, instance.mounts.value - 1);
         void instance.unmounted();
       });
 
       if (options.disposeOnUnmount) {
-        instance.dispose();
+        queueMicrotask(() => {
+          if ((mountCounts.get(instance) ?? 0) === 0) {
+            instance.dispose();
+          }
+        });
       }
     };
-  }, [instance, options.disposeOnUnmount, scope]);
+  }, [instance, options.disposeOnUnmount, scope, mountCounts]);
 }
 
 export function createModelInstance<Props, Key, Model extends object>(

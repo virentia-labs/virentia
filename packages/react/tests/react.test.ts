@@ -2,7 +2,7 @@
 
 import { allSettled, event, reaction, scope, scoped, store } from "@virentia/core";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { act, createElement, type ReactNode } from "react";
+import { act, createElement, StrictMode, type ReactNode } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { component, createModelCache, ScopeProvider, useProvidedScope, useUnit } from "../lib";
 import type { ModelContext } from "../lib";
@@ -330,6 +330,53 @@ describe("@virentia/react", () => {
 
     expect(created).toBe(2);
     expect(button().textContent).toBe("0");
+  });
+
+  it("keeps factory model reactions alive across a StrictMode remount cycle", async () => {
+    const appScope = scope();
+
+    function createCounterModel(context: ModelContext<{ step: number }>) {
+      const clicked = event<void>();
+      const count = store(0);
+
+      reaction({
+        on: clicked,
+        run() {
+          count.value += context.props.step;
+        },
+      });
+
+      return { clicked, count };
+    }
+
+    const Counter = component({
+      model: createCounterModel,
+      view({ model }) {
+        return createElement("button", { onClick: () => model.clicked() }, model.count);
+      },
+    });
+
+    // StrictMode runs mount -> unmount -> remount in dev with no render in
+    // between. The deferred-dispose must skip disposing the reused instance.
+    await act(async () => {
+      render(
+        createElement(
+          StrictMode,
+          null,
+          createElement(ScopeProvider, { scope: appScope }, createElement(Counter, { step: 2 })),
+        ),
+      );
+    });
+
+    expect(button().textContent).toBe("0");
+
+    // Without the fix the reaction is detached on the fake unmount, so the
+    // click is a no-op and the text stays "0".
+    await act(async () => {
+      fireEvent.click(button());
+    });
+
+    expect(button().textContent).toBe("2");
   });
 });
 
