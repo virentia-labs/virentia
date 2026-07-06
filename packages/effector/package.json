@@ -1,6 +1,6 @@
 {
   "name": "@virentia/effector",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Compatibility layer between @virentia/core and the real Effector package",
   "keywords": [],
   "homepage": "https://movpushmov.dev/virentia/effector/",

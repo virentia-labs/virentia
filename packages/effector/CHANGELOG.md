@@ -1,5 +1,12 @@
 # @virentia/effector
 
+## 0.3.3
+
+### Patch Changes
+
+- Updated dependencies [d810688]
+  - @virentia/core@0.4.1
+
 ## 0.3.2
 
 ### Patch Changes
