@@ -3,17 +3,19 @@ import { effect, reaction, run, scope, scoped, store } from "../lib";
 import { getActiveScope } from "../lib/scope/internal";
 
 describe("per-scope reactions", () => {
-  it("a scope-created reaction reacts only to its own scope", async () => {
+  it("an explicit `scope:` reaction reacts only to that scope", async () => {
     const a = scope();
     const b = scope();
     const counter = store(0);
     const seen: number[] = [];
 
-    // Created inside scope `a` — like a model factory running under scoped(scope).
-    scoped(a, () => {
-      reaction(() => {
+    // Per-scope binding is opt-in through `scope:`, never inferred from the
+    // ambient scope at creation.
+    reaction({
+      scope: a,
+      run() {
         seen.push(counter.value);
-      });
+      },
     });
 
     expect(seen).toEqual([0]); // initial run in `a`
@@ -27,7 +29,27 @@ describe("per-scope reactions", () => {
     expect(seen).toEqual([0, 2]);
   });
 
-  it("does not clobber dependencies across scopes when branches differ", async () => {
+  it("a reaction without `scope:` is global and reacts in any scope", async () => {
+    const a = scope();
+    const b = scope();
+    const counter = store(0);
+    const seen: number[] = [];
+
+    // No `scope:` and no ambient scope — global. Fires wherever its source
+    // changed, and each run reads that firing scope's value.
+    reaction(() => {
+      seen.push(counter.value);
+    });
+
+    expect(seen).toEqual([0]); // creation pass (throwaway scope reads the initial value)
+
+    await run({ unit: counter.node, payload: 1, scope: a });
+    await run({ unit: counter.node, payload: 2, scope: b });
+
+    expect(seen).toEqual([0, 1, 2]); // reacted in both scopes
+  });
+
+  it("explicit `scope:` reactions keep dependencies isolated across scopes", async () => {
     const a = scope();
     const b = scope();
     const useLeft = store(true);
@@ -36,15 +58,17 @@ describe("per-scope reactions", () => {
     const seenA: number[] = [];
     const seenB: number[] = [];
 
-    scoped(a, () => {
-      reaction(() => {
+    reaction({
+      scope: a,
+      run() {
         seenA.push(useLeft.value ? left.value : right.value);
-      });
+      },
     });
-    scoped(b, () => {
-      reaction(() => {
+    reaction({
+      scope: b,
+      run() {
         seenB.push(useLeft.value ? left.value : right.value);
-      });
+      },
     });
 
     // Scope `b` takes the `right` branch; scope `a` stays on `left`.

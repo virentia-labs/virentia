@@ -124,20 +124,13 @@ export function reaction(
   const name = typeof input === "object" ? input.name : undefined;
   const key = typeof input === "object" ? input.key : undefined;
   const configuredScopes = typeof input === "object" && input.scope ? toArray(input.scope) : null;
-  const creationScope = getActiveScope();
-  // A reaction created inside a scope (the usual case — model factories run under
-  // `scoped(scope, …)`) observes that scope only. A module-level reaction (no
-  // active scope and no `scope:`) stays global for backwards compatibility.
-  const allowedScopes = configuredScopes
-    ? new Set(configuredScopes)
-    : creationScope
-      ? new Set([creationScope])
-      : null;
-  // Decided once, at creation — never recomputed from the (ambient) trigger
-  // scope. A module-level reaction stays global for its whole life; a
-  // scope-created one is per-scope for its whole life. Mixing the two would
-  // register both a static and a dynamic edge and fire twice.
-  const useGlobalEdges = !creationScope && !configuredScopes;
+  // Per-scope behavior is opt-in through an explicit `scope:` — never inferred
+  // from the ambient scope at creation, which is a fragile global we must not
+  // depend on. With `scope:` the reaction fires only in those scopes and stores
+  // its dynamic edges per scope; without it the reaction is global (fires in any
+  // scope its source changed in, with a single dependency set).
+  const allowedScopes = configuredScopes ? new Set(configuredScopes) : null;
+  const useGlobalEdges = !configuredScopes;
   const currentDependencies = new Set<Node>();
   const boundScopes = new Set<Scope>();
   // Async-body bookkeeping. `inFlight` is the currently-running body per scope
@@ -176,8 +169,10 @@ export function reaction(
   // scope across effect `await`s, this micro-scope keeps collecting the reaction's
   // direct reads even after an `await`.
   const beginTracking = (): { micro: Scope; realScope: Scope; previousScope: Scope | null } => {
-    const realScope =
-      configuredScopes?.[0] ?? unwrapMicroScope(getActiveScope()) ?? createTrackingScope();
+    // Track in the concrete scope the reaction is running in (the firing scope,
+    // or a configured scope during the creation pass). A global reaction with no
+    // active scope falls back to a throwaway scope — its edges are global anyway.
+    const realScope = unwrapMicroScope(getActiveScope()) ?? createTrackingScope();
     const micro = createMicroScope(realScope);
 
     return { micro, realScope, previousScope: setActiveScope(micro) };
@@ -304,7 +299,7 @@ export function reaction(
     // async body's effect `await`s are reentrant — that keeps the ambient
     // micro-scope alive across them, exactly like a later triggered run. A
     // synchronous body still runs synchronously inside this drain.
-    void run({ unit: node, scope: configuredScopes?.[0] ?? creationScope });
+    void run({ unit: node, scope: configuredScopes?.[0] });
   }
 
   const result: Reaction = {
