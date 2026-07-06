@@ -1,5 +1,13 @@
 # @virentia/inspector
 
+## 0.2.4
+
+### Patch Changes
+
+- Updated dependencies [bc209b9]
+  - @virentia/core@0.4.2
+  - @virentia/react@0.2.6
+
 ## 0.2.3
 
 ### Patch Changes
