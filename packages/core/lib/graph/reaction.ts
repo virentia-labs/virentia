@@ -116,17 +116,9 @@ export function reaction<Payload>(
 ): Reaction;
 export function reaction(run: () => void): Reaction;
 export function reaction(config: AutoReactionConfig): Reaction;
-export function reaction<Value>(
-  selector: () => Value,
-  effect: (value: Value, api: ReactionEffectApi) => void,
-): Reaction;
 export function reaction(
   input: (() => unknown) | AutoReactionConfig | ReactionConfig<any, UnitList>,
-  effect?: (value: any, api: ReactionEffectApi) => void,
 ): Reaction {
-  const selectorEffect = typeof input === "function" && typeof effect === "function";
-  const selector = selectorEffect ? (input as () => unknown) : null;
-  const effectHandler = selectorEffect ? effect! : null;
   const explicit = typeof input === "object" && "on" in input;
   const runHandler = typeof input === "function" ? input : input.run;
   const name = typeof input === "object" ? input.name : undefined;
@@ -152,7 +144,6 @@ export function reaction(
   // (for cancel-previous); `activeRuns` is every live controller (for stop()).
   const inFlight = new WeakMap<Scope, AbortController>();
   const activeRuns = new Set<AbortController>();
-  const lastSelector = new WeakMap<Scope, { value: unknown }>();
   // Latest-wins for async auto reactions: only the most recently started run for
   // a scope is allowed to commit its collected dependencies.
   const runTokens = new WeakMap<Scope, object>();
@@ -168,10 +159,6 @@ export function reaction(
     run: (ctx) => {
       if (stopped || !matchesScope(allowedScopes, ctx.scope)) {
         return ctx.value;
-      }
-
-      if (selectorEffect) {
-        return runSelectorEffect(ctx.scope, ctx.value);
       }
 
       if (explicit) {
@@ -247,36 +234,6 @@ export function reaction(
     );
   };
 
-  // Selector + async-effect form: the (synchronous) selector is tracked in a
-  // micro-scope; the effect runs only when the selected value changed.
-  const runSelectorEffect = (
-    scope: Scope | null,
-    ctxValue: unknown,
-  ): PromiseLike<unknown> | unknown => {
-    const { micro, realScope, previousScope } = beginTracking();
-    let value: unknown;
-
-    try {
-      value = selector!();
-    } finally {
-      setActiveScope(previousScope);
-    }
-
-    commitDependencies(realScope, micro);
-
-    if (scope) {
-      const previous = lastSelector.get(scope);
-
-      if (previous && Object.is(previous.value, value)) {
-        return ctxValue;
-      }
-
-      lastSelector.set(scope, { value });
-    }
-
-    return runBody(scope, ctxValue, (api) => effectHandler!(value, api));
-  };
-
   // Invokes an async-capable body with cancel-previous semantics. A sync body
   // returns `ctxValue` unchanged; an async body returns a promise the drain (and
   // therefore `allSettled`) awaits.
@@ -341,25 +298,6 @@ export function reaction(
     for (const source of toArray(input.on)) {
       attach(source.node, node);
       currentDependencies.add(source.node);
-    }
-  } else if (selectorEffect) {
-    // Track the selector's initial dependencies and remember its value, without
-    // running the effect — the effect fires on subsequent changes only.
-    const { micro, realScope, previousScope } = beginTracking();
-    let initial: unknown;
-
-    try {
-      initial = selector!();
-    } finally {
-      setActiveScope(previousScope);
-    }
-
-    commitDependencies(realScope, micro);
-
-    const initScope = configuredScopes?.[0] ?? creationScope;
-
-    if (initScope) {
-      lastSelector.set(initScope, { value: initial });
     }
   } else {
     // Run the initial auto pass through the kernel (not `runAuto` directly) so an

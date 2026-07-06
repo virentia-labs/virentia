@@ -79,38 +79,6 @@ describe("async reactions", () => {
     expect(settledDone).toBe(true);
   });
 
-  it("selector + effect runs the effect only when the selected value changes", async () => {
-    const appScope = scope();
-    const source = store(0);
-    const other = store(100);
-    const runs: boolean[] = [];
-
-    scoped(appScope, () => {
-      reaction(
-        () => source.value > 0,
-        (positive) => {
-          runs.push(positive);
-        },
-      );
-    });
-
-    // Unrelated store — selector value unchanged, effect must not run.
-    await run({ unit: other.node, payload: 101, scope: appScope });
-    expect(runs).toEqual([]);
-
-    // Selector flips false → true.
-    await run({ unit: source.node, payload: 5, scope: appScope });
-    expect(runs).toEqual([true]);
-
-    // Selector value unchanged (still > 0) — effect must not run.
-    await run({ unit: source.node, payload: 10, scope: appScope });
-    expect(runs).toEqual([true]);
-
-    // Selector flips true → false.
-    await run({ unit: source.node, payload: 0, scope: appScope });
-    expect(runs).toEqual([true, false]);
-  });
-
   it("aborts the previous async run when the reaction fires again (switch)", async () => {
     const appScope = scope();
     const trigger = event<number>();
