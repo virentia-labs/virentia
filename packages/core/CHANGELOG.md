@@ -1,5 +1,36 @@
 # @virentia/core
 
+## 0.5.0
+
+### Minor Changes
+
+- ab564fc: Add `dependency` — a per-scope injectable that is never serialized or hydrated.
+
+  A dependency is model wiring rather than state: an API client, a clock, a logger. Each scope provides its own instance (a real client in production, a mock in tests), and unlike a store it lives in a separate `scope.deps` map, so it is excluded from anything built on `scope.values` (SSR serialization / hydration).
+
+  ```ts
+  import { dependency, effect, provideDependency, scope } from "@virentia/core";
+
+  const api = dependency<ApiClient>("api");
+
+  const loadFx = effect(async (id: string) => api.value.get(id));
+
+  // Provide per scope — at creation or imperatively.
+  const appScope = scope({ deps: [[api, new RealApiClient()]] });
+  const testScope = scope();
+  provideDependency(testScope, api, new MockApiClient());
+  ```
+
+  Read a dependency with `dep.value` under an active scope (effect handlers, reaction bodies, `scoped(...)`). Reading one is not a reactive dependency. Reading a dependency that the active scope never provided throws an actionable error. New exports: `dependency`, `provideDependency`, `Dependency`, and a `deps` option on `scope()`.
+
+### Patch Changes
+
+- e717f00: Awaiting an event now restores the caller's scope, matching effects.
+
+  `await someEvent()` inside a `scoped(...)` block left the ambient scope reset to `null` once the event's reactions had settled — an **async** reaction in particular — so a following store read threw "Scope is required". The event callable returned the whole drain promise, whose async tail deliberately nulls the ambient scope; an effect instead returns its own settle promise, which resolves mid-drain while the scope is still installed, which is why effects already worked.
+
+  Events now restore the scope that was active when they were called (mirroring effects), so code after `await someEvent()` keeps running in the same scope. Every async-callable unit leaves the caller's scope as it found it. (A raw `await fetch()` still drops the scope — wrap external async in an effect.)
+
 ## 0.4.2
 
 ### Patch Changes
