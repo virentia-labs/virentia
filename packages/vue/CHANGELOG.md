@@ -1,5 +1,12 @@
 # @virentia/vue
 
+## 0.2.3
+
+### Patch Changes
+
+- Updated dependencies [d810688]
+  - @virentia/core@0.4.1
+
 ## 0.2.2
 
 ### Patch Changes
