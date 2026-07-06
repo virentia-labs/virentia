@@ -2,18 +2,11 @@ import type { Node } from "./types";
 import type { Scope } from "../scope";
 
 // Dynamic (auto-tracked) edges are per-scope, unlike the static `node.next`
-// topology. Two units may depend on different sources in different scopes
-// (data-dependent reads), so a global edge set would either clobber across
-// scopes (reactions) or over-subscribe (computed). These edges are keyed by the
-// `Scope` object in a `WeakMap`, which gives two properties we want:
-//
-//   • auto-GC — when a scope is abandoned (e.g. a per-request `fork`), its whole
-//     edge table is collected with it, no bookkeeping required;
-//   • O(1) deterministic teardown — `disposeScopeEdges(scope)` drops every edge
-//     of a scope at once.
-//
-// Each scope keeps both directions so the hot path (propagation, source→deps)
-// and reconciliation (dependent→sources) are each a single `Map` lookup.
+// topology: two units may read different sources in different scopes, so a
+// global edge set would clobber (reactions) or over-subscribe (computed). Keyed
+// by `Scope` in a `WeakMap`, so an abandoned scope's edges are GC'd with it and
+// `disposeScopeEdges` drops them in O(1). Both directions are kept so
+// propagation and reconciliation are each a single `Map` lookup.
 interface ScopeEdges {
   // source node -> dependents that read it in this scope
   forward: Map<Node, Set<Node>>;

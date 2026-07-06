@@ -14,6 +14,7 @@ import {
 } from "./inspector";
 import { commitActiveTransaction, enterTransaction, exitTransaction } from "./transaction";
 import { getScopedObservers } from "./scoped-edges";
+import { popNodeFrame, pushNodeFrame } from "./call-stack";
 
 const scopeIds = new WeakMap<object, number>();
 
@@ -182,12 +183,11 @@ export async function run(options: RunOptions): Promise<void> {
 
   if (activeDrain && runningNodeDepth > 0) {
     const parentDrain = activeDrain;
-    // A reentrant drain must leave the caller's ambient scope/page untouched,
-    // exactly like the top-level branch below. An async node inside the drain
-    // synchronously nulls the active scope (see processItem) and only restores
-    // it in a later microtask, so without this the synchronous caller would be
-    // left with scope=null and the next unit call would throw "Scope is
-    // required".
+    // A reentrant drain must leave the caller's ambient scope/page untouched
+    // (like the top-level branch below): an async node inside the drain
+    // synchronously nulls the active scope and restores it only in a later
+    // microtask, so without this the synchronous caller would be left with
+    // scope=null and the next unit call would throw "Scope is required".
     const previousPage = currentPage;
     const previousScope = getActiveScope();
 
@@ -218,12 +218,11 @@ export async function run(options: RunOptions): Promise<void> {
     try {
       await result;
     } finally {
-      // The async tail runs detached across microtasks — no synchronous frame
-      // owns the ambient scope once we resume here, so leaving `previousScope`
-      // installed would leak it into whatever ran in the meantime (e.g. a
-      // `void run()` fired from inside a `scoped()` block). Reset to the neutral
-      // event-loop-boundary state. (Relying on the ambient scope after an
-      // `await` was never supported — pass the scope explicitly there.)
+      // The async tail runs detached across microtasks, so no synchronous frame
+      // owns the ambient scope here; leaving `previousScope` installed would leak
+      // it into whatever ran meanwhile (e.g. a `void run()` from a `scoped()`
+      // block). Reset to neutral — the ambient scope after an `await` was never
+      // supported, pass it explicitly there.
       currentPage = rootPage;
       setActiveScope(null);
     }
@@ -376,7 +375,16 @@ function processItem(drain: DrainContext, item: KernelWorkItem): Promise<void> |
 
     try {
       if (node.run) {
-        const result = node.run(ctx);
+        pushNodeFrame(node);
+
+        let result: ReturnType<NonNullable<Node["run"]>>;
+
+        try {
+          result = node.run(ctx);
+        } finally {
+          // The frame only spans the synchronous run; the async tail is detached.
+          popNodeFrame();
+        }
 
         if (isPromiseLike(result)) {
           commitActiveTransaction();

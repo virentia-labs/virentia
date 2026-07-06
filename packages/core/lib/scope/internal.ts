@@ -1,5 +1,6 @@
 import type { Scope } from "./types";
 import type { Effect, EffectHandler } from "../units/effect";
+import { getNodeCallStackTrace } from "../kernel/call-stack";
 
 let activeScope: Scope | null = null;
 
@@ -65,6 +66,12 @@ export function requireActiveScope(describe?: () => string): Scope {
  */
 export function scopeRequiredError(subject?: string): Error {
   const target = subject ? ` to ${subject}` : "";
+  const trace = getNodeCallStackTrace();
+  const path =
+    trace.length > 0
+      ? `\nUnit path that led here: ${trace.join(" → ")}${subject ? ` → ${subject}` : ""}.` +
+        " The scope was lost somewhere along this chain (a raw `await` between two units drops it)."
+      : "";
 
   return new Error(
     `Scope is required${target}, but no scope is active.\n` +
@@ -72,7 +79,8 @@ export function scopeRequiredError(subject?: string): Error {
       "Provide one of the following:\n" +
       "  • Pass a scope explicitly: allSettled(unit, { scope, payload }).\n" +
       "  • Run inside a scoped computation: scoped(scope, () => …), or trigger the unit from within an effect handler.\n" +
-      "  • In a component, read and trigger units through the scope Provider (e.g. useUnit) rather than calling them directly.",
+      "  • In a component, read and trigger units through the scope Provider (e.g. useUnit) rather than calling them directly." +
+      path,
   );
 }
 

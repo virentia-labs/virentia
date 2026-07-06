@@ -2,14 +2,10 @@ import type { Scope } from "./types";
 import type { Node } from "../kernel/types";
 
 // A micro-scope is a lightweight per-reaction-run overlay: it shares the real
-// scope's value/handler maps by reference (no copy — cheap to create), and adds
-// a private dependency accumulator for exactly one reaction run.
-//
-// Tracking is hung off the *scope* rather than a separate global collector on
-// purpose: the kernel already restores the ambient scope across effect `await`s
-// (a reentrant `run()` restores its caller's scope), so a scope-carried
-// accumulator survives `await` too. That is what lets an async reaction body
-// keep tracking dependencies read *after* an `await`.
+// scope's value/handler maps by reference and adds a private dependency
+// accumulator for one reaction run. Tracking hangs off the scope (not a global
+// collector) so it survives effect `await`s — the kernel restores the ambient
+// scope across them — which is what lets an async body track reads after `await`.
 interface MicroInfo {
   parent: Scope;
   deps: Set<Node>;

@@ -581,10 +581,9 @@ export function createWebSocketTransport(
 }
 
 export function createRelayTransport(inspectorUrl: string): RelayTransport | null {
-  // The relay is just a WebSocket client to the inspector's relay path. It is
-  // deliberately NOT gated behind `window`: outside the browser (React Native,
-  // workers, Node) it is the only transport, so gating it there would leave those
-  // hosts unable to reach the inspector at all.
+  // The relay is just a WebSocket client to the inspector's relay path. Not gated
+  // behind `window`: outside the browser (React Native, workers, Node) it is the
+  // only transport, so gating would leave those hosts unable to reach the inspector.
   if (typeof WebSocket === "undefined") {
     return null;
   }

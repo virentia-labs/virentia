@@ -564,9 +564,8 @@ function createComputed<T>(
     trackNode(node);
 
     // Track (above) sees the micro-scope so the reading reaction depends on this
-    // computed. The computed's own state and dependency edges, however, belong to
-    // the real scope — a micro-scope is a throwaway per-run overlay, so
-    // registering edges there would lose them.
+    // computed. The computed's own state/edges belong to the real scope — a
+    // micro-scope is a throwaway per-run overlay, so edges there would be lost.
     const scope = unwrapMicroScope(requireActiveScope(() => `read ${describeNode(node)}`));
 
     return evaluate(scope, readComputedState<T>(scope, id));
@@ -623,11 +622,9 @@ function createComputed<T>(
   }
 
   function inspectDependencies(): void {
-    // Propagation edges are per-scope now, so there is nothing global to attach.
-    // For the inspector graph we still want to show the computed's dependencies,
-    // so we evaluate against a throwaway scope and register inspector-only links
-    // (dependency → computed) that the snapshot renders without affecting
-    // runtime propagation.
+    // Propagation edges are per-scope, so nothing global to attach. For the
+    // inspector graph we still evaluate against a throwaway scope and register
+    // inspector-only links (dependency → computed) that don't affect propagation.
     const previousScope = setActiveScope({
       values: new Map(),
       handlers: new Map(),
