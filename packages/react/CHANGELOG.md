@@ -1,5 +1,12 @@
 # @virentia/react
 
+## 0.2.6
+
+### Patch Changes
+
+- Updated dependencies [bc209b9]
+  - @virentia/core@0.4.2
+
 ## 0.2.5
 
 ### Patch Changes
