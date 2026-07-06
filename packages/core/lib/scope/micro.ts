@@ -16,7 +16,11 @@ const microScopes = new WeakMap<Scope, MicroInfo>();
 /** Creates a fresh micro-scope over `parent` (a real scope). */
 export function createMicroScope(parent: Scope): Scope {
   const realParent = unwrapMicroScope(parent);
-  const micro: Scope = { values: realParent.values, handlers: realParent.handlers };
+  const micro: Scope = {
+    values: realParent.values,
+    handlers: realParent.handlers,
+    deps: realParent.deps,
+  };
 
   microScopes.set(micro, { parent: realParent, deps: new Set() });
 

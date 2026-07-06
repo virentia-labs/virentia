@@ -4,6 +4,8 @@ import { registerInspectorScope } from "../kernel/inspector";
 import type { Effect, EffectHandler } from "../units/effect";
 import { seedScopeStoreValue } from "../units/store";
 import type { StoreWritable } from "../units/store";
+import { provideDependency } from "../units/dependency";
+import type { Dependency } from "../units/dependency";
 
 export interface ScopeOptions {
   values?:
@@ -12,12 +14,16 @@ export interface ScopeOptions {
   handlers?:
     | ReadonlyMap<Effect<any, any, any>, EffectHandler<any, any>>
     | readonly (readonly [Effect<any, any, any>, EffectHandler<any, any>])[];
+  deps?:
+    | ReadonlyMap<Dependency<any>, unknown>
+    | readonly (readonly [Dependency<any>, unknown])[];
 }
 
 export function scope(options: ScopeOptions = {}): Scope {
-  const nextScope = {
+  const nextScope: Scope = {
     values: new Map(),
     handlers: new Map(),
+    deps: new Map(),
   };
 
   if (options.values) {
@@ -34,6 +40,14 @@ export function scope(options: ScopeOptions = {}): Scope {
 
     for (const [effect, handler] of handlers) {
       nextScope.handlers.set(effect, handler as (...args: any[]) => unknown);
+    }
+  }
+
+  if (options.deps) {
+    const deps = options.deps instanceof Map ? options.deps.entries() : options.deps;
+
+    for (const [dep, value] of deps) {
+      provideDependency(nextScope, dep, value);
     }
   }
 

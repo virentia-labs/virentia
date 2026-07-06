@@ -23,6 +23,8 @@ export { event } from "./event";
 export type { Event, EventCallable, EventDevtoolsOptions, EventPayload } from "./event";
 export { lazyModel } from "./lazy";
 export type { LazyModel, LazyModelLoader } from "./lazy";
+export { dependency, provideDependency } from "./dependency";
+export type { Dependency } from "./dependency";
 export { computed, reactive, readonlyReactive, seedScopeStoreValue, store } from "./store";
 export type {
   Reactive,

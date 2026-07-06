@@ -628,6 +628,7 @@ function createComputed<T>(
     const previousScope = setActiveScope({
       values: new Map(),
       handlers: new Map(),
+      deps: new Map(),
     });
 
     try {
