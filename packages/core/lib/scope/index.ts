@@ -57,14 +57,17 @@ export function scoped<T>(fn: () => T): T;
 export function scoped<T>(scope: Scope, fn: () => T): T;
 export function scoped<T>(scopeOrFn?: Scope | (() => T), maybeFn?: () => T): ScopedRunner | T {
   if (typeof scopeOrFn === "function") {
-    return runScopeTask(requireActiveScope(), scopeOrFn);
+    return runScopeTask(
+      requireActiveScope(() => "use scoped()"),
+      scopeOrFn,
+    );
   }
 
   if (scopeOrFn && maybeFn) {
     return runScopeTask(scopeOrFn, maybeFn);
   }
 
-  return createScopedRunner(scopeOrFn ?? requireActiveScope());
+  return createScopedRunner(scopeOrFn ?? requireActiveScope(() => "use scoped()"));
 }
 
 export type * from "./types";

@@ -1,6 +1,6 @@
 import { createNode, run } from "../kernel";
 import type { Node } from "../kernel";
-import { withInspectorMeta } from "../kernel/inspector";
+import { describeNode, withInspectorMeta } from "../kernel/inspector";
 import type { Scope } from "../scope";
 import { scoped } from "../scope";
 import { getActiveScope, requireActiveScope } from "../scope/internal";
@@ -155,7 +155,7 @@ function createLazyUnit<T>(loader: LazyLoader<T>): T {
     },
   });
   const target = (...args: unknown[]) => {
-    const scope = requireActiveScope();
+    const scope = requireActiveScope(() => `call ${describeNode(node)}`);
 
     return resolver.load(scope).then((unit) => {
       primeUnit(unit);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { event, reaction, scope, scoped } from "../lib";
+import { createNode, event, reaction, run, scope, scoped } from "../lib";
+import { nameUnit } from "../lib/devtools";
 
 describe("event", () => {
   it("requires an active scope when called as a function", async () => {
@@ -8,6 +9,30 @@ describe("event", () => {
     const callWithoutScope = () => submitted(1);
 
     expect(callWithoutScope).toThrow("Scope is required");
+  });
+
+  it("names the offending unit and how to provide a scope when called without one", () => {
+    const submitted = event<number>("submitted");
+
+    expect(() => submitted(1)).toThrow(/Scope is required to call event "submitted"/);
+    expect(() => submitted(1)).toThrow(/allSettled/);
+  });
+
+  it("reports the unit path that led to a scope-less call inside a handler", async () => {
+    const inner = event<number>("inner");
+    const caller = createNode({
+      run(ctx) {
+        // Runs with no active scope; calling a unit from here must fail and the
+        // error should name the chain of units that led to the offending call.
+        inner(ctx.value as number);
+      },
+    });
+
+    nameUnit(caller, "caller");
+
+    await expect(run({ unit: caller, payload: 1 })).rejects.toThrow(
+      /Unit path that led here: .*caller.* → .*event "inner"/,
+    );
   });
 
   it("runs explicit reactions when called in a scope", async () => {

@@ -359,6 +359,21 @@ export function readInspectorNodeMeta(node: Node): InspectorNodeMeta {
   return readInspectorNodeMetaFromRecord(node.meta);
 }
 
+/**
+ * Human-readable label for a node, used in error messages and diagnostics.
+ * Prefers the annotated unit name (`store "$user"`), falling back to the type
+ * plus the stable inspector id (`event #12`) so the unit can still be located
+ * in devtools even when it was never explicitly named.
+ */
+export function describeNode(node: Node): string {
+  const meta = readInspectorNodeMeta(node);
+  const type = meta.type ?? "unit";
+
+  return meta.name
+    ? `${type} "${meta.name}"`
+    : `${type} ${getInspectorNodeId(node).replace("node:", "#")}`;
+}
+
 export function getInspectorSnapshot(): InspectorSnapshot {
   for (const node of Array.from(nodes)) {
     snapshotPreparers.get(node)?.();

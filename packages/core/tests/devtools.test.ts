@@ -1,15 +1,125 @@
 import { describe, expect, it } from "vitest";
 import { computed, createNode, effect, event, reaction, run, scope, scoped, store } from "../lib";
 import {
+  createRelayTransport,
+  createWebSocketTransport,
   getDevtoolsNodeId,
   getVirentiaDevtoolsSnapshot,
   installVirentiaDevtools,
   nameScope,
   nameUnit,
   setVirentiaDevtoolsBreakpoints,
+  type RelayTransport,
+  type WebSocketConstructorLike,
 } from "../lib/devtools";
 
 describe("devtools", () => {
+  it("routes traffic through a custom transport for non-browser hosts", () => {
+    // React Native and other non-browser hosts have no window/BroadcastChannel;
+    // the bridge must still reach the inspector through an injected transport.
+    const sent: Array<{ message: { type: string } }> = [];
+    const listeners = new Set<(message: unknown) => void>();
+    const transport: RelayTransport = {
+      dispose() {},
+      onMessage(listener) {
+        listeners.add(listener);
+
+        return () => listeners.delete(listener);
+      },
+      send(message) {
+        sent.push(message as { message: { type: string } });
+      },
+    };
+
+    const devtools = installVirentiaDevtools({ channel: "rn", transport });
+
+    // The initial app/graph handshake goes out over the custom transport.
+    expect(sent.some((envelope) => envelope.message.type === "app")).toBe(true);
+
+    // An inspector message arriving over the transport is handled and answered.
+    const before = sent.length;
+
+    for (const listener of listeners) {
+      listener({
+        __virentiaDevtools: true,
+        id: "inspector-ready",
+        channel: "rn",
+        target: "app",
+        message: { type: "ready" },
+      });
+    }
+
+    expect(sent.length).toBeGreaterThan(before);
+
+    devtools.dispose();
+  });
+
+  it("createWebSocketTransport works with an injected WebSocket in any environment", () => {
+    const sent: string[] = [];
+    const listeners: Record<string, (event: { data?: unknown }) => void> = {};
+    const sockets: FakeWebSocket[] = [];
+
+    class FakeWebSocket {
+      readyState = 0; // CONNECTING
+
+      constructor(public url: string) {
+        sockets.push(this);
+      }
+
+      send(data: string): void {
+        sent.push(data);
+      }
+
+      close(): void {
+        this.readyState = 3; // CLOSED
+      }
+
+      addEventListener(type: string, listener: (event: { data?: unknown }) => void): void {
+        listeners[type] = listener;
+      }
+    }
+
+    const received: unknown[] = [];
+    const transport = createWebSocketTransport("ws://example.test/__virentia_devtools", {
+      webSocket: FakeWebSocket as unknown as WebSocketConstructorLike,
+      reconnectDelay: 0,
+    });
+    const unsubscribe = transport.onMessage((message) => received.push(message));
+
+    // Buffered while still connecting.
+    transport.send({ hello: 1 });
+    expect(sent).toEqual([]);
+
+    // On open, the queue flushes.
+    sockets[0]!.readyState = 1; // OPEN
+    listeners.open?.({});
+    expect(sent).toEqual([JSON.stringify({ hello: 1 })]);
+
+    // Sends after open go straight through; incoming JSON is parsed.
+    transport.send({ hello: 2 });
+    listeners.message?.({ data: JSON.stringify({ from: "inspector" }) });
+    expect(sent).toEqual([JSON.stringify({ hello: 1 }), JSON.stringify({ hello: 2 })]);
+    expect(received).toEqual([{ from: "inspector" }]);
+
+    unsubscribe();
+    transport.dispose();
+    expect(sockets[0]!.readyState).toBe(3);
+  });
+
+  it("builds a relay transport without a browser window", () => {
+    // The relay is a plain WebSocket client, so it is available wherever
+    // `WebSocket` exists — not only in the browser.
+    const transport = createRelayTransport("http://127.0.0.1:5174");
+
+    if (typeof WebSocket === "undefined") {
+      expect(transport).toBeNull();
+      return;
+    }
+
+    expect(transport).not.toBeNull();
+    transport?.dispose();
+  });
+
   it("captures named units, scopes, and graph links", async () => {
     const devtools = installVirentiaDevtools({
       channel: "test-devtools-graph",

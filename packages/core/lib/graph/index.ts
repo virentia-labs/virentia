@@ -8,6 +8,8 @@ export type {
   AutoReactionConfig,
   Reaction,
   ReactionConfig,
+  ReactionEffectApi,
+  ReactionRun,
   SourceInput,
   Unit,
   UnitInput,

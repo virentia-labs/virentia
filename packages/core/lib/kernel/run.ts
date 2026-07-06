@@ -2,6 +2,7 @@ import type { KernelContextManager, KernelExecutionContext, RunOptions } from ".
 import type { Node } from "./types";
 import type { CreatePageOptions, KernelWorkItem, Page } from "./internal";
 import { getActiveScope, setActiveScope } from "../scope/internal";
+import { unwrapMicroScope } from "../scope/micro";
 import {
   emitInspectorBreakpointHit,
   emitInspectorNodeEnd,
@@ -12,6 +13,8 @@ import {
   shouldStopAfterInspectorNode,
 } from "./inspector";
 import { commitActiveTransaction, enterTransaction, exitTransaction } from "./transaction";
+import { getScopedObservers } from "./scoped-edges";
+import { popNodeFrame, pushNodeFrame } from "./call-stack";
 
 const scopeIds = new WeakMap<object, number>();
 
@@ -151,7 +154,10 @@ export async function run(options: RunOptions): Promise<void> {
     contexts: options.contexts,
   });
   const units = Array.isArray(options.unit) ? options.unit : [options.unit];
-  const scope = options.scope ?? getActiveScope();
+  // Units always run in a real scope. A micro-scope is only a tracking overlay
+  // for a reaction body, so effects/propagation resolve to its real parent —
+  // reads inside an effect then never leak into the reaction's dependencies.
+  const scope = unwrapMicroScope(options.scope ?? getActiveScope());
 
   registerInspectorScope(scope);
 
@@ -177,27 +183,49 @@ export async function run(options: RunOptions): Promise<void> {
 
   if (activeDrain && runningNodeDepth > 0) {
     const parentDrain = activeDrain;
-    const result = drainQueue(drain);
+    // A reentrant drain must leave the caller's ambient scope/page untouched
+    // (like the top-level branch below): an async node inside the drain
+    // synchronously nulls the active scope and restores it only in a later
+    // microtask, so without this the synchronous caller would be left with
+    // scope=null and the next unit call would throw "Scope is required".
+    const previousPage = currentPage;
+    const previousScope = getActiveScope();
 
-    if (isPromiseLike(result)) {
-      parentDrain.pending.push(result);
+    try {
+      const result = drainQueue(drain);
+
+      if (isPromiseLike(result)) {
+        parentDrain.pending.push(result);
+      }
+
+      return result;
+    } finally {
+      currentPage = previousPage;
+      setActiveScope(previousScope);
     }
-
-    return result;
   }
 
   const previousPage = currentPage;
   const previousScope = getActiveScope();
+  const result = drainQueue(drain);
 
-  try {
-    const result = drainQueue(drain);
+  // Restore the caller's synchronous frame as soon as the synchronous portion of
+  // the drain yields.
+  currentPage = previousPage;
+  setActiveScope(previousScope);
 
-    if (isPromiseLike(result)) {
+  if (isPromiseLike(result)) {
+    try {
       await result;
+    } finally {
+      // The async tail runs detached across microtasks, so no synchronous frame
+      // owns the ambient scope here; leaving `previousScope` installed would leak
+      // it into whatever ran meanwhile (e.g. a `void run()` from a `scoped()`
+      // block). Reset to neutral — the ambient scope after an `await` was never
+      // supported, pass it explicitly there.
+      currentPage = rootPage;
+      setActiveScope(null);
     }
-  } finally {
-    currentPage = previousPage;
-    setActiveScope(previousScope);
   }
 }
 
@@ -214,37 +242,45 @@ function continueDrain(
   previousDrain: DrainContext | null,
 ): Promise<void> | void {
   try {
-    while (drain.queueHead < drain.queue.length) {
-      enterTransaction();
+    // The queue and `pending` (promises from reentrant async runs, e.g. a
+    // fire-and-forget effect launched inside an async reaction body) must both
+    // reach empty before the drain settles. `pending` is checked on every pass —
+    // including when the queue is already empty on re-entry after an async node
+    // resolves — otherwise a dangling reentrant promise would be silently
+    // dropped and `allSettled` would resolve before it completes.
+    while (drain.queueHead < drain.queue.length || drain.pending.length > 0) {
+      if (drain.queueHead < drain.queue.length) {
+        enterTransaction();
 
-      while (drain.queueHead < drain.queue.length) {
-        const item = drain.queue[drain.queueHead++];
+        while (drain.queueHead < drain.queue.length) {
+          const item = drain.queue[drain.queueHead++];
 
-        if (item.queueKey) drain.batchedItems.delete(item.queueKey);
+          if (item.queueKey) drain.batchedItems.delete(item.queueKey);
 
-        const result = processItem(drain, item);
+          const result = processItem(drain, item);
 
-        if (isPromiseLike(result)) {
-          exitTransaction();
-          activeDrain = previousDrain;
+          if (isPromiseLike(result)) {
+            exitTransaction();
+            activeDrain = previousDrain;
 
-          return result.then(
-            () => {
-              activeDrain = drain;
-              return continueDrain(drain, previousDrain);
-            },
-            (error) => {
-              activeDrain = previousDrain;
-              settleFlushWaiters(drain, true, error);
-              throw error;
-            },
-          );
+            return result.then(
+              () => {
+                activeDrain = drain;
+                return continueDrain(drain, previousDrain);
+              },
+              (error) => {
+                activeDrain = previousDrain;
+                settleFlushWaiters(drain, true, error);
+                throw error;
+              },
+            );
+          }
         }
-      }
 
-      drain.queueHead = 0;
-      drain.queue.length = 0;
-      exitTransaction();
+        drain.queueHead = 0;
+        drain.queue.length = 0;
+        exitTransaction();
+      }
 
       if (drain.pending.length > 0) {
         const pending = drain.pending.splice(0);
@@ -339,7 +375,16 @@ function processItem(drain: DrainContext, item: KernelWorkItem): Promise<void> |
 
     try {
       if (node.run) {
-        const result = node.run(ctx);
+        pushNodeFrame(node);
+
+        let result: ReturnType<NonNullable<Node["run"]>>;
+
+        try {
+          result = node.run(ctx);
+        } finally {
+          // The frame only spans the synchronous run; the async tail is detached.
+          popNodeFrame();
+        }
 
         if (isPromiseLike(result)) {
           commitActiveTransaction();
@@ -435,6 +480,8 @@ function finishItem(
 
   if (ctx.stopped) return;
 
+  // Static structural edges: scope-independent topology (`.map`, explicit
+  // reactions, effect sub-units, …).
   for (const next of node.next ?? []) {
     push(drain, {
       node: next,
@@ -447,6 +494,27 @@ function finishItem(
       meta: ctx.meta,
       batchKey: item.batchKey,
     });
+  }
+
+  // Dynamic per-scope edges: auto-tracked dependents (computed invalidators,
+  // auto-reactions) that read this node in `ctx.scope`. Looked up only for the
+  // firing scope, so a data-dependent dependency in another scope is untouched.
+  const scopedObservers = ctx.scope ? getScopedObservers(ctx.scope, node) : undefined;
+
+  if (scopedObservers) {
+    for (const next of scopedObservers) {
+      push(drain, {
+        node: next,
+        page: item.page,
+        scope: ctx.scope,
+        payload: ctx.value,
+        value: ctx.value,
+        error: undefined,
+        failed: false,
+        meta: ctx.meta,
+        batchKey: item.batchKey,
+      });
+    }
   }
 }
 
