@@ -389,10 +389,11 @@ export function effect<Params, Done, Fail = unknown>(
         void run({ unit: node, payload: call, scope });
       });
 
-      // When an effect is awaited inside a micro-scoped reaction body, restore
-      // that micro-scope for the awaiter's continuation, so reads after the
-      // `await` are still tracked as dependencies. Normal effect calls (ambient
-      // is a real scope) keep their current behavior untouched.
+      // The awaiter gets the effect's own settle promise, which resolves from
+      // inside the drain while the scope is still installed — so `await someFx()`
+      // already leaves the caller's real scope in place. A micro-scoped reaction
+      // body is the exception: restore the micro-scope so reads after the `await`
+      // keep being tracked as dependencies.
       return isMicroScope(ambient) ? promise.finally(() => setActiveScope(ambient)) : promise;
     },
     {
