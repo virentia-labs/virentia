@@ -392,5 +392,6 @@ function createTrackingScope(): Scope {
   return {
     values: new Map(),
     handlers: new Map(),
+    deps: new Map(),
   };
 }
