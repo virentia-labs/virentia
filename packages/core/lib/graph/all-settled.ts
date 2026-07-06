@@ -1,7 +1,8 @@
 import { run } from "../kernel";
 import type { Node } from "../kernel";
+import { describeNode } from "../kernel/inspector";
 import type { Scope } from "../scope";
-import { getActiveScope } from "../scope/internal";
+import { getActiveScope, scopeRequiredError } from "../scope/internal";
 import type { AnyUnit, UnitInput } from "./reaction";
 
 export interface AllSettledOptions<T> {
@@ -17,14 +18,15 @@ export function allSettled<Unit extends SettledUnit>(
   unit: Unit,
   options: AllSettledOptions<UnitPayload<Unit>> = {},
 ): Promise<void> {
+  const node = getNode(unit);
   const scope = options.scope ?? getActiveScope();
 
   if (!scope) {
-    throw new Error("Scope is required");
+    throw scopeRequiredError(`call ${describeNode(node)}`);
   }
 
   return run({
-    unit: getNode(unit),
+    unit: node,
     payload: options.payload,
     scope,
     batchKey: options.batchKey,

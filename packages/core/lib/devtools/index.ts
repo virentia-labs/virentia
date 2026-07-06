@@ -32,12 +32,15 @@ import {
   type DevtoolsSnapshot,
   type DevtoolsTimelineEvent,
   type InspectorMessage,
+  type RelayTransport,
   type TriggerUnitResult,
 } from "./transport";
 
 export {
   createAppEndpoint,
   createId,
+  createRelayTransport,
+  createWebSocketTransport,
   defaultDevtoolsChannel,
   defaultInspectorUrl,
   openInspectorWindow,
@@ -56,6 +59,9 @@ export type {
   RelayTransport,
   SerializedDevtoolsValue,
   TriggerUnitResult,
+  WebSocketConstructorLike,
+  WebSocketLike,
+  WebSocketTransportOptions,
 } from "./transport";
 
 export type DevtoolsGraphNode = InspectorNodeSnapshot;
@@ -68,6 +74,16 @@ export interface InstallVirentiaDevtoolsOptions {
   autoOpen?: boolean;
   channel?: string;
   inspectorUrl?: string;
+  /**
+   * Overrides the wire transport used to talk to the inspector.
+   *
+   * By default the bridge connects over a WebSocket relay (`inspectorUrl`),
+   * which works both in the browser and in non-browser hosts like React
+   * Native. Pass a custom {@link RelayTransport} to route devtools traffic
+   * through a different channel (Metro, Flipper, a native bridge, …), or pass
+   * `null` to disable the relay entirely and rely on in-page transports only.
+   */
+  transport?: RelayTransport | null;
 }
 
 export interface TriggerUnitOptions {
@@ -128,7 +144,7 @@ export function installVirentiaDevtools(
   const appName = options.appName ?? "Virentia app";
   const channel = options.channel ?? defaultDevtoolsChannel;
   const inspectorUrl = readConfiguredInspectorUrl(options.inspectorUrl);
-  const endpoint = createAppEndpoint(channel, inspectorUrl);
+  const endpoint = createAppEndpoint(channel, inspectorUrl, options.transport);
   const disableInspector = enableInspector();
   let disposed = false;
   let graphQueued = false;

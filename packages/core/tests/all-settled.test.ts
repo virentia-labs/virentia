@@ -69,4 +69,12 @@ describe("allSettled", () => {
 
     expect(() => allSettled(submitted, { payload: 1 })).toThrow("Scope is required");
   });
+
+  it("names the offending unit in the scope error", () => {
+    const submitted = event<number>("published");
+
+    expect(() => allSettled(submitted, { payload: 1 })).toThrow(
+      /Scope is required to call event "published"/,
+    );
+  });
 });

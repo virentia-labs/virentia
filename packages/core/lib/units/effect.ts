@@ -1,7 +1,13 @@
 import { createNode, run } from "../kernel";
 import type { Node } from "../kernel";
-import { linkInspectorNodes, withInspectorMeta } from "../kernel/inspector";
-import { getActiveScope, getScopeHandler, requireActiveScope } from "../scope/internal";
+import { describeNode, linkInspectorNodes, withInspectorMeta } from "../kernel/inspector";
+import {
+  getActiveScope,
+  getScopeHandler,
+  requireActiveScope,
+  setActiveScope,
+} from "../scope/internal";
+import { isMicroScope, unwrapMicroScope } from "../scope/micro";
 import type { Scope } from "../scope";
 import { registerCleanup } from "../graph/owner";
 import { event } from "./event";
@@ -372,15 +378,23 @@ export function effect<Params, Done, Fail = unknown>(
   linkEffectSubunit("aborted", aborted.node);
 
   result = Object.assign(
-    (...args: EffectCallArgs<Params>) =>
-      new Promise<Done>((resolve, reject) => {
-        const scope = requireActiveScope();
-        const params = args[0] as Params;
-        const options = args[1];
+    (...args: EffectCallArgs<Params>) => {
+      const ambient = requireActiveScope(() => `call ${describeNode(node)}`);
+      const scope = unwrapMicroScope(ambient);
+      const params = args[0] as Params;
+      const options = args[1];
+      const promise = new Promise<Done>((resolve, reject) => {
         const call = createCall(params, options, scope, resolve, reject);
 
         void run({ unit: node, payload: call, scope });
-      }),
+      });
+
+      // When an effect is awaited inside a micro-scoped reaction body, restore
+      // that micro-scope for the awaiter's continuation, so reads after the
+      // `await` are still tracked as dependencies. Normal effect calls (ambient
+      // is a real scope) keep their current behavior untouched.
+      return isMicroScope(ambient) ? promise.finally(() => setActiveScope(ambient)) : promise;
+    },
     {
       node,
       pending,

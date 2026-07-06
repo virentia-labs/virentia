@@ -1,9 +1,10 @@
-import { createNode } from "../kernel";
+import { createNode, run } from "../kernel";
 import type { Node } from "../kernel";
 import { withInspectorMeta } from "../kernel/inspector";
 import { getActiveScope, setActiveScope } from "../scope/internal";
 import type { Scope } from "../scope";
-import { collectNodes } from "./deps";
+import { detachScopedDependent, reconcileScopedEdges } from "../kernel/scoped-edges";
+import { createMicroScope, readMicroDependencies, unwrapMicroScope } from "../scope/micro";
 import { registerCleanup } from "./owner";
 import type { Effect } from "../units/effect";
 import type { Event, EventCallable } from "../units/event";
@@ -56,12 +57,29 @@ export interface Reaction {
   stop(): void;
 }
 
+/**
+ * Passed to an async reaction body. `scope` is the scope the reaction fired in —
+ * use it for scope-bound work (`allSettled(fx, { scope })`), since the ambient
+ * scope is not preserved across `await`. `signal` aborts when the same reaction
+ * fires again in this scope (or the reaction is stopped), for cancel-previous
+ * (switch) semantics.
+ */
+export interface ReactionEffectApi {
+  readonly scope: Scope;
+  readonly signal: AbortSignal;
+}
+
+// Returns `void` so both a plain side effect (`v => arr.push(v)`, whose return
+// is ignored) and an `async` body (whose `Promise<void>` is accepted by the
+// void-return rule) type-check. Async is detected at runtime.
+export type ReactionRun<Payload> = (payload: Payload, api: ReactionEffectApi) => void;
+
 export interface ReactionConfig<Payload, On extends UnitList<Payload> = UnitList<Payload>> {
   on: On;
   name?: string;
   key?: boolean;
   scope?: Scope | readonly Scope[];
-  run: (payload: Payload) => void;
+  run: ReactionRun<Payload>;
 }
 
 export interface AutoReactionConfig {
@@ -73,7 +91,10 @@ export interface AutoReactionConfig {
 
 export function reaction<On extends readonly SourceUnit<any>[]>(config: {
   on: On;
-  run: (payload: SourceInput<On>) => void;
+  name?: string;
+  key?: boolean;
+  scope?: Scope | readonly Scope[];
+  run: ReactionRun<SourceInput<On>>;
 }): Reaction;
 export function reaction<Payload>(
   config: ReactionConfig<Payload, StoreWritable<Payload>>,
@@ -95,16 +116,46 @@ export function reaction<Payload>(
 ): Reaction;
 export function reaction(run: () => void): Reaction;
 export function reaction(config: AutoReactionConfig): Reaction;
+export function reaction<Value>(
+  selector: () => Value,
+  effect: (value: Value, api: ReactionEffectApi) => void,
+): Reaction;
 export function reaction(
-  input: (() => void) | AutoReactionConfig | ReactionConfig<any, UnitList>,
+  input: (() => unknown) | AutoReactionConfig | ReactionConfig<any, UnitList>,
+  effect?: (value: any, api: ReactionEffectApi) => void,
 ): Reaction {
+  const selectorEffect = typeof input === "function" && typeof effect === "function";
+  const selector = selectorEffect ? (input as () => unknown) : null;
+  const effectHandler = selectorEffect ? effect! : null;
   const explicit = typeof input === "object" && "on" in input;
   const runHandler = typeof input === "function" ? input : input.run;
   const name = typeof input === "object" ? input.name : undefined;
   const key = typeof input === "object" ? input.key : undefined;
   const configuredScopes = typeof input === "object" && input.scope ? toArray(input.scope) : null;
-  const allowedScopes = configuredScopes ? new Set(configuredScopes) : null;
+  const creationScope = getActiveScope();
+  // A reaction created inside a scope (the usual case — model factories run under
+  // `scoped(scope, …)`) observes that scope only. A module-level reaction (no
+  // active scope and no `scope:`) stays global for backwards compatibility.
+  const allowedScopes = configuredScopes
+    ? new Set(configuredScopes)
+    : creationScope
+      ? new Set([creationScope])
+      : null;
+  // Decided once, at creation — never recomputed from the (ambient) trigger
+  // scope. A module-level reaction stays global for its whole life; a
+  // scope-created one is per-scope for its whole life. Mixing the two would
+  // register both a static and a dynamic edge and fire twice.
+  const useGlobalEdges = !creationScope && !configuredScopes;
   const currentDependencies = new Set<Node>();
+  const boundScopes = new Set<Scope>();
+  // Async-body bookkeeping. `inFlight` is the currently-running body per scope
+  // (for cancel-previous); `activeRuns` is every live controller (for stop()).
+  const inFlight = new WeakMap<Scope, AbortController>();
+  const activeRuns = new Set<AbortController>();
+  const lastSelector = new WeakMap<Scope, { value: unknown }>();
+  // Latest-wins for async auto reactions: only the most recently started run for
+  // a scope is allowed to commit its collected dependencies.
+  const runTokens = new WeakMap<Scope, object>();
   let stopped = false;
 
   const node = createNode({
@@ -119,41 +170,171 @@ export function reaction(
         return ctx.value;
       }
 
-      if (explicit) {
-        (runHandler as (payload: unknown) => void)(ctx.value);
-      } else {
-        runAuto();
+      if (selectorEffect) {
+        return runSelectorEffect(ctx.scope, ctx.value);
       }
 
-      return ctx.value;
+      if (explicit) {
+        return runBody(ctx.scope, ctx.value, (api) =>
+          (runHandler as ReactionRun<unknown>)(ctx.value, api),
+        );
+      }
+
+      return runAuto(ctx.value);
     },
   });
 
-  const runAuto = (): void => {
-    const activeScope = getActiveScope();
-    const configuredScope = configuredScopes?.[0];
-    const scopeForRun = configuredScope ?? activeScope;
-    const trackingScope = activeScope ? null : createTrackingScope();
-    const previousScope =
-      scopeForRun && scopeForRun !== activeScope
-        ? setActiveScope(scopeForRun)
-        : trackingScope
-          ? setActiveScope(trackingScope)
-          : null;
+  // Starts a tracked run: resolves the real scope and installs a fresh per-run
+  // micro-scope as the ambient scope. Because the kernel restores the ambient
+  // scope across effect `await`s, this micro-scope keeps collecting the reaction's
+  // direct reads even after an `await`.
+  const beginTracking = (): { micro: Scope; realScope: Scope; previousScope: Scope | null } => {
+    const realScope =
+      configuredScopes?.[0] ?? unwrapMicroScope(getActiveScope()) ?? createTrackingScope();
+    const micro = createMicroScope(realScope);
+
+    return { micro, realScope, previousScope: setActiveScope(micro) };
+  };
+
+  const commitDependencies = (realScope: Scope, micro: Scope): void => {
+    const deps = readMicroDependencies(micro) ?? new Set<Node>();
+
+    if (useGlobalEdges) {
+      reconcileDependencies(node, currentDependencies, new Set(deps));
+    } else {
+      reconcileScopedEdges(realScope, node, deps);
+      boundScopes.add(realScope);
+    }
+  };
+
+  // Auto form. A synchronous body reconciles its dependencies immediately; an
+  // async body keeps tracking across awaits (micro-scope survives them) and
+  // reconciles when it finishes — but only if it is still the latest run for its
+  // scope, so a slow earlier run cannot overwrite a newer one's dependencies.
+  const runAuto = (ctxValue: unknown): PromiseLike<unknown> | unknown => {
+    const { micro, realScope, previousScope } = beginTracking();
+    let result: unknown;
 
     try {
-      const collected = collectNodes(() => {
-        (runHandler as () => void)();
-      });
-
-      reconcileDependencies(node, currentDependencies, collected.nodes);
+      result = (runHandler as () => unknown)();
     } finally {
-      if (scopeForRun && scopeForRun !== activeScope) {
-        setActiveScope(previousScope);
-      } else if (trackingScope) {
-        setActiveScope(previousScope);
-      }
+      setActiveScope(previousScope);
     }
+
+    if (!isThenable(result)) {
+      commitDependencies(realScope, micro);
+      return ctxValue;
+    }
+
+    const token = {};
+    runTokens.set(realScope, token);
+
+    const commitIfLatest = (): void => {
+      if (runTokens.get(realScope) === token) {
+        commitDependencies(realScope, micro);
+      }
+    };
+
+    return Promise.resolve(result).then(
+      () => {
+        commitIfLatest();
+        return ctxValue;
+      },
+      (error) => {
+        commitIfLatest();
+        throw error;
+      },
+    );
+  };
+
+  // Selector + async-effect form: the (synchronous) selector is tracked in a
+  // micro-scope; the effect runs only when the selected value changed.
+  const runSelectorEffect = (
+    scope: Scope | null,
+    ctxValue: unknown,
+  ): PromiseLike<unknown> | unknown => {
+    const { micro, realScope, previousScope } = beginTracking();
+    let value: unknown;
+
+    try {
+      value = selector!();
+    } finally {
+      setActiveScope(previousScope);
+    }
+
+    commitDependencies(realScope, micro);
+
+    if (scope) {
+      const previous = lastSelector.get(scope);
+
+      if (previous && Object.is(previous.value, value)) {
+        return ctxValue;
+      }
+
+      lastSelector.set(scope, { value });
+    }
+
+    return runBody(scope, ctxValue, (api) => effectHandler!(value, api));
+  };
+
+  // Invokes an async-capable body with cancel-previous semantics. A sync body
+  // returns `ctxValue` unchanged; an async body returns a promise the drain (and
+  // therefore `allSettled`) awaits.
+  const runBody = (
+    scope: Scope | null,
+    ctxValue: unknown,
+    invoke: (api: ReactionEffectApi) => void | PromiseLike<unknown>,
+  ): PromiseLike<unknown> | unknown => {
+    if (scope) {
+      inFlight.get(scope)?.abort();
+      inFlight.delete(scope);
+    }
+
+    let controller: AbortController | null = null;
+    const result = invoke({
+      scope: scope as Scope,
+      get signal() {
+        if (!controller) {
+          controller = new AbortController();
+          activeRuns.add(controller);
+        }
+
+        return controller.signal;
+      },
+    });
+
+    if (!isThenable(result)) {
+      if (controller) {
+        activeRuns.delete(controller);
+      }
+
+      return ctxValue;
+    }
+
+    if (scope && controller) {
+      inFlight.set(scope, controller);
+    }
+
+    const settle = (): void => {
+      if (controller) {
+        activeRuns.delete(controller);
+
+        if (scope && inFlight.get(scope) === controller) {
+          inFlight.delete(scope);
+        }
+      }
+    };
+
+    return Promise.resolve(result).then(
+      () => {
+        settle();
+        return ctxValue;
+      },
+      (error) => {
+        settle();
+        throw error;
+      },
+    );
   };
 
   if (explicit) {
@@ -161,8 +342,31 @@ export function reaction(
       attach(source.node, node);
       currentDependencies.add(source.node);
     }
+  } else if (selectorEffect) {
+    // Track the selector's initial dependencies and remember its value, without
+    // running the effect — the effect fires on subsequent changes only.
+    const { micro, realScope, previousScope } = beginTracking();
+    let initial: unknown;
+
+    try {
+      initial = selector!();
+    } finally {
+      setActiveScope(previousScope);
+    }
+
+    commitDependencies(realScope, micro);
+
+    const initScope = configuredScopes?.[0] ?? creationScope;
+
+    if (initScope) {
+      lastSelector.set(initScope, { value: initial });
+    }
   } else {
-    runAuto();
+    // Run the initial auto pass through the kernel (not `runAuto` directly) so an
+    // async body's effect `await`s are reentrant — that keeps the ambient
+    // micro-scope alive across them, exactly like a later triggered run. A
+    // synchronous body still runs synchronously inside this drain.
+    void run({ unit: node, scope: configuredScopes?.[0] ?? creationScope });
   }
 
   const result: Reaction = {
@@ -176,11 +380,23 @@ export function reaction(
     stop(): void {
       stopped = true;
 
+      for (const controller of activeRuns) {
+        controller.abort();
+      }
+
+      activeRuns.clear();
+
       for (const dependency of currentDependencies) {
         detach(dependency, node);
       }
 
       currentDependencies.clear();
+
+      for (const scope of boundScopes) {
+        detachScopedDependent(scope, node);
+      }
+
+      boundScopes.clear();
     },
   };
 
@@ -189,6 +405,12 @@ export function reaction(
   });
 
   return result;
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    (typeof value === "object" || typeof value === "function") && value !== null && "then" in value
+  );
 }
 
 function reconcileDependencies(node: Node, current: Set<Node>, next: Set<Node>): void {

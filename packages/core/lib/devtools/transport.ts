@@ -189,11 +189,13 @@ export function serializeDevtoolsValue(value: unknown): SerializedDevtoolsValue 
 export function createAppEndpoint(
   channel: string,
   inspectorUrl: string,
+  customTransport?: RelayTransport | null,
 ): ProtocolEndpoint<InspectorMessage, AppMessage> {
   const listeners = new Set<ProtocolListener<InspectorMessage>>();
   const clients = new Set<Window>();
   const broadcast = createBroadcast(channel);
-  const relay = createRelayTransport(inspectorUrl);
+  const relay =
+    customTransport === undefined ? createRelayTransport(inspectorUrl) : customTransport;
   const seenMessages = createSeenMessages();
   const onWindowMessage = (event: MessageEvent) => {
     const envelope = readEnvelope<InspectorMessage>(event.data, channel, "app");
@@ -414,15 +416,66 @@ export function createId(prefix: string): string {
   return `${prefix}:${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
 }
 
-function createRelayTransport(inspectorUrl: string): RelayTransport | null {
-  if (!canUseWindow() || typeof WebSocket === "undefined") {
-    return null;
+/** Minimal WHATWG `WebSocket` surface the transport relies on. */
+export interface WebSocketLike {
+  readyState: number;
+  send(data: string): void;
+  close(): void;
+  addEventListener(type: string, listener: (event: { data?: unknown }) => void): void;
+}
+
+export type WebSocketConstructorLike = new (url: string) => WebSocketLike;
+
+export interface WebSocketTransportOptions {
+  /**
+   * WebSocket implementation to use. Defaults to the global `WebSocket`, which
+   * exists in browsers, React Native, Web Workers, Node 22+, Deno and Bun. In an
+   * environment without one, pass a WHATWG-compatible constructor — e.g. the
+   * `ws` package (`{ webSocket: WebSocket }` from `import { WebSocket } from "ws"`).
+   */
+  webSocket?: WebSocketConstructorLike;
+  /** Delay in ms before reconnecting after the socket drops. Default 1000. `0` disables reconnect. */
+  reconnectDelay?: number;
+  /** Max messages buffered while disconnected (oldest dropped past this). Default 100. */
+  maxQueue?: number;
+}
+
+// The WHATWG `WebSocket.OPEN` ready state. Hard-coded so we do not depend on a
+// global `WebSocket` being present to read the constant off it.
+const webSocketOpen = 1;
+
+/**
+ * A ready-made {@link RelayTransport} over a WebSocket, usable in any JS runtime
+ * with a WHATWG `WebSocket` (or an injected one). It reconnects automatically and
+ * buffers messages while disconnected. Pass it as `installVirentiaDevtools({
+ * transport })`.
+ *
+ * `url` is the full WebSocket URL of a relay both ends connect to (the built-in
+ * `virentia-inspector` relay listens on the `/__virentia_devtools` path, e.g.
+ * `ws://192.168.1.5:5174/__virentia_devtools`).
+ */
+export function createWebSocketTransport(
+  url: string,
+  options: WebSocketTransportOptions = {},
+): RelayTransport {
+  const WebSocketImpl =
+    options.webSocket ??
+    (typeof WebSocket === "undefined"
+      ? undefined
+      : (WebSocket as unknown as WebSocketConstructorLike));
+
+  if (!WebSocketImpl) {
+    throw new Error(
+      "[virentia] createWebSocketTransport: no WebSocket implementation available. " +
+        "Pass options.webSocket (e.g. the `ws` package) in environments without a global WebSocket.",
+    );
   }
 
-  const relayUrl = createRelayUrl(inspectorUrl);
+  const reconnectDelay = options.reconnectDelay ?? 1_000;
+  const maxQueue = options.maxQueue ?? 100;
   const listeners = new Set<(message: unknown) => void>();
   const queue: string[] = [];
-  let socket: WebSocket | null = null;
+  let socket: WebSocketLike | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
 
@@ -433,18 +486,18 @@ function createRelayTransport(inspectorUrl: string): RelayTransport | null {
   };
 
   const scheduleReconnect = (): void => {
-    if (disposed || reconnectTimer) {
+    if (disposed || reconnectTimer || reconnectDelay <= 0) {
       return;
     }
 
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       connect();
-    }, 1_000);
+    }, reconnectDelay);
   };
 
   const flush = (): void => {
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
+    if (!socket || socket.readyState !== webSocketOpen) {
       return;
     }
 
@@ -459,7 +512,7 @@ function createRelayTransport(inspectorUrl: string): RelayTransport | null {
     }
 
     try {
-      socket = new WebSocket(relayUrl);
+      socket = new WebSocketImpl(url);
     } catch {
       scheduleReconnect();
       return;
@@ -474,7 +527,7 @@ function createRelayTransport(inspectorUrl: string): RelayTransport | null {
       try {
         emit(JSON.parse(event.data) as unknown);
       } catch {
-        // Ignore invalid relay payloads. The relay is transport-only.
+        // Ignore invalid payloads. The transport carries JSON envelopes only.
       }
     });
     socket.addEventListener("close", () => {
@@ -513,18 +566,29 @@ function createRelayTransport(inspectorUrl: string): RelayTransport | null {
     send(message) {
       const payload = JSON.stringify(message);
 
-      if (socket?.readyState === WebSocket.OPEN) {
+      if (socket?.readyState === webSocketOpen) {
         socket.send(payload);
         return;
       }
 
       queue.push(payload);
 
-      if (queue.length > 100) {
+      if (queue.length > maxQueue) {
         queue.shift();
       }
     },
   };
+}
+
+export function createRelayTransport(inspectorUrl: string): RelayTransport | null {
+  // The relay is just a WebSocket client to the inspector's relay path. Not gated
+  // behind `window`: outside the browser (React Native, workers, Node) it is the
+  // only transport, so gating would leave those hosts unable to reach the inspector.
+  if (typeof WebSocket === "undefined") {
+    return null;
+  }
+
+  return createWebSocketTransport(createRelayUrl(inspectorUrl));
 }
 
 function readInspectorUrlFromLocation(): string {
