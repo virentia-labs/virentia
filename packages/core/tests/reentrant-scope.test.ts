@@ -68,4 +68,33 @@ describe("reentrant async effect scope", () => {
     expect(errors).toEqual([]);
     expect(received).toEqual([42]);
   });
+
+  it("does not deadlock when an effect handler awaits an event after awaiting another effect", async () => {
+    // Regression: awaiting an effect leaves a completed reentrant drain that used
+    // to re-install itself as the active drain. A unit call in the handler's
+    // continuation (here `await ev()`) then joined that parked drain via
+    // `waitForDrain` and hung — the drain only settles once the handler finishes,
+    // and the handler was blocked on that very call.
+    const s = scope();
+    const inner = effect(async () => {});
+    const ev = event<string>("e");
+    const log: string[] = [];
+
+    const fx = effect(async () => {
+      log.push("start");
+      await inner();
+      log.push("after inner");
+      await ev("x");
+      log.push("after ev");
+    });
+
+    await Promise.race([
+      allSettled(fx, { scope: s }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`deadlock, log=${log.join(",")}`)), 500),
+      ),
+    ]);
+
+    expect(log).toEqual(["start", "after inner", "after ev"]);
+  });
 });

@@ -265,8 +265,16 @@ function continueDrain(
 
             return result.then(
               () => {
+                // On asynchronous resume the synchronous caller that owned
+                // `previousDrain` is long gone. Restore whatever drain is active
+                // now (usually none) instead of re-installing a parked parent:
+                // otherwise a unit call in a later handler continuation would see
+                // that parked drain, join it via `waitForDrain`, and deadlock —
+                // the drain only settles once the handler finishes, and the
+                // handler is blocked on the very call that joined it.
+                const resumed = activeDrain;
                 activeDrain = drain;
-                return continueDrain(drain, previousDrain);
+                return continueDrain(drain, resumed);
               },
               (error) => {
                 activeDrain = previousDrain;
@@ -289,8 +297,11 @@ function continueDrain(
 
         return Promise.all(pending).then(
           () => {
+            // See the note above: restore the drain active at resume time, not
+            // the parked `previousDrain` captured when this drain started.
+            const resumed = activeDrain;
             activeDrain = drain;
-            return continueDrain(drain, previousDrain);
+            return continueDrain(drain, resumed);
           },
           (error) => {
             activeDrain = previousDrain;
