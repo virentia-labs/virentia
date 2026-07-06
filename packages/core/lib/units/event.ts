@@ -1,7 +1,8 @@
 import { createNode, run } from "../kernel";
 import type { Node } from "../kernel";
 import { describeNode, readInspectorNodeMeta, withInspectorMeta } from "../kernel/inspector";
-import { requireActiveScope } from "../scope/internal";
+import { requireActiveScope, setActiveScope } from "../scope/internal";
+import { unwrapMicroScope } from "../scope/micro";
 import { registerCleanup } from "../graph/owner";
 
 export type EventPayload<T> = undefined extends T ? [payload?: T] : [payload: T];
@@ -56,12 +57,19 @@ function createEvent<T>(devtools?: string | EventDevtoolsOptions): Event<T> {
   };
 
   const result = Object.assign(
-    (...payload: EventPayload<T>) =>
-      run({
+    (...payload: EventPayload<T>) => {
+      // Restore the caller's ambient scope once the event (and any reactions it
+      // triggers, including async ones) settles, so code after `await someEvent()`
+      // still runs in the scope it was called in. Any async-callable unit must
+      // leave the caller's scope as it found it.
+      const ambient = requireActiveScope(() => `call ${describeNode(node)}`);
+
+      return run({
         unit: node,
         payload: payload[0],
-        scope: requireActiveScope(() => `call ${describeNode(node)}`),
-      }),
+        scope: unwrapMicroScope(ambient),
+      }).finally(() => setActiveScope(ambient));
+    },
     {
       node,
 
