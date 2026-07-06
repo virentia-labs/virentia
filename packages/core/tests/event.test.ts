@@ -10,6 +10,13 @@ describe("event", () => {
     expect(callWithoutScope).toThrow("Scope is required");
   });
 
+  it("names the offending unit and how to provide a scope when called without one", () => {
+    const submitted = event<number>("submitted");
+
+    expect(() => submitted(1)).toThrow(/Scope is required to call event "submitted"/);
+    expect(() => submitted(1)).toThrow(/allSettled/);
+  });
+
   it("runs explicit reactions when called in a scope", async () => {
     const appScope = scope();
     const submitted = event<number>();

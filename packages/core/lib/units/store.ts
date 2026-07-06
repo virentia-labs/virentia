@@ -8,11 +8,15 @@ import {
 } from "../kernel/transaction";
 import type { StoreCommitResult } from "../kernel/transaction";
 import {
+  describeNode,
+  linkInspectorNodes,
   prepareInspectorSnapshotNode,
   readInspectorNodeMeta,
   withInspectorMeta,
 } from "../kernel/inspector";
-import { getActiveScope, requireActiveScope, setActiveScope } from "../scope/internal";
+import { getScopedObservers, reconcileScopedEdges } from "../kernel/scoped-edges";
+import { unwrapMicroScope } from "../scope/micro";
+import { requireActiveScope, setActiveScope } from "../scope/internal";
 import type { Scope } from "../scope";
 import { collectNodes, trackNode } from "../graph/deps";
 import { registerCleanup } from "../graph/owner";
@@ -238,7 +242,14 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
 
     map<Next>(fn: (value: T) => Next, skipToken?: Next): Store<Next> {
       return createComputed(
-        () => fn(readState(requireActiveScope(), id, initial)),
+        () =>
+          fn(
+            readState(
+              requireActiveScope(() => `read ${describeNode(node)}`),
+              id,
+              initial,
+            ),
+          ),
         {
           skipToken,
           hasSkipToken: arguments.length > 1,
@@ -251,7 +262,11 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
     filter(fn: (value: T) => boolean): Store<T> {
       return createComputed(
         () => {
-          const value = readState(requireActiveScope(), id, initial);
+          const value = readState(
+            requireActiveScope(() => `read ${describeNode(node)}`),
+            id,
+            initial,
+          );
 
           return fn(value) ? value : (defaultSkipToken as T);
         },
@@ -268,7 +283,14 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
 
     filterMap<Next>(fn: (value: T) => Next, skipToken: Next): Store<Next> {
       return createComputed(
-        () => fn(readState(requireActiveScope(), id, initial)),
+        () =>
+          fn(
+            readState(
+              requireActiveScope(() => `read ${describeNode(node)}`),
+              id,
+              initial,
+            ),
+          ),
         {
           skipToken,
           hasSkipToken: true,
@@ -284,7 +306,13 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
     createStoreProxyHandlers(options, () => readStateForProxy(), writeProperty),
   );
 
-  storeReaders.set(proxy as object, () => readState(requireActiveScope(), id, initial));
+  storeReaders.set(proxy as object, () =>
+    readState(
+      requireActiveScope(() => `read ${describeNode(node)}`),
+      id,
+      initial,
+    ),
+  );
   if (options.writable) {
     storeScopeWriters.set(proxy as object, (scope, value) => {
       scope.values.set(id, value);
@@ -296,11 +324,15 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
   function readStateForProxy(): T {
     trackNode(node);
 
-    return readState(requireActiveScope(), id, initial);
+    return readState(
+      requireActiveScope(() => `read ${describeNode(node)}`),
+      id,
+      initial,
+    );
   }
 
   function writeProperty(property: PropertyKey, value: unknown): boolean {
-    const scope = requireActiveScope();
+    const scope = requireActiveScope(() => `update ${describeNode(node)}`);
     const state = readState(scope, id, initial);
 
     // In "ref" mode the proxy `set` trap guarantees `property === "value"`, so the
@@ -385,7 +417,12 @@ function createComputed<T>(
 ): Store<T> {
   const id = Symbol("virentia.computed");
   const subscribers = new Set<StoreSubscriber<T>>();
-  const dependencies = new Set<Node>();
+  // Structural deps known at creation (e.g. a `.map` source) are always deps in
+  // every scope, so they stay global. Deps discovered while evaluating are
+  // data-dependent and tracked per-scope, so a computed that reads different
+  // stores in different scopes is invalidated precisely rather than from a
+  // global union of every scope's branches.
+  const staticDependencies = new Set<Node>();
   const invalidator = createNode({
     meta: withInspectorMeta(undefined, {
       type: "computed.invalidate",
@@ -401,7 +438,7 @@ function createComputed<T>(
 
       state.dirty = true;
 
-      if (!hasObservers()) {
+      if (!hasObservers(ctx.scope)) {
         ctx.stop();
       }
 
@@ -441,7 +478,7 @@ function createComputed<T>(
   prepareInspectorSnapshotNode(node, inspectDependencies);
 
   for (const dependency of initialDependencies) {
-    attachDependency(dependency);
+    attachStaticDependency(dependency);
   }
 
   const api: StoreApi<T> = {
@@ -512,14 +549,25 @@ function createComputed<T>(
 
   return proxy as Store<T>;
 
-  function hasObservers(): boolean {
-    return subscribers.size > 0 || Boolean(node.next?.length);
+  function hasObservers(scope: Scope | null): boolean {
+    if (subscribers.size > 0 || Boolean(node.next?.length)) {
+      return true;
+    }
+
+    // Reactions and other computeds may observe this computed per-scope (via
+    // scoped edges) rather than through the static `node.next`, so an invalidation
+    // must not stop just because there are no static observers.
+    return scope ? (getScopedObservers(scope, node)?.size ?? 0) > 0 : false;
   }
 
   function readComputed(): T {
     trackNode(node);
 
-    const scope = requireActiveScope();
+    // Track (above) sees the micro-scope so the reading reaction depends on this
+    // computed. The computed's own state and dependency edges, however, belong to
+    // the real scope — a micro-scope is a throwaway per-run overlay, so
+    // registering edges there would lose them.
+    const scope = unwrapMicroScope(requireActiveScope(() => `read ${describeNode(node)}`));
 
     return evaluate(scope, readComputedState<T>(scope, id));
   }
@@ -538,9 +586,7 @@ function createComputed<T>(
     try {
       const collected = collectNodes(fn);
 
-      for (const dependency of collected.nodes) {
-        attachDependency(dependency);
-      }
+      reconcileDynamicDependencies(scope, collected.nodes);
 
       if (options.hasSkipToken && Object.is(collected.result, options.skipToken)) {
         if (!state.initialized) {
@@ -564,10 +610,25 @@ function createComputed<T>(
     }
   }
 
-  function inspectDependencies(): void {
-    const previousScope = getActiveScope();
+  function reconcileDynamicDependencies(scope: Scope, collected: ReadonlySet<Node>): void {
+    const dynamic = new Set<Node>();
 
-    setActiveScope({
+    for (const dependency of collected) {
+      if (dependency !== node && !staticDependencies.has(dependency)) {
+        dynamic.add(dependency);
+      }
+    }
+
+    reconcileScopedEdges(scope, invalidator, dynamic);
+  }
+
+  function inspectDependencies(): void {
+    // Propagation edges are per-scope now, so there is nothing global to attach.
+    // For the inspector graph we still want to show the computed's dependencies,
+    // so we evaluate against a throwaway scope and register inspector-only links
+    // (dependency → computed) that the snapshot renders without affecting
+    // runtime propagation.
+    const previousScope = setActiveScope({
       values: new Map(),
       handlers: new Map(),
     });
@@ -576,7 +637,9 @@ function createComputed<T>(
       const collected = collectNodes(fn);
 
       for (const dependency of collected.nodes) {
-        attachDependency(dependency);
+        if (dependency !== node) {
+          linkInspectorNodes(dependency, node, { kind: "reactive" });
+        }
       }
     } catch {
       // Inspector snapshots should not make user code fail because a lazy computed cannot be inspected.
@@ -585,13 +648,13 @@ function createComputed<T>(
     }
   }
 
-  function attachDependency(dependency: Node): void {
-    if (dependency === node || dependencies.has(dependency)) {
+  function attachStaticDependency(dependency: Node): void {
+    if (dependency === node || staticDependencies.has(dependency)) {
       return;
     }
 
     append(dependency, invalidator);
-    dependencies.add(dependency);
+    staticDependencies.add(dependency);
   }
 }
 

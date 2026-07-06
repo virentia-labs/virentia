@@ -1,6 +1,6 @@
 import { createNode, run } from "../kernel";
 import type { Node } from "../kernel";
-import { readInspectorNodeMeta, withInspectorMeta } from "../kernel/inspector";
+import { describeNode, readInspectorNodeMeta, withInspectorMeta } from "../kernel/inspector";
 import { requireActiveScope } from "../scope/internal";
 import { registerCleanup } from "../graph/owner";
 
@@ -24,9 +24,7 @@ export interface EventDevtoolsOptions {
 
 export function event<T = void>(name?: string): EventCallable<T>;
 export function event<T = void>(devtools?: EventDevtoolsOptions): EventCallable<T>;
-export function event<T = void>(
-  devtools?: string | EventDevtoolsOptions,
-): EventCallable<T> {
+export function event<T = void>(devtools?: string | EventDevtoolsOptions): EventCallable<T> {
   return createEvent<T>(devtools) as EventCallable<T>;
 }
 
@@ -62,7 +60,7 @@ function createEvent<T>(devtools?: string | EventDevtoolsOptions): Event<T> {
       run({
         unit: node,
         payload: payload[0],
-        scope: requireActiveScope(),
+        scope: requireActiveScope(() => `call ${describeNode(node)}`),
       }),
     {
       node,

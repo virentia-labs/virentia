@@ -46,12 +46,34 @@ export function runScopeTask<T>(scope: Scope, fn: () => T): T {
   return result;
 }
 
-export function requireActiveScope(): Scope {
+export function requireActiveScope(describe?: () => string): Scope {
   if (!activeScope) {
-    throw new Error("Scope is required");
+    throw scopeRequiredError(describe?.());
   }
 
   return activeScope;
+}
+
+/**
+ * Builds the "Scope is required" error.
+ *
+ * `subject` describes the operation that needed a scope (e.g. `call event
+ * "submit"`), so the message names the offending unit instead of failing
+ * anonymously, and points at the concrete ways to provide a scope. `describe`
+ * thunks are only evaluated on the failure path, so naming a unit costs nothing
+ * on the happy path.
+ */
+export function scopeRequiredError(subject?: string): Error {
+  const target = subject ? ` to ${subject}` : "";
+
+  return new Error(
+    `Scope is required${target}, but no scope is active.\n` +
+      "No scope was passed explicitly and none is active on the current call stack. " +
+      "Provide one of the following:\n" +
+      "  • Pass a scope explicitly: allSettled(unit, { scope, payload }).\n" +
+      "  • Run inside a scoped computation: scoped(scope, () => …), or trigger the unit from within an effect handler.\n" +
+      "  • In a component, read and trigger units through the scope Provider (e.g. useUnit) rather than calling them directly.",
+  );
 }
 
 export function getScopeHandler<Params, Done>(
