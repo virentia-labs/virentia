@@ -1,5 +1,13 @@
 # @virentia/react
 
+## 0.2.9
+
+### Patch Changes
+
+- fix: scoped & remove allSettled
+- Updated dependencies
+  - @virentia/core@0.6.1
+
 ## 0.2.8
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { allSettled, event, reaction, scope, scoped, store } from "@virentia/core";
+import { event, reaction, scope, scoped, store } from "@virentia/core";
 import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, describe, expect, it } from "vitest";
 import { defineComponent, h, nextTick, ref, type Component } from "vue";
@@ -47,7 +47,7 @@ describe("@virentia/vue", () => {
 
     expect(wrapper.text()).toBe("2");
 
-    await allSettled(incremented, { scope: otherScope, payload: 10 });
+    await scoped(otherScope, () => incremented(10));
     await flushPromises();
 
     expect(wrapper.text()).toBe("2");

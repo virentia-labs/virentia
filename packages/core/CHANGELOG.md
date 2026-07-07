@@ -1,5 +1,11 @@
 # @virentia/core
 
+## 0.6.1
+
+### Patch Changes
+
+- fix: scoped & remove allSettled
+
 ## 0.6.0
 
 ### Minor Changes

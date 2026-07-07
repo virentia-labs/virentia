@@ -16,7 +16,7 @@ describe("event", () => {
     const submitted = event<number>("submitted");
 
     expect(() => submitted(1)).toThrow(/Scope is required to call event "submitted"/);
-    expect(() => submitted(1)).toThrow(/allSettled/);
+    expect(() => submitted(1)).toThrow(/scoped/);
   });
 
   it("reports the unit path that led to a scope-less call inside a handler", async () => {

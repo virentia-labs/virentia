@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  allSettled,
   effect,
   event,
   lazyModel,
@@ -31,10 +30,7 @@ describe("lazyModel", () => {
       expect(model.pending.value).toBe(false);
     });
 
-    const loading = allSettled(model.incremented, {
-      scope: appScope,
-      payload: 2,
-    });
+    const loading = scoped(appScope, () => model.incremented(2));
 
     await waitForMicrotask();
 
@@ -84,10 +80,7 @@ describe("lazyModel", () => {
 
     expect(loads).toBe(0);
 
-    await allSettled(incremented, {
-      scope: appScope,
-      payload: 2,
-    });
+    await scoped(appScope, () => incremented(2));
 
     expect(loads).toBe(1);
     scoped(appScope, () => {
@@ -96,10 +89,7 @@ describe("lazyModel", () => {
       expect(Reflect.ownKeys(count)).not.toContain("prototype");
     });
 
-    await allSettled(model.incremented, {
-      scope: appScope,
-      payload: 3,
-    });
+    await scoped(appScope, () => model.incremented(3));
 
     expect(loads).toBe(1);
     scoped(appScope, () => {
@@ -131,10 +121,7 @@ describe("lazyModel", () => {
       },
     });
 
-    await allSettled(model.incremented, {
-      scope: appScope,
-      payload: 10,
-    });
+    await scoped(appScope, () => model.incremented(10));
 
     expect(received).toEqual([10]);
 
@@ -157,10 +144,7 @@ describe("lazyModel", () => {
       },
     });
 
-    await allSettled(model.loadFx, {
-      scope: appScope,
-      payload: 7,
-    });
+    await scoped(appScope, () => model.loadFx(7));
 
     expect(received).toEqual(["user:7"]);
   });

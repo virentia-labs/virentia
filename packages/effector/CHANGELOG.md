@@ -1,5 +1,13 @@
 # @virentia/effector
 
+## 0.3.7
+
+### Patch Changes
+
+- fix: scoped & remove allSettled
+- Updated dependencies
+  - @virentia/core@0.6.1
+
 ## 0.3.6
 
 ### Patch Changes

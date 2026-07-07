@@ -24,7 +24,7 @@ pnpm add @virentia/core
 ## Counter
 
 ```ts
-import { allSettled, event, reaction, scope, scoped, store } from "@virentia/core";
+import { event, reaction, scope, scoped, store } from "@virentia/core";
 
 export function createCounterModel() {
   const incremented = event<number>();
@@ -43,10 +43,9 @@ export function createCounterModel() {
 const model = createCounterModel();
 const appScope = scope();
 
-await allSettled(model.incremented, {
-  scope: appScope,
-  payload: 1,
-});
+// `scoped` runs the callback in the scope and its promise waits for everything
+// the callback triggers (reactions, effects) to settle.
+await scoped(appScope, () => model.incremented(1));
 
 scoped(appScope, () => {
   console.log(model.count.value);
@@ -90,7 +89,7 @@ draft.dispose();
 
 ## Main API
 
-`scope`, `scoped`, `store`, `computed`, `event`, `effect`, `attach`, `reaction`, `allSettled`, `owner`, `onCleanup`, `getOwner`, `withOwner`, `lazyModel`.
+`scope`, `scoped`, `store`, `computed`, `event`, `effect`, `attach`, `reaction`, `owner`, `onCleanup`, `getOwner`, `withOwner`, `lazyModel`.
 
 Low-level kernel building blocks for authoring custom units/stores live in `@virentia/core/internal`: `node`, `run`, `context`, `withContexts`, plus tracking, scope, and transaction primitives.
 

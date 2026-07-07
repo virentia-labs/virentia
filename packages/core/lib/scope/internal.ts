@@ -77,8 +77,8 @@ export function scopeRequiredError(subject?: string): Error {
     `Scope is required${target}, but no scope is active.\n` +
       "No scope was passed explicitly and none is active on the current call stack. " +
       "Provide one of the following:\n" +
-      "  • Pass a scope explicitly: allSettled(unit, { scope, payload }).\n" +
-      "  • Run inside a scoped computation: scoped(scope, () => …), or trigger the unit from within an effect handler.\n" +
+      "  • Run inside a scoped computation: scoped(scope, () => …) — its promise waits for the work it triggers.\n" +
+      "  • Trigger the unit from within an effect handler.\n" +
       "  • In a component, read and trigger units through the scope Provider (e.g. useUnit) rather than calling them directly." +
       path,
   );

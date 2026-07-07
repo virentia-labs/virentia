@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allSettled, effect, event, owner, reaction, reactive, scope, store, scoped } from "../lib";
+import { effect, event, owner, reaction, reactive, scope, store, scoped } from "../lib";
 
 describe("reactive integration", () => {
   it("updates a counter from events and publishes derived values", async () => {
@@ -23,9 +23,9 @@ describe("reactive integration", () => {
       },
     });
 
-    await allSettled(incremented, { scope: appScope, payload: 1 });
-    await allSettled(incremented, { scope: appScope, payload: 1 });
-    await allSettled(incremented, { scope: appScope, payload: 3 });
+    await scoped(appScope, () => incremented(1));
+    await scoped(appScope, () => incremented(1));
+    await scoped(appScope, () => incremented(3));
 
     scoped(appScope, () => {
       expect(count.value).toBe(5);
@@ -53,9 +53,9 @@ describe("reactive integration", () => {
       },
     });
 
-    await allSettled(added, { scope: firstScope, payload: 2 });
-    await allSettled(added, { scope: secondScope, payload: 10 });
-    await allSettled(added, { scope: firstScope, payload: 3 });
+    await scoped(firstScope, () => added(2));
+    await scoped(secondScope, () => added(10));
+    await scoped(firstScope, () => added(3));
 
     scoped(firstScope, () => {
       expect(count.value).toBe(5);
@@ -108,8 +108,8 @@ describe("reactive integration", () => {
       },
     });
 
-    await allSettled(queryChanged, { scope: appScope, payload: "virentia" });
-    await allSettled(submitted, { scope: appScope });
+    await scoped(appScope, () => queryChanged("virentia"));
+    await scoped(appScope, () => submitted());
 
     scoped(appScope, () => {
       expect(query.value).toBe("virentia");
@@ -145,11 +145,8 @@ describe("reactive integration", () => {
       fullName.value = `${firstName.value} ${lastName.value}`;
     });
 
-    await allSettled(firstNameChanged, { scope: appScope, payload: "Ada" });
-    await allSettled(lastNameChanged, {
-      scope: appScope,
-      payload: "Lovelace",
-    });
+    await scoped(appScope, () => firstNameChanged("Ada"));
+    await scoped(appScope, () => lastNameChanged("Lovelace"));
 
     scoped(appScope, () => {
       expect(fullName.value).toBe("Ada Lovelace");
@@ -188,17 +185,11 @@ describe("reactive integration", () => {
       visibleValues.push(source.value === "local" ? local.value : remote.value);
     });
 
-    await allSettled(remoteChanged, {
-      scope: appScope,
-      payload: "server-v2",
-    });
-    await allSettled(localChanged, { scope: appScope, payload: "draft-v2" });
-    await allSettled(sourceChanged, { scope: appScope, payload: "remote" });
-    await allSettled(localChanged, { scope: appScope, payload: "draft-v3" });
-    await allSettled(remoteChanged, {
-      scope: appScope,
-      payload: "server-v3",
-    });
+    await scoped(appScope, () => remoteChanged("server-v2"));
+    await scoped(appScope, () => localChanged("draft-v2"));
+    await scoped(appScope, () => sourceChanged("remote"));
+    await scoped(appScope, () => localChanged("draft-v3"));
+    await scoped(appScope, () => remoteChanged("server-v3"));
 
     expect(visibleValues).toEqual(["draft", "draft-v2", "server-v2", "server-v3"]);
   });
@@ -234,9 +225,9 @@ describe("reactive integration", () => {
       },
     });
 
-    await allSettled(model.incremented, { scope: appScope, payload: 2 });
+    await scoped(appScope, () => model.incremented(2));
     model.dispose();
-    await allSettled(model.incremented, { scope: appScope, payload: 3 });
+    await scoped(appScope, () => model.incremented(3));
 
     scoped(appScope, () => {
       expect(model.count.value).toBe(2);

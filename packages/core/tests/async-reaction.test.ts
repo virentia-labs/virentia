@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { allSettled, computed, effect, event, reaction, scope, scoped, store } from "../lib";
+import { computed, effect, event, reaction, scope, scoped, store } from "../lib";
 import { run } from "../lib/internal";
 
 describe("async reactions", () => {
-  it("awaits an async explicit reaction body through allSettled", async () => {
+  it("awaits an async explicit reaction body through scoped", async () => {
     const appScope = scope();
     const trigger = event<number>();
     const log: string[] = [];
@@ -17,16 +17,16 @@ describe("async reactions", () => {
         on: trigger,
         run: async (n, { scope, signal }) => {
           log.push(`start:${n}`);
-          await allSettled(stepFx, { scope, payload: n });
+          await scoped(scope, () => stepFx(n));
           signal.throwIfAborted();
           log.push(`end:${n}`);
         },
       });
     });
 
-    await allSettled(trigger, { scope: appScope, payload: 1 });
+    await scoped(appScope, () => trigger(1));
 
-    // allSettled waited for the whole imperative body, including the awaited effect.
+    // scoped waited for the whole imperative body, including the awaited effect.
     expect(log).toEqual(["start:1", "fx:1", "end:1"]);
   });
 
@@ -40,7 +40,7 @@ describe("async reactions", () => {
     });
 
     // Not awaited by the body — completes on its own microtask/gate. The drain
-    // must still wait for it before `allSettled` resolves.
+    // must still wait for it before `scoped` resolves.
     const forgetFx = effect(async () => {
       await gate;
       order.push("forget");
@@ -55,25 +55,25 @@ describe("async reactions", () => {
         run: async (_n, { scope }) => {
           // Fire-and-forget: launched under the body's ambient scope, not awaited here.
           void forgetFx();
-          await allSettled(awaitedFx, { scope });
+          await scoped(scope, () => awaitedFx());
         },
       });
     });
 
     let settledDone = false;
-    const settled = allSettled(trigger, { scope: appScope }).then(() => {
+    const settled = scoped(appScope, () => trigger(10)).then(() => {
       settledDone = true;
     });
 
     // Flush all microtasks: the awaited effect resolves, but the fire-and-forget
-    // one is still gated. allSettled must NOT have resolved yet — the drain is
+    // one is still gated. scoped must NOT have resolved yet — the drain is
     // obligated to wait for the dangling effect.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(order).toContain("awaited");
     expect(order).not.toContain("forget");
     expect(settledDone).toBe(false);
 
-    // Releasing the gate lets the effect finish, and only then does allSettled resolve.
+    // Releasing the gate lets the effect finish, and only then does scoped resolve.
     released();
     await settled;
     expect(order).toContain("forget");
@@ -101,8 +101,8 @@ describe("async reactions", () => {
       });
     });
 
-    const first = allSettled(trigger, { scope: appScope, payload: 1 });
-    const second = allSettled(trigger, { scope: appScope, payload: 2 });
+    const first = scoped(appScope, () => trigger(1));
+    const second = scoped(appScope, () => trigger(2));
 
     // The second run aborts the first synchronously.
     expect(aborted).toEqual([1]);
