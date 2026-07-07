@@ -1,8 +1,17 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import { effect, event, reaction, scope, scoped, store } from "../lib";
-import type { EffectParams } from "../lib";
+import type { Effect, EffectParams } from "../lib";
 
 describe("effect", () => {
+  it("accepts a generic params type at the call site (no deferred-conditional TS2345)", () => {
+    function callWithGenericParams<A, B>(fx: Effect<A | B, void>, payload: A | B) {
+      return fx(payload);
+    }
+
+    expectTypeOf(callWithGenericParams).toBeFunction();
+    expectTypeOf(effect(async () => undefined)).toBeCallableWith();
+    expectTypeOf(effect(async (n: number) => n)).toBeCallableWith(5);
+  });
   it("returns handler result and emits success units", async () => {
     const appScope = scope();
     const doubleFx = effect(async (value: number) => value * 2);
