@@ -31,6 +31,11 @@
       "types": "./dist/devtools.d.mts",
       "import": "./dist/devtools.mjs",
       "require": "./dist/devtools.cjs"
+    },
+    "./internal": {
+      "types": "./dist/internal.d.mts",
+      "import": "./dist/internal.mjs",
+      "require": "./dist/internal.cjs"
     }
   },
   "publishConfig": {

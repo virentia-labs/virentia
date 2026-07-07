@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { computed, createNode, effect, event, reaction, run, scope, scoped, store } from "../lib";
+import { computed, effect, event, reaction, scope, scoped, store } from "../lib";
+import { node, run } from "../lib/internal";
 import {
   createRelayTransport,
   createWebSocketTransport,
@@ -304,13 +305,13 @@ describe("devtools", () => {
     });
 
     const calls: string[] = [];
-    const first = createNode({
+    const first = node({
       run(ctx) {
         calls.push("first");
         return ctx.value;
       },
     });
-    const second = createNode({
+    const second = node({
       run(ctx) {
         calls.push("second");
         return ctx.value;

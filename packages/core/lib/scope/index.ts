@@ -14,9 +14,7 @@ export interface ScopeOptions {
   handlers?:
     | ReadonlyMap<Effect<any, any, any>, EffectHandler<any, any>>
     | readonly (readonly [Effect<any, any, any>, EffectHandler<any, any>])[];
-  deps?:
-    | ReadonlyMap<Dependency<any>, unknown>
-    | readonly (readonly [Dependency<any>, unknown])[];
+  deps?: ReadonlyMap<Dependency<any>, unknown> | readonly (readonly [Dependency<any>, unknown])[];
 }
 
 export function scope(options: ScopeOptions = {}): Scope {

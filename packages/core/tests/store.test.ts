@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { reaction, reactive, run, scope, store, scoped } from "../lib";
+import { reaction, reactive, scope, store, scoped } from "../lib";
+import { run } from "../lib/internal";
 
 describe("store", () => {
   it("keeps proxy state isolated per scope", () => {

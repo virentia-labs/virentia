@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { allSettled, computed, effect, event, reaction, run, scope, scoped, store } from "../lib";
+import { allSettled, computed, effect, event, reaction, scope, scoped, store } from "../lib";
+import { run } from "../lib/internal";
 
 describe("async reactions", () => {
   it("awaits an async explicit reaction body through allSettled", async () => {

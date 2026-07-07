@@ -90,7 +90,9 @@ draft.dispose();
 
 ## Main API
 
-`scope`, `scoped`, `store`, `computed`, `event`, `effect`, `attach`, `reaction`, `allSettled`, `owner`, `onCleanup`, `getOwner`, `withOwner`, `lazyModel`, `createNode`, `run`, `createContext`, `withContexts`.
+`scope`, `scoped`, `store`, `computed`, `event`, `effect`, `attach`, `reaction`, `allSettled`, `owner`, `onCleanup`, `getOwner`, `withOwner`, `lazyModel`.
+
+Low-level kernel building blocks for authoring custom units/stores live in `@virentia/core/internal`: `node`, `run`, `context`, `withContexts`, plus tracking, scope, and transaction primitives.
 
 ## License
 

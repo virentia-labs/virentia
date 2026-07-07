@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { effect, reaction, run, scope, scoped, store } from "../lib";
+import { effect, reaction, scope, scoped, store } from "../lib";
+import { run } from "../lib/internal";
 import { getActiveScope } from "../lib/scope/internal";
 
 describe("per-scope reactions", () => {

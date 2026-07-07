@@ -1,5 +1,4 @@
 import {
-  run,
   scoped,
   type Effect,
   type EventCallable,
@@ -7,6 +6,7 @@ import {
   type Scope,
   type StoreWritable,
 } from "@virentia/core";
+import { run } from "@virentia/core/internal";
 import { useEffect, useLayoutEffect, type ComponentType } from "react";
 import type { AnyStore, UnitLike } from "./types";
 

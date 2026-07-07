@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createNode, event, reaction, run, scope, scoped } from "../lib";
+import { event, reaction, scope, scoped } from "../lib";
+import { node, run } from "../lib/internal";
 import { nameUnit } from "../lib/devtools";
 
 describe("event", () => {
@@ -20,7 +21,7 @@ describe("event", () => {
 
   it("reports the unit path that led to a scope-less call inside a handler", async () => {
     const inner = event<number>("inner");
-    const caller = createNode({
+    const caller = node({
       run(ctx) {
         // Runs with no active scope; calling a unit from here must fail and the
         // error should name the chain of units that led to the offending call.

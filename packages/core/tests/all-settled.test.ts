@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { allSettled, createNode, effect, event, reaction, scope, scoped, store } from "../lib";
+import { allSettled, effect, event, reaction, scope, scoped, store } from "../lib";
+import { node } from "../lib/internal";
 
 describe("allSettled", () => {
   it("waits for an async chain started by a unit", async () => {
@@ -32,7 +33,7 @@ describe("allSettled", () => {
   it("runs raw nodes in a provided scope", async () => {
     const appScope = scope();
     const value = store(0);
-    const writeValue = createNode((ctx) => {
+    const writeValue = node((ctx) => {
       value.value = ctx.value as number;
     });
 
