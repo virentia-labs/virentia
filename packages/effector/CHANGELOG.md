@@ -1,5 +1,13 @@
 # @virentia/effector
 
+## 0.3.9
+
+### Patch Changes
+
+- fix: effect types
+- Updated dependencies
+  - @virentia/core@0.6.3
+
 ## 0.3.8
 
 ### Patch Changes

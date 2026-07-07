@@ -82,7 +82,7 @@ export async function callAssociation<T>(
   }
 
   if (isVirentiaEffect(unit)) {
-    return virentia.scoped(association.virentia, () => unit(payload as never));
+    return virentia.scoped(association.virentia, () => unit(payload));
   }
 
   await runVirentia({

@@ -31,9 +31,7 @@ export interface EffectCallOptions {
   signal?: AbortSignal;
 }
 
-export type EffectCallArgs<Params> = [Params] extends [void]
-  ? [params?: Params, options?: EffectCallOptions]
-  : [params: Params, options?: EffectCallOptions];
+export type EffectCallArgs<Params> = [params: Params, options?: EffectCallOptions];
 
 export interface EffectDone<Params, Done> {
   params: Params;
