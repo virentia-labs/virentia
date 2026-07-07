@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allSettled, effect, event, reaction, scope } from "../lib";
+import { effect, event, reaction, scope, scoped } from "../lib";
 
 describe("reentrant async effect scope", () => {
   it("keeps the caller's ambient scope after a reentrant async effect resolves synchronously downstream", async () => {
@@ -30,7 +30,7 @@ describe("reentrant async effect scope", () => {
       },
     });
 
-    await allSettled(trigger, { scope: appScope });
+    await scoped(appScope, () => trigger());
 
     expect(started).toEqual(["first", "second"]);
     expect(errors).toEqual([]);
@@ -63,7 +63,7 @@ describe("reentrant async effect scope", () => {
       },
     });
 
-    await allSettled(trigger, { scope: appScope });
+    await scoped(appScope, () => trigger());
 
     expect(errors).toEqual([]);
     expect(received).toEqual([42]);
@@ -89,7 +89,7 @@ describe("reentrant async effect scope", () => {
     });
 
     await Promise.race([
-      allSettled(fx, { scope: s }),
+      scoped(s, () => fx()),
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error(`deadlock, log=${log.join(",")}`)), 500),
       ),

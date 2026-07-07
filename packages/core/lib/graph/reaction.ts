@@ -59,8 +59,8 @@ export interface Reaction {
 
 /**
  * Passed to an async reaction body. `scope` is the scope the reaction fired in —
- * use it for scope-bound work (`allSettled(fx, { scope })`), since the ambient
- * scope is not preserved across `await`. `signal` aborts when the same reaction
+ * use it for scope-bound work (`scoped(scope, () => fx())`), since the ambient
+ * scope is not preserved across a raw `await`. `signal` aborts when the same reaction
  * fires again in this scope (or the reaction is stopped), for cancel-previous
  * (switch) semantics.
  */
@@ -231,7 +231,7 @@ export function reaction(
 
   // Invokes an async-capable body with cancel-previous semantics. A sync body
   // returns `ctxValue` unchanged; an async body returns a promise the drain (and
-  // therefore `allSettled`) awaits.
+  // therefore a `scoped(...)` that triggered the reaction) awaits.
   const runBody = (
     scope: Scope | null,
     ctxValue: unknown,

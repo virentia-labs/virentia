@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allSettled, computed, event, reaction, scope, scoped } from "@virentia/core";
+import { computed, event, reaction, scope, scoped } from "@virentia/core";
 import { mutableStore, seedMutableStore, unwrap } from "../lib";
 
 describe("mutableStore", () => {
@@ -110,8 +110,8 @@ describe("mutableStore", () => {
       },
     });
 
-    await allSettled(bumped, { scope: s, payload: undefined });
-    await allSettled(bumped, { scope: s, payload: undefined });
+    await scoped(s, () => bumped());
+    await scoped(s, () => bumped());
 
     expect(scoped(s, () => doubled.value)).toBe(4);
     expect(seen).toEqual([1, 2]); // one notification per transaction (batched)
@@ -171,11 +171,11 @@ describe("mutableStore", () => {
     countRuns = 0;
     couponRuns = 0;
 
-    await allSettled(changeItems, { scope: s, payload: undefined });
+    await scoped(s, () => changeItems());
     expect(countRuns).toBe(1);
     expect(couponRuns).toBe(0); // `coupon` never read `items` → not re-run
 
-    await allSettled(changeCoupon, { scope: s, payload: undefined });
+    await scoped(s, () => changeCoupon());
     expect(couponRuns).toBe(1);
     expect(countRuns).toBe(1); // `count` never read `coupon` → still 1
   });
@@ -200,7 +200,7 @@ describe("mutableStore", () => {
     aRuns = 0;
     bRuns = 0;
 
-    await allSettled(editA, { scope: s, payload: undefined });
+    await scoped(s, () => editA());
     expect(aRuns).toBe(1);
     expect(bRuns).toBe(0); // editing `a.x` leaves `b.y` readers alone
   });
@@ -218,7 +218,7 @@ describe("mutableStore", () => {
     scoped(s, () => void coupon.value);
     runs = 0;
 
-    await allSettled(changeItems, { scope: s, payload: undefined });
+    await scoped(s, () => changeItems());
     expect(runs).toBe(0); // the map read only `coupon`
   });
 
@@ -238,7 +238,7 @@ describe("mutableStore", () => {
     scoped(s, () => void whole.value);
     runs = 0;
 
-    await allSettled(bump, { scope: s, payload: undefined });
+    await scoped(s, () => bump());
     expect(runs).toBe(1); // unwrap reads the whole value, so any change re-runs it
   });
 
@@ -258,7 +258,7 @@ describe("mutableStore", () => {
       },
     });
 
-    await allSettled(go, { scope: s, payload: undefined });
+    await scoped(s, () => go());
 
     // One notification with the combined result — nothing was committed early.
     expect(seen).toEqual([{ a: 2, b: 1 }]);

@@ -23,6 +23,29 @@ let nextImplicitNodeId = 0;
 let nextScopeId = 0;
 let activeDrain: DrainContext | null = null;
 let runningNodeDepth = 0;
+// When a scope task (`scoped`) is collecting the async work it spawns, each
+// top-level async run registers its settle promise here so the task can await
+// everything it triggered before tearing its scope down.
+let spawnSink: ((settled: Promise<void>) => void) | null = null;
+
+/**
+ * Starts collecting the settle promises of top-level async runs spawned while the
+ * returned `stop` callback has not been called yet (i.e. during the synchronous
+ * body of a scope task). `stop()` restores the previous collector and returns the
+ * gathered promises. Used by `scoped` to wait for the reactions/effects a body
+ * triggered before restoring the ambient scope, so nothing detached outlives it.
+ */
+export function beginSpawnCollection(): () => Promise<void>[] {
+  const collected: Promise<void>[] = [];
+  const previous = spawnSink;
+
+  spawnSink = (settled) => collected.push(settled);
+
+  return () => {
+    spawnSink = previous;
+    return collected;
+  };
+}
 
 interface FlushWaiter {
   resolve(): void;
@@ -215,6 +238,10 @@ export async function run(options: RunOptions): Promise<void> {
   setActiveScope(previousScope);
 
   if (isPromiseLike(result)) {
+    // Register with an active scope-task collector so `scoped` can await this
+    // spawned work (and everything it transitively drains) before tearing down.
+    if (spawnSink) spawnSink(result as Promise<void>);
+
     try {
       await result;
     } finally {
@@ -247,7 +274,7 @@ function continueDrain(
     // reach empty before the drain settles. `pending` is checked on every pass —
     // including when the queue is already empty on re-entry after an async node
     // resolves — otherwise a dangling reentrant promise would be silently
-    // dropped and `allSettled` would resolve before it completes.
+    // dropped and a `scoped(...)` awaiting the drain would resolve early.
     while (drain.queueHead < drain.queue.length || drain.pending.length > 0) {
       if (drain.queueHead < drain.queue.length) {
         enterTransaction();

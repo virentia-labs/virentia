@@ -1,4 +1,5 @@
 import * as virentia from "@virentia/core";
+import { run as runVirentia } from "@virentia/core/internal";
 import {
   allSettled as effectorAllSettled,
   clearNode as clearEffectorNode,
@@ -84,7 +85,8 @@ export async function callAssociation<T>(
     return virentia.scoped(association.virentia, () => unit(payload as never));
   }
 
-  await virentia.allSettled(unit as VirentiaTarget<T>, {
+  await runVirentia({
+    unit: (unit as VirentiaTarget<T>).node,
     payload,
     scope: association.virentia,
   });
@@ -120,7 +122,8 @@ export function emitVirentia<T>(
 ): void {
   const release = options.suppressReaction ? suppressVirentia(association, unit as object) : null;
 
-  const settled = virentia.allSettled(unit, {
+  const settled = runVirentia({
+    unit: unit.node,
     payload,
     scope: association.virentia,
   });

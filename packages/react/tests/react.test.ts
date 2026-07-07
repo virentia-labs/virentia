@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { allSettled, event, reaction, scope, scoped, store } from "@virentia/core";
+import { event, reaction, scope, scoped, store } from "@virentia/core";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { act, createElement, StrictMode, type ReactNode } from "react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -43,7 +43,7 @@ describe("@virentia/react", () => {
     expect(button().textContent).toBe("2");
 
     await act(async () => {
-      await allSettled(incremented, { scope: otherScope, payload: 10 });
+      await scoped(otherScope, () => incremented(10));
     });
 
     expect(button().textContent).toBe("2");

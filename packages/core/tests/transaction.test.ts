@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allSettled, event, reaction, reactive, scope, scoped, store } from "../lib";
+import { event, reaction, reactive, scope, scoped, store } from "../lib";
 
 describe("transactions", () => {
   it("commits several store writes once at the end of a transaction", async () => {
@@ -22,7 +22,7 @@ describe("transactions", () => {
       },
     });
 
-    await allSettled(incremented, { scope: appScope });
+    await scoped(appScope, () => incremented());
 
     scoped(appScope, () => {
       expect(count.value).toBe(2);
@@ -64,7 +64,7 @@ describe("transactions", () => {
       },
     });
 
-    await allSettled(featureTogglePressed, { scope: appScope });
+    await scoped(appScope, () => featureTogglePressed());
 
     scoped(appScope, () => {
       expect(metrics.items).toEqual(["feature-enabled", "legacy-mode-disabled"]);

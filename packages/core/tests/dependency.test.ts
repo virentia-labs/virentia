@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  allSettled,
   dependency,
   effect,
   event,
@@ -26,10 +25,10 @@ describe("dependency", () => {
     const prod = scope({ deps: [[api, { get: (id: string) => `prod:${id}` }]] });
     const test = scope({ deps: [[api, { get: (id: string) => `mock:${id}` }]] });
 
-    await allSettled(loadFx, { scope: prod, payload: "42" });
+    await scoped(prod, () => loadFx("42"));
     expect(scoped(prod, () => result.value)).toBe("prod:42");
 
-    await allSettled(loadFx, { scope: test, payload: "42" });
+    await scoped(test, () => loadFx("42"));
     expect(scoped(test, () => result.value)).toBe("mock:42");
   });
 
@@ -65,7 +64,7 @@ describe("dependency", () => {
     reaction({ on: ping, run: () => seen.push(label.value) });
 
     const s = scope({ deps: [[label, "hello"]] });
-    await allSettled(ping, { scope: s });
+    await scoped(s, () => ping());
 
     expect(seen).toEqual(["hello"]);
   });
