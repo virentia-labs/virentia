@@ -1,5 +1,61 @@
 # @virentia/core
 
+## 0.6.0
+
+### Minor Changes
+
+- 4e60166: Move low-level unit-building primitives to a new `@virentia/core/internal` subpath.
+
+  Authoring custom units and stores needs the kernel and reactive plumbing that app code should not touch. That surface now lives at `@virentia/core/internal`: `createNode`, `run`, `createContext`, `withContexts` (moved off the main entry), plus the newly exposed `trackNode`, `collectNodes`, `requireActiveScope`/`setActiveScope`/`getActiveScope`, and the transaction lifecycle (`enterTransaction`, `exitTransaction`, `withTransaction`, `commitActiveTransaction`, `writeTransactionStore`, `readTransactionStore`, and the `StoreTransactionTarget`/`StoreCommitResult` types). Kernel **types** (e.g. `Node`) remain on the main entry, since every unit exposes `.node`.
+
+  The subpath is built into the same shared chunk as the main entry, so a package that imports it (with `@virentia/core` and `@virentia/core/internal` kept external) shares core's single transaction/scope/graph state rather than getting its own copy.
+
+  Migration: if you imported `createNode`, `run`, `createContext`, or `withContexts` from `@virentia/core`, import them from `@virentia/core/internal` instead. App code using stores/events/effects/reactions is unaffected.
+
+- 4e60166: `@virentia/mutable`: fine-grained, per-keypath reactivity — no API change.
+
+  A `computed`, auto reaction, or `map` over a mutable store now re-runs only when a keypath it actually read is written. Mutating one branch no longer re-runs readers of unrelated branches:
+
+  ```ts
+  const cart = mutableStore({
+    items: [] as Item[],
+    coupon: null as string | null,
+  });
+  const count = computed(() => cart.value.items.length);
+  const coupon = computed(() => cart.value.coupon);
+
+  cart.value.items.push(item);
+  // Re-runs `count` only — `coupon` never read `items`.
+  ```
+
+  The draft proxy reports each read keypath (with every prefix, so replacing an ancestor still invalidates deep readers) and each written keypath; the store maps keypaths to graph nodes and, at commit, fires only the nodes whose paths changed. `unwrap(store.value)` takes a coarse dependency (any change), and `store.subscribe` / `useUnit(store)` on the whole value stay coarse by definition. Tracking runs only while a reader is collecting dependencies, so the write path — and its benchmark lead over mutative and immer — is unchanged.
+
+  `@virentia/core`: `@virentia/core/internal` now exports `isTracking()`, so a custom store can tell whether a read should register as a dependency.
+
+- 4e60166: Rename the low-level kernel factories to drop the `create` prefix: `@virentia/core/internal` now exports `node()` (was `createNode`) and `context()` (was `createContext`). The `CreateNodeOptions` type is now `NodeOptions`.
+
+  This only affects code that authors custom units/stores on `@virentia/core/internal`; application code (stores/events/effects/reactions) is unchanged. Update imports:
+
+  ```ts
+  // before
+  import { createNode, createContext } from "@virentia/core/internal";
+  // after
+  import { node, context } from "@virentia/core/internal";
+  ```
+
+### Patch Changes
+
+- 1f56652: Fix a deadlock when an effect handler awaits an event after awaiting another effect.
+
+  ```ts
+  const fx = effect(async () => {
+    await inner(); // await another effect
+    await ev("x"); // then await an event — used to hang forever
+  });
+  ```
+
+  When a reentrant drain (the `await inner()` effect) finished asynchronously, it re-installed the parked parent drain as the active drain. The next unit call in the handler's continuation (`await ev()`) then joined that parked drain via `waitForDrain` and never resolved — the drain only settles once the handler finishes, and the handler was blocked on that very call. On asynchronous resume the kernel now restores whatever drain is genuinely active (usually none) instead of the stale parent captured when the drain was created, so the continuation's unit call runs on its own drain and completes.
+
 ## 0.5.0
 
 ### Minor Changes
