@@ -136,19 +136,11 @@ type EffectOutcome<Params, Done, Fail> =
       error: Fail;
     };
 
-export function effect<Done, Fail = unknown>(
-  handler: () => Done | PromiseLike<Done>,
-  name?: string,
-): Effect<void, Done, Fail>;
-export function effect<Done, Fail = unknown>(
-  handler: () => Done | PromiseLike<Done>,
-  devtools?: EffectDevtoolsOptions,
-): Effect<void, Done, Fail>;
-export function effect<Params, Done, Fail = unknown>(
+export function effect<Params = void, Done = void, Fail = unknown>(
   handler: EffectHandler<Params, Done>,
   name?: string,
 ): Effect<Params, Done, Fail>;
-export function effect<Params, Done, Fail = unknown>(
+export function effect<Params = void, Done = void, Fail = unknown>(
   handler: EffectHandler<Params, Done>,
   devtools?: EffectDevtoolsOptions,
 ): Effect<Params, Done, Fail>;

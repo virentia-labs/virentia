@@ -1,5 +1,11 @@
 # @virentia/core
 
+## 0.6.2
+
+### Patch Changes
+
+- fix: remove useless effect payload
+
 ## 0.6.1
 
 ### Patch Changes

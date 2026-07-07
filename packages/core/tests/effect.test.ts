@@ -92,7 +92,7 @@ describe("effect", () => {
   it("aborts active calls and emits aborted", async () => {
     const appScope = scope();
     const reason = new Error("stop");
-    const waitFx = effect<string, Error>(() => new Promise<string>(() => {}));
+    const waitFx = effect<void, string, Error>(() => new Promise<string>(() => {}));
     const values: unknown[] = [];
 
     reaction({
@@ -127,7 +127,7 @@ describe("effect", () => {
     const appScope = scope();
     const reason = new Error("stop tree");
     const values: unknown[] = [];
-    const leafFx = effect<string, Error>(() => new Promise<string>(() => {}));
+    const leafFx = effect<void, string, Error>(() => new Promise<string>(() => {}));
     const middleFx = effect(() => leafFx());
     const rootFx = effect(() => middleFx());
 
