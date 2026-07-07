@@ -1,4 +1,4 @@
-import { createNode, run } from "../kernel";
+import { node, run } from "../kernel";
 import type { Node } from "../kernel";
 import { withInspectorMeta } from "../kernel/inspector";
 import { getActiveScope, setActiveScope } from "../scope/internal";
@@ -142,7 +142,7 @@ export function reaction(
   const runTokens = new WeakMap<Scope, object>();
   let stopped = false;
 
-  const node = createNode({
+  const reactionNode = node({
     meta: withInspectorMeta(undefined, {
       type: "reaction",
       name,
@@ -182,9 +182,9 @@ export function reaction(
     const deps = readMicroDependencies(micro) ?? new Set<Node>();
 
     if (useGlobalEdges) {
-      reconcileDependencies(node, currentDependencies, new Set(deps));
+      reconcileDependencies(reactionNode, currentDependencies, new Set(deps));
     } else {
-      reconcileScopedEdges(realScope, node, deps);
+      reconcileScopedEdges(realScope, reactionNode, deps);
       boundScopes.add(realScope);
     }
   };
@@ -291,7 +291,7 @@ export function reaction(
 
   if (explicit) {
     for (const source of toArray(input.on)) {
-      attach(source.node, node);
+      attach(source.node, reactionNode);
       currentDependencies.add(source.node);
     }
   } else {
@@ -299,11 +299,11 @@ export function reaction(
     // async body's effect `await`s are reentrant — that keeps the ambient
     // micro-scope alive across them, exactly like a later triggered run. A
     // synchronous body still runs synchronously inside this drain.
-    void run({ unit: node, scope: configuredScopes?.[0] });
+    void run({ unit: reactionNode, scope: configuredScopes?.[0] });
   }
 
   const result: Reaction = {
-    node,
+    node: reactionNode,
     explicit,
 
     dependencies(): readonly Node[] {
@@ -320,13 +320,13 @@ export function reaction(
       activeRuns.clear();
 
       for (const dependency of currentDependencies) {
-        detach(dependency, node);
+        detach(dependency, reactionNode);
       }
 
       currentDependencies.clear();
 
       for (const scope of boundScopes) {
-        detachScopedDependent(scope, node);
+        detachScopedDependent(scope, reactionNode);
       }
 
       boundScopes.clear();

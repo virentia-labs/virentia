@@ -1,4 +1,4 @@
-import { createNode, run } from "../kernel";
+import { node, run } from "../kernel";
 import type { Node } from "../kernel";
 import { describeNode, linkInspectorNodes, withInspectorMeta } from "../kernel/inspector";
 import {
@@ -252,7 +252,7 @@ export function effect<Params, Done, Fail = unknown>(
     return scope ? run({ unit: abortEvent.node, payload: reason, scope }) : Promise.resolve();
   }, abortEvent) as EventCallable<unknown | void>;
 
-  const executeNode = createNode({
+  const executeNode = node({
     meta: withInspectorMeta(undefined, {
       type: "effect.execute",
       name: name ? `${name}.execute` : undefined,
@@ -291,7 +291,7 @@ export function effect<Params, Done, Fail = unknown>(
     },
   });
 
-  const settleNode = createNode({
+  const settleNode = node({
     meta: withInspectorMeta(undefined, {
       type: "effect.settle",
       name: name ? `${name}.settle` : undefined,
@@ -340,7 +340,7 @@ export function effect<Params, Done, Fail = unknown>(
 
   executeNode.next = [settleNode];
 
-  const node = createNode({
+  const effectNode = node({
     meta: withInspectorMeta(undefined, {
       type: "effect",
       name,
@@ -364,7 +364,7 @@ export function effect<Params, Done, Fail = unknown>(
     },
   });
 
-  node.next = [executeNode];
+  effectNode.next = [executeNode];
 
   linkEffectSubunit("pending", pending.node);
   linkEffectSubunit("inFlight", inFlightStore.node);
@@ -379,14 +379,14 @@ export function effect<Params, Done, Fail = unknown>(
 
   result = Object.assign(
     (...args: EffectCallArgs<Params>) => {
-      const ambient = requireActiveScope(() => `call ${describeNode(node)}`);
+      const ambient = requireActiveScope(() => `call ${describeNode(effectNode)}`);
       const scope = unwrapMicroScope(ambient);
       const params = args[0] as Params;
       const options = args[1];
       const promise = new Promise<Done>((resolve, reject) => {
         const call = createCall(params, options, scope, resolve, reject);
 
-        void run({ unit: node, payload: call, scope });
+        void run({ unit: effectNode, payload: call, scope });
       });
 
       // The awaiter gets the effect's own settle promise, which resolves from
@@ -397,7 +397,7 @@ export function effect<Params, Done, Fail = unknown>(
       return isMicroScope(ambient) ? promise.finally(() => setActiveScope(ambient)) : promise;
     },
     {
-      node,
+      node: effectNode,
       pending,
       inFlight: inFlightStore,
       started,
@@ -422,7 +422,7 @@ export function effect<Params, Done, Fail = unknown>(
   return result;
 
   function linkEffectSubunit(role: string, child: Node): void {
-    linkInspectorNodes(node, child, {
+    linkInspectorNodes(effectNode, child, {
       kind: "owner",
       role,
     });

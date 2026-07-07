@@ -1,4 +1,4 @@
-import { createNode, run } from "../kernel";
+import { node, run } from "../kernel";
 import type { Node } from "../kernel";
 import { describeNode, withInspectorMeta } from "../kernel/inspector";
 import type { Scope } from "../scope";
@@ -140,7 +140,7 @@ function createLazyUnit<T>(loader: LazyLoader<T>): T {
   const mirroredNext = createMirroredNextList();
   const children = new Map<PropertyKey, unknown>();
   const derived = new Set<(unit: T) => void>();
-  const node = createNode({
+  const lazyNode = node({
     meta: withInspectorMeta(undefined, {
       type: "lazy",
       callable: true,
@@ -155,7 +155,7 @@ function createLazyUnit<T>(loader: LazyLoader<T>): T {
     },
   });
   const target = (...args: unknown[]) => {
-    const scope = requireActiveScope(() => `call ${describeNode(node)}`);
+    const scope = requireActiveScope(() => `call ${describeNode(lazyNode)}`);
 
     return resolver.load(scope).then((unit) => {
       primeUnit(unit);
@@ -168,12 +168,12 @@ function createLazyUnit<T>(loader: LazyLoader<T>): T {
     });
   };
 
-  node.next = mirroredNext.next;
+  lazyNode.next = mirroredNext.next;
 
   Object.defineProperty(target, "node", {
     configurable: true,
     enumerable: true,
-    value: node,
+    value: lazyNode,
   });
 
   const internal: LazyUnitInternal<T> = {
@@ -202,7 +202,7 @@ function createLazyUnit<T>(loader: LazyLoader<T>): T {
       }
 
       if (property === "node") {
-        return node;
+        return lazyNode;
       }
 
       if (resolver.hasValue()) {

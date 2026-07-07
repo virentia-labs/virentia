@@ -1,7 +1,7 @@
 import { createPage, currentPage, readPageContext, setCurrentPage, writePageContext } from "./run";
 import type { KernelContext, KernelContextManager } from "./types";
 
-export function createContext<T>(): KernelContextManager<T> {
+export function context<T>(): KernelContextManager<T> {
   const id = Symbol();
 
   return {

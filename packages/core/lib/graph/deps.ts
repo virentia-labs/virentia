@@ -26,6 +26,14 @@ export function trackNode(node: Node): void {
   }
 }
 
+// True while a read would register as a dependency — inside a `collectNodes`
+// window (computed / sync reaction collect) or a micro-scoped reaction run. Lets
+// a custom store skip building fine-grained dependency keys on reads that nobody
+// is tracking (a plain mutation), keeping the write path free of that cost.
+export function isTracking(): boolean {
+  return collector !== null || isMicroScope(getActiveScope());
+}
+
 export function collectNodes<T>(fn: () => T): { result: T; nodes: Set<Node> } {
   const previousCollector = collector;
   const nodes = new Set<Node>();

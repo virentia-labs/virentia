@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { computed, run, scope, scoped, store } from "../lib";
+import { computed, scope, scoped, store } from "../lib";
+import { run } from "../lib/internal";
 
 describe("per-scope computed", () => {
   it("invalidates a data-dependent computed precisely per scope", async () => {

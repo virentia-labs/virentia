@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createContext, scope, scoped, store, withContexts } from "../lib";
+import { scope, scoped, store } from "../lib";
+import { context, withContexts } from "../lib/internal";
 
 describe("scope", () => {
   it("makes scoped stores read and write from the current scoped frame", () => {
@@ -195,7 +196,7 @@ describe("scope", () => {
 
 describe("kernel contexts outside run", () => {
   it("supports scoped user contexts in plain production code", () => {
-    const requestId = createContext<string>();
+    const requestId = context<string>();
     const seen: unknown[] = [];
 
     withContexts([requestId.setup("outer")], () => {

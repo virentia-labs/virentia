@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { createContext, createNode, run, scope } from "../lib";
+import { scope } from "../lib";
+import { context, node, run } from "../lib/internal";
 
 describe("kernel", () => {
   it("executes a node chain with the value produced by the previous node", async () => {
     const appScope = scope();
     const calls: unknown[] = [];
-    const second = createNode((ctx) => {
+    const second = node((ctx) => {
       calls.push(["second", ctx.payload, ctx.value]);
       return `${ctx.value}!`;
     });
-    const first = createNode({
+    const first = node({
       run: (ctx) => {
         calls.push(["first", ctx.payload, ctx.value]);
         return "next";
@@ -28,10 +29,10 @@ describe("kernel", () => {
   it("does not execute downstream nodes after a node stops", async () => {
     const appScope = scope();
     const calls: string[] = [];
-    const downstream = createNode(() => {
+    const downstream = node(() => {
       calls.push("downstream");
     });
-    const source = createNode({
+    const source = node({
       run: (ctx) => {
         calls.push("source");
         ctx.stop();
@@ -48,19 +49,19 @@ describe("kernel", () => {
   it("skips disabled nodes", async () => {
     const appScope = scope();
     const calls: string[] = [];
-    const alwaysDisabled = createNode({
+    const alwaysDisabled = node({
       enabled: false,
       run: () => {
         calls.push("always-disabled");
       },
     });
-    const dynamicallyDisabled = createNode({
+    const dynamicallyDisabled = node({
       enabled: () => false,
       run: () => {
         calls.push("dynamically-disabled");
       },
     });
-    const enabled = createNode(() => {
+    const enabled = node(() => {
       calls.push("enabled");
     });
 
@@ -75,14 +76,14 @@ describe("kernel", () => {
   it("batches queued work by node and batch key and keeps the latest value", async () => {
     const appScope = scope();
     const values: unknown[] = [];
-    const target = createNode((ctx) => {
+    const target = node((ctx) => {
       values.push(ctx.value);
     });
-    const first = createNode({
+    const first = node({
       run: () => "first",
       next: [target],
     });
-    const second = createNode({
+    const second = node({
       run: () => "second",
       next: [target],
     });
@@ -99,10 +100,10 @@ describe("kernel", () => {
   it("passes meta through the whole run chain", async () => {
     const appScope = scope();
     const seen: unknown[] = [];
-    const second = createNode((ctx) => {
+    const second = node((ctx) => {
       seen.push(ctx.meta);
     });
-    const first = createNode({
+    const first = node({
       run: (ctx) => {
         ctx.meta.trace = "updated";
         return "value";
@@ -118,12 +119,12 @@ describe("kernel", () => {
 
   it("keeps kernel contexts available across awaited node work", async () => {
     const appScope = scope();
-    const requestContext = createContext<string>();
+    const requestContext = context<string>();
     const values: unknown[] = [];
-    const downstream = createNode((ctx) => {
+    const downstream = node((ctx) => {
       values.push(["downstream", ctx.getContext(requestContext), ctx.value]);
     });
-    const source = createNode({
+    const source = node({
       async run(ctx) {
         values.push(["before-await", ctx.getContext(requestContext)]);
 

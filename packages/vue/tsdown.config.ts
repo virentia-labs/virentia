@@ -7,6 +7,6 @@ export default defineConfig({
   dts: true,
   clean: true,
   deps: {
-    neverBundle: ["@virentia/core", "vue"],
+    neverBundle: ["@virentia/core", "@virentia/core/internal", "vue"],
   },
 });

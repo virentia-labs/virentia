@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createNode, scope } from "../lib";
+import { scope } from "../lib";
+import { node } from "../lib/internal";
 import {
   detachScopedDependent,
   disposeScopeEdges,
@@ -14,9 +15,9 @@ describe("scoped-edges", () => {
   it("keeps dependency sets independent per scope", () => {
     const s1 = scope();
     const s2 = scope();
-    const a = createNode({ id: "a" });
-    const b = createNode({ id: "b" });
-    const reaction = createNode({ id: "r" });
+    const a = node({ id: "a" });
+    const b = node({ id: "b" });
+    const reaction = node({ id: "r" });
 
     // Same dependent reads `a` in s1 and `b` in s2 (data-dependent branches).
     reconcileScopedEdges(s1, reaction, [a]);
@@ -30,9 +31,9 @@ describe("scoped-edges", () => {
 
   it("reconciles: attaches new sources and detaches dropped ones", () => {
     const s = scope();
-    const a = createNode({ id: "a" });
-    const b = createNode({ id: "b" });
-    const reaction = createNode({ id: "r" });
+    const a = node({ id: "a" });
+    const b = node({ id: "b" });
+    const reaction = node({ id: "r" });
 
     reconcileScopedEdges(s, reaction, [a]);
     expect(ids(getScopedObservers(s, a))).toEqual(["r"]);
@@ -46,9 +47,9 @@ describe("scoped-edges", () => {
   it("does not clobber another scope's edges when one reconciles", () => {
     const s1 = scope();
     const s2 = scope();
-    const a = createNode({ id: "a" });
-    const b = createNode({ id: "b" });
-    const reaction = createNode({ id: "r" });
+    const a = node({ id: "a" });
+    const b = node({ id: "b" });
+    const reaction = node({ id: "r" });
 
     reconcileScopedEdges(s1, reaction, [a]);
     reconcileScopedEdges(s2, reaction, [b]);
@@ -63,9 +64,9 @@ describe("scoped-edges", () => {
 
   it("detaches a dependent from all its sources in a scope", () => {
     const s = scope();
-    const a = createNode({ id: "a" });
-    const b = createNode({ id: "b" });
-    const reaction = createNode({ id: "r" });
+    const a = node({ id: "a" });
+    const b = node({ id: "b" });
+    const reaction = node({ id: "r" });
 
     reconcileScopedEdges(s, reaction, [a, b]);
     detachScopedDependent(s, reaction);
@@ -76,8 +77,8 @@ describe("scoped-edges", () => {
 
   it("disposes an entire scope's edges at once", () => {
     const s = scope();
-    const a = createNode({ id: "a" });
-    const reaction = createNode({ id: "r" });
+    const a = node({ id: "a" });
+    const reaction = node({ id: "r" });
 
     reconcileScopedEdges(s, reaction, [a]);
     disposeScopeEdges(s);

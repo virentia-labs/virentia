@@ -1,9 +1,15 @@
 {
-  "name": "@virentia/core",
-  "version": "0.5.0",
-  "description": "",
-  "keywords": [],
-  "homepage": "https://movpushmov.dev/virentia/core/",
+  "name": "@virentia/mutable",
+  "version": "0.0.0",
+  "description": "Deep-mutable (immer-style) updates for @virentia/core stores, powered by mutative",
+  "keywords": [
+    "virentia",
+    "immer",
+    "mutative",
+    "immutable",
+    "state"
+  ],
+  "homepage": "https://movpushmov.dev/virentia/mutable/",
   "bugs": {
     "url": "https://github.com/virentia-labs/virentia/issues"
   },
@@ -12,7 +18,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/virentia-labs/virentia.git",
-    "directory": "packages/core"
+    "directory": "packages/mutable"
   },
   "files": [
     "dist"
@@ -26,16 +32,6 @@
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.cjs"
-    },
-    "./devtools": {
-      "types": "./dist/devtools.d.mts",
-      "import": "./dist/devtools.mjs",
-      "require": "./dist/devtools.cjs"
-    },
-    "./internal": {
-      "types": "./dist/internal.d.mts",
-      "import": "./dist/internal.mjs",
-      "require": "./dist/internal.cjs"
     }
   },
   "publishConfig": {
@@ -44,6 +40,14 @@
   "scripts": {
     "build": "tsdown",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "bench": "vitest bench --run"
+  },
+  "dependencies": {
+    "@virentia/core": "workspace:*"
+  },
+  "devDependencies": {
+    "immer": "^10.0.0",
+    "mutative": "^1.3.0"
   }
 }

@@ -1,4 +1,4 @@
-import { createNode, run } from "../kernel";
+import { node, run } from "../kernel";
 import type { Node } from "../kernel";
 import {
   isPendingStoreValue,
@@ -181,7 +181,7 @@ export function computed<T>(fn: () => T, skipToken?: T, devtools?: StoreDevtools
 function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
   const id = Symbol("virentia.store");
   const subscribers = new Set<StoreSubscriber<T>>();
-  const node = createNode({
+  const storeNode = node({
     meta: withInspectorMeta(undefined, {
       type: "store",
       name: options.name,
@@ -222,7 +222,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
   });
 
   const api: StoreApi<T> = {
-    node,
+    node: storeNode,
     writable: options.writable,
 
     subscribe(fn: StoreSubscriber<T>): () => void {
@@ -245,7 +245,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
         () =>
           fn(
             readState(
-              requireActiveScope(() => `read ${describeNode(node)}`),
+              requireActiveScope(() => `read ${describeNode(storeNode)}`),
               id,
               initial,
             ),
@@ -253,9 +253,9 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
         {
           skipToken,
           hasSkipToken: arguments.length > 1,
-          name: deriveName(node, "map"),
+          name: deriveName(storeNode, "map"),
         },
-        [node],
+        [storeNode],
       );
     },
 
@@ -263,7 +263,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
       return createComputed(
         () => {
           const value = readState(
-            requireActiveScope(() => `read ${describeNode(node)}`),
+            requireActiveScope(() => `read ${describeNode(storeNode)}`),
             id,
             initial,
           );
@@ -275,9 +275,9 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
           hasSkipToken: true,
           initialValue: initial,
           hasInitialValue: true,
-          name: deriveName(node, "filter"),
+          name: deriveName(storeNode, "filter"),
         },
-        [node],
+        [storeNode],
       );
     },
 
@@ -286,7 +286,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
         () =>
           fn(
             readState(
-              requireActiveScope(() => `read ${describeNode(node)}`),
+              requireActiveScope(() => `read ${describeNode(storeNode)}`),
               id,
               initial,
             ),
@@ -294,9 +294,9 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
         {
           skipToken,
           hasSkipToken: true,
-          name: deriveName(node, "filterMap"),
+          name: deriveName(storeNode, "filterMap"),
         },
-        [node],
+        [storeNode],
       );
     },
   };
@@ -308,7 +308,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
 
   storeReaders.set(proxy as object, () =>
     readState(
-      requireActiveScope(() => `read ${describeNode(node)}`),
+      requireActiveScope(() => `read ${describeNode(storeNode)}`),
       id,
       initial,
     ),
@@ -322,17 +322,17 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
   return proxy as Store<T>;
 
   function readStateForProxy(): T {
-    trackNode(node);
+    trackNode(storeNode);
 
     return readState(
-      requireActiveScope(() => `read ${describeNode(node)}`),
+      requireActiveScope(() => `read ${describeNode(storeNode)}`),
       id,
       initial,
     );
   }
 
   function writeProperty(property: PropertyKey, value: unknown): boolean {
-    const scope = requireActiveScope(() => `update ${describeNode(node)}`);
+    const scope = requireActiveScope(() => `update ${describeNode(storeNode)}`);
     const state = readState(scope, id, initial);
 
     // In "ref" mode the proxy `set` trap guarantees `property === "value"`, so the
@@ -389,7 +389,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
         }
 
         void run({
-          unit: node,
+          unit: storeNode,
           payload: {
             [committedStoreUpdate]: true,
             value: next,
@@ -423,7 +423,7 @@ function createComputed<T>(
   // stores in different scopes is invalidated precisely rather than from a
   // global union of every scope's branches.
   const staticDependencies = new Set<Node>();
-  const invalidator = createNode({
+  const invalidator = node({
     meta: withInspectorMeta(undefined, {
       type: "computed.invalidate",
       name: options.name ? `${options.name}.invalidate` : undefined,
@@ -445,7 +445,7 @@ function createComputed<T>(
       return ctx.value;
     },
   });
-  const node = createNode({
+  const storeNode = node({
     meta: withInspectorMeta(undefined, {
       type: "computed",
       name: options.name,
@@ -474,15 +474,15 @@ function createComputed<T>(
     },
   });
 
-  invalidator.next = [node];
-  prepareInspectorSnapshotNode(node, inspectDependencies);
+  invalidator.next = [storeNode];
+  prepareInspectorSnapshotNode(storeNode, inspectDependencies);
 
   for (const dependency of initialDependencies) {
     attachStaticDependency(dependency);
   }
 
   const api: StoreApi<T> = {
-    node,
+    node: storeNode,
     writable: false,
 
     subscribe(fn: StoreSubscriber<T>): () => void {
@@ -506,9 +506,9 @@ function createComputed<T>(
         {
           skipToken,
           hasSkipToken: arguments.length > 1,
-          name: deriveName(node, "map"),
+          name: deriveName(storeNode, "map"),
         },
-        [node],
+        [storeNode],
       );
     },
 
@@ -522,9 +522,9 @@ function createComputed<T>(
         {
           skipToken: defaultSkipToken as T,
           hasSkipToken: true,
-          name: deriveName(node, "filter"),
+          name: deriveName(storeNode, "filter"),
         },
-        [node],
+        [storeNode],
       );
     },
 
@@ -534,9 +534,9 @@ function createComputed<T>(
         {
           skipToken,
           hasSkipToken: true,
-          name: deriveName(node, "filterMap"),
+          name: deriveName(storeNode, "filterMap"),
         },
-        [node],
+        [storeNode],
       );
     },
   };
@@ -550,23 +550,23 @@ function createComputed<T>(
   return proxy as Store<T>;
 
   function hasObservers(scope: Scope | null): boolean {
-    if (subscribers.size > 0 || Boolean(node.next?.length)) {
+    if (subscribers.size > 0 || Boolean(storeNode.next?.length)) {
       return true;
     }
 
     // Reactions and other computeds may observe this computed per-scope (via
     // scoped edges) rather than through the static `node.next`, so an invalidation
     // must not stop just because there are no static observers.
-    return scope ? (getScopedObservers(scope, node)?.size ?? 0) > 0 : false;
+    return scope ? (getScopedObservers(scope, storeNode)?.size ?? 0) > 0 : false;
   }
 
   function readComputed(): T {
-    trackNode(node);
+    trackNode(storeNode);
 
     // Track (above) sees the micro-scope so the reading reaction depends on this
     // computed. The computed's own state/edges belong to the real scope — a
     // micro-scope is a throwaway per-run overlay, so edges there would be lost.
-    const scope = unwrapMicroScope(requireActiveScope(() => `read ${describeNode(node)}`));
+    const scope = unwrapMicroScope(requireActiveScope(() => `read ${describeNode(storeNode)}`));
 
     return evaluate(scope, readComputedState<T>(scope, id));
   }
@@ -613,7 +613,7 @@ function createComputed<T>(
     const dynamic = new Set<Node>();
 
     for (const dependency of collected) {
-      if (dependency !== node && !staticDependencies.has(dependency)) {
+      if (dependency !== storeNode && !staticDependencies.has(dependency)) {
         dynamic.add(dependency);
       }
     }
@@ -635,8 +635,8 @@ function createComputed<T>(
       const collected = collectNodes(fn);
 
       for (const dependency of collected.nodes) {
-        if (dependency !== node) {
-          linkInspectorNodes(dependency, node, { kind: "reactive" });
+        if (dependency !== storeNode) {
+          linkInspectorNodes(dependency, storeNode, { kind: "reactive" });
         }
       }
     } catch {
@@ -647,7 +647,7 @@ function createComputed<T>(
   }
 
   function attachStaticDependency(dependency: Node): void {
-    if (dependency === node || staticDependencies.has(dependency)) {
+    if (dependency === storeNode || staticDependencies.has(dependency)) {
       return;
     }
 

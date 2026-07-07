@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { getOwner, onCleanup, owner, reaction, run, scope, store, withOwner, scoped } from "../lib";
+import { getOwner, onCleanup, owner, reaction, scope, store, withOwner, scoped } from "../lib";
+import { run } from "../lib/internal";
 
 describe("reaction", () => {
   it("runs immediately in auto mode and tracks stores read during execution", async () => {

@@ -7,6 +7,6 @@ export default defineConfig({
   dts: true,
   clean: true,
   deps: {
-    neverBundle: ["@virentia/core", "react"],
+    neverBundle: ["@virentia/core", "@virentia/core/internal", "react"],
   },
 });

@@ -13,9 +13,11 @@
     "paths": {
       "@virentia/core": ["packages/core/lib/index.ts"],
       "@virentia/core/devtools": ["packages/core/lib/devtools.ts"],
+      "@virentia/core/internal": ["packages/core/lib/internal.ts"],
       "@virentia/effector": ["packages/effector/lib/index.ts"],
       "@virentia/inspector": ["packages/inspector/lib/index.ts"],
       "@virentia/inspector/effector": ["packages/inspector/lib/effector/index.ts"],
+      "@virentia/mutable": ["packages/mutable/lib/index.ts"],
       "@virentia/react": ["packages/react/lib/index.ts"],
       "@virentia/vue": ["packages/vue/lib/index.ts"]
     }
@@ -32,6 +34,9 @@
     "packages/inspector/tests/**/*.ts",
     "packages/inspector/tsdown.config.ts",
     "packages/inspector/vite.config.ts",
+    "packages/mutable/lib/**/*.ts",
+    "packages/mutable/tests/**/*.ts",
+    "packages/mutable/tsdown.config.ts",
     "packages/react/lib/**/*.ts",
     "packages/react/tests/**/*.ts",
     "packages/react/tsdown.config.ts",

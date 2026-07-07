@@ -1,4 +1,4 @@
-import { createNode, run } from "../kernel";
+import { node, run } from "../kernel";
 import type { Node } from "../kernel";
 import { describeNode, readInspectorNodeMeta, withInspectorMeta } from "../kernel/inspector";
 import { requireActiveScope, setActiveScope } from "../scope/internal";
@@ -31,7 +31,7 @@ export function event<T = void>(devtools?: string | EventDevtoolsOptions): Event
 
 function createEvent<T>(devtools?: string | EventDevtoolsOptions): Event<T> {
   const options = normalizeDevtoolsOptions(devtools);
-  const node = createNode({
+  const eventNode = node({
     meta: withInspectorMeta(undefined, {
       type: "event",
       name: options.name,
@@ -41,11 +41,11 @@ function createEvent<T>(devtools?: string | EventDevtoolsOptions): Event<T> {
   });
 
   const append = (next: Node): void => {
-    node.next = node.next ?? [];
-    node.next.push(next);
+    eventNode.next = eventNode.next ?? [];
+    eventNode.next.push(next);
 
     registerCleanup(() => {
-      const nextNodes = node.next;
+      const nextNodes = eventNode.next;
       if (!nextNodes) return;
 
       const index = nextNodes.indexOf(next);
@@ -62,22 +62,22 @@ function createEvent<T>(devtools?: string | EventDevtoolsOptions): Event<T> {
       // triggers, including async ones) settles, so code after `await someEvent()`
       // still runs in the scope it was called in. Any async-callable unit must
       // leave the caller's scope as it found it.
-      const ambient = requireActiveScope(() => `call ${describeNode(node)}`);
+      const ambient = requireActiveScope(() => `call ${describeNode(eventNode)}`);
 
       return run({
-        unit: node,
+        unit: eventNode,
         payload: payload[0],
         scope: unwrapMicroScope(ambient),
       }).finally(() => setActiveScope(ambient));
     },
     {
-      node,
+      node: eventNode,
 
       map<Next>(fn: (value: T) => Next): Event<Next> {
-        const mapped = createEvent<Next>(deriveName(node, "map"));
+        const mapped = createEvent<Next>(deriveName(eventNode, "map"));
 
         append(
-          createNode({
+          node({
             run: (ctx) => fn(ctx.value as T),
             next: [mapped.node],
             meta: withInspectorMeta(undefined, {
@@ -91,10 +91,10 @@ function createEvent<T>(devtools?: string | EventDevtoolsOptions): Event<T> {
       },
 
       filter(fn: (value: T) => boolean): Event<T> {
-        const filtered = createEvent<T>(deriveName(node, "filter"));
+        const filtered = createEvent<T>(deriveName(eventNode, "filter"));
 
         append(
-          createNode({
+          node({
             run: (ctx) => {
               if (!fn(ctx.value as T)) {
                 ctx.stop();
@@ -114,10 +114,10 @@ function createEvent<T>(devtools?: string | EventDevtoolsOptions): Event<T> {
       },
 
       filterMap<Next>(fn: (value: T) => Next | undefined): Event<Next> {
-        const mapped = createEvent<Next>(deriveName(node, "filterMap"));
+        const mapped = createEvent<Next>(deriveName(eventNode, "filterMap"));
 
         append(
-          createNode({
+          node({
             run: (ctx) => {
               const value = fn(ctx.value as T);
 
