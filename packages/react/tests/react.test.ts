@@ -378,6 +378,46 @@ describe("@virentia/react", () => {
 
     expect(button().textContent).toBe("2");
   });
+
+  it("unwraps nested units at depth in the view and stays reactive", async () => {
+    const appScope = scope();
+
+    function createNestedModel() {
+      const bump = event<void>();
+      const count = store(0);
+      const group = { total: store(0), sub: { n: store(0) } };
+      reaction({
+        on: bump,
+        run() {
+          count.value += 1;
+          group.total.value += 10;
+          group.sub.n.value += 100;
+        },
+      });
+      return { count, bump, group };
+    }
+
+    const Nested = component({
+      model: createNestedModel,
+      view({ model }) {
+        // `model.count`, `model.group.total`, `model.group.sub.n` are unwrapped
+        // numbers (nested at depth 1 and 2), not stores.
+        return createElement(
+          "button",
+          { onClick: () => model.bump() },
+          `${model.count}/${model.group.total}/${model.group.sub.n}`,
+        );
+      },
+    });
+
+    renderWithScope(appScope, createElement(Nested, {}));
+    expect(button().textContent).toBe("0/0/0");
+
+    await act(async () => {
+      fireEvent.click(button());
+    });
+    expect(button().textContent).toBe("1/10/100");
+  });
 });
 
 function renderWithScope(appScope: ReturnType<typeof scope>, element: ReactNode) {

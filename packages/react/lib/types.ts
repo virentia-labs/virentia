@@ -37,7 +37,10 @@ export type ReactiveModel<Model> = {
     ? never
     : Key]: Model[Key] extends ComponentModel<infer ChildModel>
     ? ComponentModel<ChildModel>
-    : Model[Key] extends UnitLike
+    : // Detect a unit by its `.node` marker rather than `UnitLike`: `UnitLike`
+      // collapses to `any` (because `ReactiveWritable<any>` = `any & …` = `any`),
+      // which would match every non-unit field and unwrap it to `never`.
+      Model[Key] extends { readonly node: unknown }
       ? UnitValue<Model[Key]>
       : Model[Key] extends (...args: any[]) => any
         ? Model[Key]

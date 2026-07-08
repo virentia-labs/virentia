@@ -1,6 +1,7 @@
 import { describe, expectTypeOf, it } from "vitest";
 import { event, effect, reactive, store } from "@virentia/core";
-import type { ReactiveModel, UnitValue } from "../lib";
+import type { StoreWritable } from "@virentia/core";
+import type { ComponentModel, ReactiveModel, UnitValue } from "../lib";
 
 describe("@virentia/react reactive types", () => {
   it("unwraps primitive stores to their value type", () => {
@@ -34,5 +35,33 @@ describe("@virentia/react reactive types", () => {
     type View = ReactiveModel<typeof model>;
     expectTypeOf<View["saving"]>().toEqualTypeOf<boolean>();
     expectTypeOf<View["message"]>().toEqualTypeOf<string | null>();
+  });
+
+  it("ReactiveModel unwraps nested units at depth and preserves methods/primitives", () => {
+    // Regression: `UnitLike` collapses to `any` (via `ReactiveWritable<any>`), so
+    // the unit branch was always taken and every non-top-level-unit field —
+    // nested objects, methods, primitives — resolved to `never`. Units are now
+    // discriminated by their `.node` marker.
+    const model = {
+      count: store(0),
+      changed: event<number>(),
+      inc: () => {},
+      label: "hi" as string,
+      nested: { count: store(0), deep: { count: store(0) } },
+    };
+    type View = ReactiveModel<typeof model>;
+    expectTypeOf<View["count"]>().toEqualTypeOf<number>();
+    expectTypeOf<View["changed"]>().toEqualTypeOf<(payload: number) => Promise<void>>();
+    expectTypeOf<View["inc"]>().toEqualTypeOf<() => void>();
+    expectTypeOf<View["label"]>().toEqualTypeOf<string>();
+    expectTypeOf<View["nested"]["count"]>().toEqualTypeOf<number>();
+    expectTypeOf<View["nested"]["deep"]["count"]>().toEqualTypeOf<number>();
+  });
+
+  it("ComponentModel (the create() result) keeps nested units raw at depth", () => {
+    const model = { count: store(0), nested: { deep: { count: store(0) } } };
+    type CM = ComponentModel<typeof model>;
+    expectTypeOf<CM["count"]>().toEqualTypeOf<StoreWritable<number>>();
+    expectTypeOf<CM["nested"]["deep"]["count"]>().toEqualTypeOf<StoreWritable<number>>();
   });
 });
