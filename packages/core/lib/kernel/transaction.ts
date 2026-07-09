@@ -53,6 +53,11 @@ export function exitTransaction(): void {
   commitTransaction(transaction);
 }
 
+/** Depth of the open transaction (0 when none). 1 means the outermost. */
+export function activeTransactionDepth(): number {
+  return currentTransaction ? currentTransaction.depth : 0;
+}
+
 export function commitActiveTransaction(): void {
   if (!currentTransaction) return;
 
@@ -111,24 +116,76 @@ export function isPendingStoreValue(value: unknown): boolean {
   return value !== noPendingStoreValue;
 }
 
+interface CommittedSnapshot {
+  scope: Scope;
+  id: symbol;
+  had: boolean;
+  prev: unknown;
+}
+
 function commitTransaction(transaction: KernelTransaction): void {
   const notifications: (() => void)[] = [];
+  const committed: CommittedSnapshot[] = [];
 
-  for (const scope of transaction.scopes) {
-    const scopeWrites = transaction.writes.get(scope);
+  try {
+    for (const scope of transaction.scopes) {
+      const scopeWrites = transaction.writes.get(scope);
 
-    if (!scopeWrites) continue;
+      if (!scopeWrites) continue;
 
-    for (const pending of scopeWrites.values()) {
-      const result = pending.target.commit(pending.value);
+      for (const pending of scopeWrites.values()) {
+        const { scope: targetScope, id } = pending.target;
 
-      if (result.changed) {
-        notifications.push(result.notify);
+        // Snapshot the pre-commit value so the whole commit phase can roll back
+        // atomically if a later commit throws.
+        committed.push({
+          scope: targetScope,
+          id,
+          had: targetScope.values.has(id),
+          prev: targetScope.values.get(id),
+        });
+
+        const result = pending.target.commit(pending.value);
+
+        if (result.changed) {
+          notifications.push(result.notify);
+        }
+      }
+    }
+  } catch (error) {
+    // Atomicity: a failed commit reverts every store already committed in this
+    // transaction and runs no notifications — the transaction does not apply.
+    for (let i = committed.length - 1; i >= 0; i -= 1) {
+      const entry = committed[i];
+
+      if (entry.had) {
+        entry.scope.values.set(entry.id, entry.prev);
+      } else {
+        entry.scope.values.delete(entry.id);
+      }
+    }
+
+    throw error;
+  }
+
+  // Every commit succeeded, so the state is applied. Run every notification even
+  // if one throws (a throwing subscriber must not skip the others), then surface
+  // the first error.
+  let notifyError: unknown;
+  let hasNotifyError = false;
+
+  for (const notify of notifications) {
+    try {
+      notify();
+    } catch (error) {
+      if (!hasNotifyError) {
+        hasNotifyError = true;
+        notifyError = error;
       }
     }
   }
 
-  for (const notify of notifications) {
-    notify();
+  if (hasNotifyError) {
+    throw notifyError;
   }
 }

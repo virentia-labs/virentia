@@ -174,13 +174,19 @@ const handler: ProxyHandler<object> = {
     const state = stateOf(target);
     const writable = ensureWritable(state) as Record<PropertyKey, unknown>;
     const isNew = !(property in writable);
+    // `arr.length = n` is structural (it adds/removes elements) but `"length" in
+    // arr` is always true, so `isNew` misses it — detect it explicitly so
+    // index/iteration readers of the array node re-run.
+    const isArrayLengthChange =
+      property === "length" && Array.isArray(writable) && writable.length !== value;
     writable[property] = unwrap(value);
     state.children?.delete(property);
 
     if (typeof property === "string") {
       state.env.onChange(state.path + SEP + property);
-      // A new key changes the node's shape — invalidate readers that enumerated it.
-      if (isNew) state.env.onChange(state.path);
+      // A new key OR an array-length change alters the node's shape — invalidate
+      // readers that enumerated it / read indices.
+      if (isNew || isArrayLengthChange) state.env.onChange(state.path);
     } else {
       state.env.onChange(state.path);
     }

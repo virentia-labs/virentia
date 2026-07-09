@@ -12,7 +12,12 @@ import {
   registerInspectorScope,
   shouldStopAfterInspectorNode,
 } from "./inspector";
-import { commitActiveTransaction, enterTransaction, exitTransaction } from "./transaction";
+import {
+  activeTransactionDepth,
+  commitActiveTransaction,
+  enterTransaction,
+  exitTransaction,
+} from "./transaction";
 import { getScopedObservers } from "./scoped-edges";
 import { popNodeFrame, pushNodeFrame } from "./call-stack";
 
@@ -230,12 +235,19 @@ export async function run(options: RunOptions): Promise<void> {
 
   const previousPage = currentPage;
   const previousScope = getActiveScope();
-  const result = drainQueue(drain);
+  let result: Promise<void> | void;
 
-  // Restore the caller's synchronous frame as soon as the synchronous portion of
-  // the drain yields.
-  currentPage = previousPage;
-  setActiveScope(previousScope);
+  try {
+    result = drainQueue(drain);
+  } finally {
+    // Restore the caller's synchronous frame as soon as the synchronous portion of
+    // the drain yields — in a `finally` so a SYNCHRONOUS throw from the drain (a
+    // sync node body / auto-reaction throwing) still restores it, instead of
+    // leaving the firing scope installed as the global ambient after the rejected
+    // run.
+    currentPage = previousPage;
+    setActiveScope(previousScope);
+  }
 
   if (isPromiseLike(result)) {
     // Register with an active scope-task collector so `scoped` can await this
@@ -425,7 +437,13 @@ function processItem(drain: DrainContext, item: KernelWorkItem): Promise<void> |
         }
 
         if (isPromiseLike(result)) {
-          commitActiveTransaction();
+          // Publish this async node's synchronous writes before it parks — but
+          // ONLY at the outermost transaction. A reentrant async node (depth > 1)
+          // shares its ancestor's still-open transaction; committing here would
+          // prematurely flush the ancestor's pending writes and leak an
+          // intermediate store value to observers. Nested writes commit atomically
+          // at the ancestor's own boundary instead.
+          if (activeTransactionDepth() <= 1) commitActiveTransaction();
 
           const previousPage = currentPage;
           const previousScope = getActiveScope();

@@ -589,7 +589,14 @@ function createComputed<T>(
 
       if (options.hasSkipToken && Object.is(collected.result, options.skipToken)) {
         if (!state.initialized) {
-          state.value = options.hasInitialValue ? options.initialValue : (collected.result as T);
+          // Never surface the INTERNAL `defaultSkipToken` sentinel (used by
+          // `filter`) as a value — fall back to `undefined`. A user-provided
+          // skipToken is theirs to observe, so keep it.
+          state.value = options.hasInitialValue
+            ? options.initialValue
+            : Object.is(collected.result, defaultSkipToken)
+              ? (undefined as T)
+              : (collected.result as T);
           state.initialized = true;
         }
 
@@ -713,7 +720,10 @@ function createStoreProxyHandlers<T>(
       const stateKeys =
         mode === "ref" ? ["value"] : isObject(read()) ? Reflect.ownKeys(read() as object) : [];
 
-      return [...Reflect.ownKeys(target), ...stateKeys];
+      // Dedupe: a state field named like a StoreApi member (e.g. `node`, `map`)
+      // would otherwise appear twice, violating the ownKeys proxy invariant
+      // ("trap returned duplicate entries") and crashing any enumeration.
+      return [...new Set<string | symbol>([...Reflect.ownKeys(target), ...(stateKeys as (string | symbol)[])])];
     },
 
     getOwnPropertyDescriptor(target, property) {
