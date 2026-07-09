@@ -1,5 +1,13 @@
 # @virentia/mutable
 
+## 0.1.5
+
+### Patch Changes
+
+- feat: some fixes & fully tests coverage
+- Updated dependencies
+  - @virentia/core@0.6.4
+
 ## 0.1.4
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @virentia/core
 
+## 0.6.4
+
+### Patch Changes
+
+- feat: some fixes & fully tests coverage
+
 ## 0.6.3
 
 ### Patch Changes

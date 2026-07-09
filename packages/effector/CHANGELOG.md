@@ -1,5 +1,13 @@
 # @virentia/effector
 
+## 0.3.10
+
+### Patch Changes
+
+- feat: some fixes & fully tests coverage
+- Updated dependencies
+  - @virentia/core@0.6.4
+
 ## 0.3.9
 
 ### Patch Changes

@@ -1,5 +1,14 @@
 # @virentia/inspector
 
+## 0.2.10
+
+### Patch Changes
+
+- feat: some fixes & fully tests coverage
+- Updated dependencies
+  - @virentia/core@0.6.4
+  - @virentia/react@0.2.12
+
 ## 0.2.9
 
 ### Patch Changes
