@@ -161,7 +161,10 @@ export function effect<Params, Done, Fail = unknown>(
   const settled = event<EffectFinally<Params, Done, Fail>>(name ? `${name}.settled` : undefined);
   const aborted = event<EffectAborted<Params>>(name ? `${name}.aborted` : undefined);
   const abortEvent = event<unknown | void>(name ? `${name}.abort` : undefined);
-  let inFlight = 0;
+  // Per-scope in-flight counter: a single closure counter would let concurrent
+  // calls of this effect in different scopes clobber each other's inFlight/pending.
+  const inFlightByScope = new WeakMap<Scope, number>();
+  const inFlightOf = (scope: Scope): number => inFlightByScope.get(scope) ?? 0;
   let result: Effect<Params, Done, Fail>;
 
   const variant: Effect<Params, Done, Fail>["variant"] = ((
@@ -209,7 +212,7 @@ export function effect<Params, Done, Fail = unknown>(
   };
 
   const setInFlight = (scope: Scope, next: number): void => {
-    inFlight = next;
+    inFlightByScope.set(scope, next);
     void run({ unit: inFlightStore.node, payload: next, scope });
     void run({ unit: pending.node, payload: next > 0, scope });
   };
@@ -222,9 +225,13 @@ export function effect<Params, Done, Fail = unknown>(
     });
   };
 
-  const abortActive = (reason?: unknown): void => {
+  // `onlyScope === undefined` aborts every active call (owner-dispose cleanup);
+  // a concrete scope aborts only that scope's calls, so a user `fx.abort()` in one
+  // scope never cancels an unrelated in-flight call living in another scope.
+  const abortActive = (reason?: unknown, onlyScope?: Scope | null): void => {
     for (const call of activeCalls) {
       if (call.completed || call.controller.signal.aborted) continue;
+      if (onlyScope !== undefined && call.scope !== onlyScope) continue;
 
       call.controller.abort(reason);
       emitAbort(call, getAbortReason(call.controller.signal));
@@ -236,10 +243,16 @@ export function effect<Params, Done, Fail = unknown>(
   });
 
   const abort = Object.assign((reason?: unknown) => {
-    abortActive(reason);
     const scope = getActiveScope();
+    const realScope = scope ? unwrapMicroScope(scope) : null;
 
-    return scope ? run({ unit: abortEvent.node, payload: reason, scope }) : Promise.resolve();
+    // Scope-local: abort only the calls that belong to the scope `abort()` was
+    // invoked in (the owner-dispose path above is the only unfiltered sweep).
+    abortActive(reason, realScope);
+
+    return realScope
+      ? run({ unit: abortEvent.node, payload: reason, scope: realScope })
+      : Promise.resolve();
   }, abortEvent) as EventCallable<unknown | void>;
 
   const executeNode = node({
@@ -292,7 +305,7 @@ export function effect<Params, Done, Fail = unknown>(
 
       activeCalls.delete(outcome.call);
       outcome.call.cleanup();
-      setInFlight(outcome.call.scope, Math.max(0, inFlight - 1));
+      setInFlight(outcome.call.scope, Math.max(0, inFlightOf(outcome.call.scope) - 1));
 
       if (outcome.status === "done") {
         const finalOutcome = {
@@ -347,7 +360,7 @@ export function effect<Params, Done, Fail = unknown>(
         : createCall(ctx.value as Params, undefined, ctx.scope);
 
       activeCalls.add(call);
-      setInFlight(call.scope, inFlight + 1);
+      setInFlight(call.scope, inFlightOf(call.scope) + 1);
       void started(call.params);
 
       return call;
@@ -503,8 +516,21 @@ export function runEffectHandler<Params, Done>(
   return handler(params, ctx);
 }
 
+// getAbortReason is called more than once per abort (the rejection and the
+// aborted event). Memoize per signal so every caller sees the SAME reason
+// object — otherwise the `?? new Error("Effect aborted")` fallback would mint a
+// fresh Error each call and the aborted.reason would differ from the rejection.
+const abortReasonBySignal = new WeakMap<AbortSignal, unknown>();
+
 function getAbortReason(signal: AbortSignal): unknown {
-  return signal.reason ?? new Error("Effect aborted");
+  if (abortReasonBySignal.has(signal)) {
+    return abortReasonBySignal.get(signal);
+  }
+
+  const reason = signal.reason ?? new Error("Effect aborted");
+  abortReasonBySignal.set(signal, reason);
+
+  return reason;
 }
 
 function isEffectCallState<Params, Done>(value: unknown): value is EffectCallState<Params, Done> {

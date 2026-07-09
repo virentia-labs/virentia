@@ -45,21 +45,28 @@ export type UnitRef<Unit> =
         ? (...args: EffectCallArgs<Params>) => Promise<Done>
         : never;
 
+// Distributive over `V` so an OPTIONAL unit field (`count?: Store<number>`)
+// resolves per-member to `number | undefined` (matching the runtime) rather than
+// leaving the raw store — the mapped-type indexed access is not distributive.
+type ResolveVueField<V> = V extends ComponentModel<infer ChildModel>
+  ? ComponentModel<ChildModel>
+  : // Detect a unit by its `.node` marker rather than `UnitLike`: `UnitLike`
+    // collapses to `any` (because `ReactiveWritable<any>` = `any & …` = `any`),
+    // which would match every non-unit field and unwrap it to `never`.
+    V extends { readonly node: unknown }
+    ? UnitRef<V>
+    : // Arrays are kept RAW to match the runtime (buildReactiveModel does not
+      // recurse into arrays), so their elements are not unwrapped.
+      V extends readonly unknown[]
+      ? V
+      : V extends (...args: any[]) => any
+        ? V
+        : V extends object
+          ? ReactiveModel<V>
+          : V;
+
 export type ReactiveModel<Model> = {
-  readonly [Key in keyof Model as Key extends "dispose"
-    ? never
-    : Key]: Model[Key] extends ComponentModel<infer ChildModel>
-    ? ComponentModel<ChildModel>
-    : // Detect a unit by its `.node` marker rather than `UnitLike`: `UnitLike`
-      // collapses to `any` (because `ReactiveWritable<any>` = `any & …` = `any`),
-      // which would match every non-unit field and unwrap it to `never`.
-      Model[Key] extends { readonly node: unknown }
-      ? UnitRef<Model[Key]>
-      : Model[Key] extends (...args: any[]) => any
-        ? Model[Key]
-        : Model[Key] extends object
-          ? ReactiveModel<Model[Key]>
-          : Model[Key];
+  readonly [Key in keyof Model as Key extends "dispose" ? never : Key]: ResolveVueField<Model[Key]>;
 };
 
 export interface ModelContext<Props, Key = undefined> {

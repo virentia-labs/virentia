@@ -148,41 +148,50 @@ export function serializeDevtoolsValue(value: unknown): SerializedDevtoolsValue 
       return { kind: "circular", preview: "[Circular]" };
     }
 
+    // `seen` tracks the CURRENT recursion path only — added on enter, removed on
+    // exit — so real cycles are still detected, but a sibling or the second
+    // (value) pass over the same object is not mistaken for a cycle. A shared
+    // set would let the preview pass poison the value pass and drop nested
+    // child values below the depth cutoff.
     seen.add(input);
 
-    if (Array.isArray(input)) {
-      const items =
-        depth >= 2 ? [] : input.slice(0, 8).map((item) => serialize(item, depth + 1).value);
+    try {
+      if (Array.isArray(input)) {
+        const items =
+          depth >= 2 ? [] : input.slice(0, 8).map((item) => serialize(item, depth + 1).value);
+
+        return {
+          kind: "array",
+          preview: truncate(
+            `[${input
+              .slice(0, 5)
+              .map((item) => serialize(item, depth + 1).preview)
+              .join(", ")}${input.length > 5 ? ", ..." : ""}]`,
+          ),
+          value: items,
+        };
+      }
+
+      const entries = Object.entries(input as Record<string, unknown>);
+      const preview = `{${entries
+        .slice(0, 5)
+        .map(([key, item]) => `${key}: ${serialize(item, depth + 1).preview}`)
+        .join(", ")}${entries.length > 5 ? ", ..." : ""}}`;
+      const value =
+        depth >= 2
+          ? undefined
+          : Object.fromEntries(
+              entries.slice(0, 12).map(([key, item]) => [key, serialize(item, depth + 1).value]),
+            );
 
       return {
-        kind: "array",
-        preview: truncate(
-          `[${input
-            .slice(0, 5)
-            .map((item) => serialize(item, depth + 1).preview)
-            .join(", ")}${input.length > 5 ? ", ..." : ""}]`,
-        ),
-        value: items,
+        kind: "object",
+        preview: truncate(preview),
+        value,
       };
+    } finally {
+      seen.delete(input);
     }
-
-    const entries = Object.entries(input as Record<string, unknown>);
-    const preview = `{${entries
-      .slice(0, 5)
-      .map(([key, item]) => `${key}: ${serialize(item, depth + 1).preview}`)
-      .join(", ")}${entries.length > 5 ? ", ..." : ""}}`;
-    const value =
-      depth >= 2
-        ? undefined
-        : Object.fromEntries(
-            entries.slice(0, 12).map(([key, item]) => [key, serialize(item, depth + 1).value]),
-          );
-
-    return {
-      kind: "object",
-      preview: truncate(preview),
-      value,
-    };
   }
 }
 
@@ -511,15 +520,19 @@ export function createWebSocketTransport(
       return;
     }
 
+    let created: WebSocketLike;
+
     try {
-      socket = new WebSocketImpl(url);
+      created = new WebSocketImpl(url);
     } catch {
       scheduleReconnect();
       return;
     }
 
-    socket.addEventListener("open", flush);
-    socket.addEventListener("message", (event) => {
+    socket = created;
+
+    created.addEventListener("open", flush);
+    created.addEventListener("message", (event) => {
       if (typeof event.data !== "string") {
         return;
       }
@@ -530,12 +543,16 @@ export function createWebSocketTransport(
         // Ignore invalid payloads. The transport carries JSON envelopes only.
       }
     });
-    socket.addEventListener("close", () => {
-      socket = null;
-      scheduleReconnect();
+    created.addEventListener("close", () => {
+      // Only a close from the CURRENT socket detaches it; a superseded socket's
+      // late close must not null the live socket that replaced it.
+      if (socket === created) {
+        socket = null;
+        scheduleReconnect();
+      }
     });
-    socket.addEventListener("error", () => {
-      socket?.close();
+    created.addEventListener("error", () => {
+      created.close();
     });
   };
 

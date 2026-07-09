@@ -212,7 +212,10 @@ export function reaction(
     runTokens.set(realScope, token);
 
     const commitIfLatest = (): void => {
-      if (runTokens.get(realScope) === token) {
+      // Guard on `stopped`: a parked async auto run must NOT re-attach its
+      // dependency edges after `stop()` / owner-dispose, which would resurrect a
+      // stopped reaction onto its sources (a leak that defeats GC).
+      if (!stopped && runTokens.get(realScope) === token) {
         commitDependencies(realScope, micro);
       }
     };
@@ -299,7 +302,17 @@ export function reaction(
     // async body's effect `await`s are reentrant — that keeps the ambient
     // micro-scope alive across them, exactly like a later triggered run. A
     // synchronous body still runs synchronously inside this drain.
-    void run({ unit: reactionNode, scope: configuredScopes?.[0] });
+    //
+    // An auto reaction only forms its dynamic per-scope edges by RUNNING in a
+    // scope, so the creation pass must run in EVERY configured scope — otherwise a
+    // `scope: [a, b]` auto reaction would subscribe (and ever fire) only in `a`.
+    if (configuredScopes) {
+      for (const configuredScope of configuredScopes) {
+        void run({ unit: reactionNode, scope: configuredScope });
+      }
+    } else {
+      void run({ unit: reactionNode, scope: undefined });
+    }
   }
 
   const result: Reaction = {

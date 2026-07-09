@@ -74,7 +74,8 @@ export function isPlainObject(value: unknown): value is Record<PropertyKey, unkn
 }
 
 export function getComponentName(view: ComponentType<any>): string {
-  return `Virentia(${view.displayName ?? view.name ?? "Component"})`;
+  // `||` not `??`: an anonymous view has `name === ""`, which `??` would keep.
+  return `Virentia(${view.displayName || view.name || "Component"})`;
 }
 
 function isArraySnapshot(unit: AnyStore, keys: readonly PropertyKey[]): boolean {

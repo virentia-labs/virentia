@@ -82,8 +82,14 @@ export function lazyModel<Model extends object>(loader: LazyModelLoader<Model>):
       let unit = units.get(property);
 
       if (!unit) {
-        unit = createLazyUnit((scope) =>
-          resolver.load(scope).then((model) => Reflect.get(model, property, model)),
+        unit = createLazyUnit(
+          (scope) => resolver.load(scope).then((model) => Reflect.get(model, property, model)),
+          // Ensure EVERY scope that launches this unit registers with the model
+          // resolver (which tracks `pending` per scope), even when the unit's own
+          // value promise is already memoized by an earlier scope's launch.
+          (scope) => {
+            void resolver.load(scope);
+          },
         );
         units.set(property, unit);
 
@@ -135,7 +141,7 @@ export function lazyModel<Model extends object>(loader: LazyModelLoader<Model>):
   });
 }
 
-function createLazyUnit<T>(loader: LazyLoader<T>): T {
+function createLazyUnit<T>(loader: LazyLoader<T>, ensureLoaded?: (scope: Scope) => void): T {
   const resolver = createLazyResolver(loader);
   const mirroredNext = createMirroredNextList();
   const children = new Map<PropertyKey, unknown>();
@@ -156,6 +162,8 @@ function createLazyUnit<T>(loader: LazyLoader<T>): T {
   });
   const target = (...args: unknown[]) => {
     const scope = requireActiveScope(() => `call ${describeNode(lazyNode)}`);
+
+    ensureLoaded?.(scope);
 
     return resolver.load(scope).then((unit) => {
       primeUnit(unit);
