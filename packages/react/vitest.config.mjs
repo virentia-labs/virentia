@@ -13,6 +13,9 @@ export default defineConfig({
   },
   test: {
     cache: false,
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
+    typecheck: {
+      include: ["tests/types/**/*.test-d.ts", "tests/types/**/*.test-d.tsx"],
+    },
   },
 });

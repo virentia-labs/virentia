@@ -45,7 +45,7 @@
     "build": "tsdown && cp lib/client/shared/ui/public/styles.css dist/styles.css && vite build",
     "dev": "vite",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run && vitest typecheck --run --passWithNoTests",
     "test:watch": "vitest"
   },
   "dependencies": {
