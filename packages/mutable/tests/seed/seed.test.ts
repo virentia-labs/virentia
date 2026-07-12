@@ -51,16 +51,5 @@ describe("mutableStore", () => {
       expect(scoped(x, () => state.value.count)).toBe(11);
       expect(scoped(y, () => state.value.count)).toBe(20); // untouched by x
     });
-
-    // TODO(phase-2 dedup): overlaps "reflects the seeded base" above
-    // (was mutable.test.ts "can be seeded per scope").
-    it("reads back the seeded value per scope", () => {
-      const s = scope();
-      const state = mutableStore({ count: 0 });
-
-      seedMutableStore(s, state, { count: 42 });
-
-      expect(scoped(s, () => state.value.count)).toBe(42);
-    });
   });
 });

@@ -34,22 +34,5 @@ describe("mutableStore", () => {
       expect(scoped(x, () => count.value)).toBe(1);
       expect(scoped(y, () => count.value)).toBe(0);
     });
-
-    // TODO(phase-2 dedup): overlaps "hides a divergence from another scope" above
-    // (was mutable.test.ts "isolates scopes and shares the untouched default").
-    it("isolates a divergence and shares the untouched default across scopes", () => {
-      const initial = { a: { v: 1 }, b: { v: 2 } };
-      const state = mutableStore(initial);
-      const x = scope();
-      const y = scope();
-
-      scoped(x, () => (state.value.a.v = 10));
-
-      // `y` never diverged — it still sees the default, `a` unchanged.
-      expect(scoped(y, () => state.value.a.v)).toBe(1);
-      // Both scopes still share the untouched `b` with the default.
-      expect(scoped(x, () => unwrap(state.value.b))).toBe(initial.b);
-      expect(scoped(y, () => unwrap(state.value.b))).toBe(initial.b);
-    });
   });
 });

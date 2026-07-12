@@ -36,22 +36,6 @@ describe("mutableStore", () => {
         expect((committedRef as { n: number }).n).toBe(5);
       });
     });
-
-    // TODO(phase-2 dedup): overlaps "is mutated in place, keeping a stable unwrap
-    // identity" above (was mutable.test.ts "mutates a branch the scope already owns").
-    it("mutates a branch it already owns in place with a stable identity", () => {
-      const state = mutableStore({ list: [] as number[] });
-      const s = scope();
-
-      scoped(s, () => state.value.list.push(1));
-      const firstRef = scoped(s, () => unwrap(state.value.list));
-
-      scoped(s, () => state.value.list.push(3));
-      const secondRef = scoped(s, () => unwrap(state.value.list));
-
-      expect([...secondRef]).toEqual([1, 3]);
-      expect(secondRef).toBe(firstRef); // owned → mutated in place
-    });
   });
 
   describe("an object assigned into the tree", () => {
@@ -81,18 +65,5 @@ describe("mutableStore", () => {
       });
     });
 
-    // TODO(phase-2 dedup): overlaps "is never mutated" above
-    // (was mutable.test.ts "does not mutate an object assigned into the tree").
-    it("is not mutated when a later in-draft write copies-on-write", () => {
-      const external = { k: 1 };
-      const state = mutableStore({ ref: null as null | { k: number } });
-      const s = scope();
-
-      scoped(s, () => (state.value.ref = external));
-      scoped(s, () => (state.value.ref!.k = 2)); // copy-on-write, external untouched
-
-      expect(external.k).toBe(1);
-      expect(scoped(s, () => state.value.ref!.k)).toBe(2);
-    });
   });
 });

@@ -78,7 +78,7 @@ describe("component (cached)", () => {
     cache.clear();
   });
 
-  // TODO(phase-2 dedup): overlaps "reuses a cached instance across unmount without disposing it"
+  // kept: uniquely asserts cache.delete() forces a fresh instance (created==2, count resets to 0); partner never exercises delete
   it("keeps cached models alive across unmounts until the cache deletes them", async () => {
     const appScope = scope();
     let created = 0;

@@ -71,7 +71,7 @@ describe("component", () => {
     expect(lifecycle).toEqual(["mounted:1", "unmounted:0"]);
   });
 
-  // TODO(phase-2 dedup): overlaps "emits ordered lifecycle events with a live mounts counter"
+  // kept: also asserts prop-update reactivity (step 2->3 yields text 5) and click counting alongside the lifecycle events the partner covers
   it("runs a mounted model through prop updates and lifecycle events", async () => {
     const appScope = scope();
     const lifecycle: string[] = [];

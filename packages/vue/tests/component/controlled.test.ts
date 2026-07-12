@@ -53,7 +53,7 @@ describe("component", () => {
     (model.dispose as () => void)();
   });
 
-  // TODO(phase-2 dedup): overlaps "keeps a controlled model usable and undisposed after host unmount"
+  // kept: also asserts lifecycle ordering (mounted:1/unmounted:0) and prop-update reactivity (step 2->5 yields text 7), beyond the partner's dispose-after-unmount check
   it("drives a controlled model created outside Vue", async () => {
     const appScope = scope();
     const lifecycle: string[] = [];

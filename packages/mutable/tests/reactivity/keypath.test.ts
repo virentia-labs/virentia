@@ -60,8 +60,8 @@ describe("mutableStore", () => {
       expect(scoped(s, () => deep.value)).toBe(5);
     });
 
-    // TODO(phase-2 dedup): overlaps "leaves a sibling path's reader untouched"
-    // (was mutable.test.ts "subscribes computeds per keypath").
+    // kept: asserts both isolation directions plus the positive re-runs
+    // (countRuns/couponRuns), which the one-directional partner lacks.
     it("does not re-run a computed whose keypath a sibling change never touched", async () => {
       const s = scope();
       const changeItems = event<void>();
@@ -96,8 +96,8 @@ describe("mutableStore", () => {
       expect(countRuns).toBe(1); // `count` never read `coupon` → still 1
     });
 
-    // TODO(phase-2 dedup): overlaps "leaves a sibling path's reader untouched"
-    // (was mutable.test.ts "keeps deep siblings independent").
+    // kept: also asserts the positive re-run (aRuns === 1), which the partner
+    // (bRuns === 0 only) does not.
     it("keeps deep siblings independent", async () => {
       const s = scope();
       const editA = event<void>();

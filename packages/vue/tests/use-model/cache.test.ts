@@ -74,7 +74,7 @@ describe("useModel", () => {
 });
 
 describe("component with a model cache", () => {
-  // TODO(phase-2 dedup): overlaps "keeps a cached model alive across unmount and remount"
+  // kept: exercises the component() cache wrapper and asserts recreation after cache.delete (created=2, count reset to 0), beyond the raw useModel partner
   it("keeps cached models alive across unmounts until the cache deletes them", async () => {
     const appScope = scope();
     let created = 0;

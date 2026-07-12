@@ -4,7 +4,7 @@ import { scope, scoped, store } from "@virentia/core";
 import { render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { describe, expect, it } from "vitest";
-import { useProvidedScope, useUnit } from "../../lib";
+import { useUnit } from "../../lib";
 import { useOptionalProvidedScope } from "../../lib/scope";
 import type { Scope } from "@virentia/core";
 import { resetAmbientScopeAfterEach } from "../support/ambient-scope-reset";
@@ -38,15 +38,5 @@ describe("ScopeProvider", () => {
     }
     render(createElement(Reader));
     expect(captured).toBeNull();
-  });
-
-  // TODO(phase-2 dedup): overlaps "throws when an uncontrolled component renders without a ScopeProvider"
-  it("throws from useProvidedScope when no scope is provided", () => {
-    function Reader() {
-      useProvidedScope();
-      return null;
-    }
-
-    expect(() => render(createElement(Reader))).toThrow("[useProvidedScope] Scope is not provided");
   });
 });

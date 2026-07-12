@@ -53,24 +53,5 @@ describe("mutableStore", () => {
       expect(runs).toBe(1);
       expect(scoped(s, () => ax.value)).toBe(1);
     });
-
-    // TODO(phase-2 dedup): overlaps "does not recompute on an unrelated commit"
-    // (was mutable.test.ts "makes map granular").
-    it("is granular so unrelated changes do not notify it", async () => {
-      const s = scope();
-      const changeItems = event<void>();
-      const cart = mutableStore({ items: [] as number[], coupon: "" });
-
-      const coupon = cart.map((value) => value.coupon);
-      let runs = 0;
-      reaction({ on: coupon, run: () => void runs++ });
-      reaction({ on: changeItems, run: () => void cart.value.items.push(1) });
-
-      scoped(s, () => void coupon.value);
-      runs = 0;
-
-      await scoped(s, () => changeItems());
-      expect(runs).toBe(0); // the map read only `coupon`
-    });
   });
 });

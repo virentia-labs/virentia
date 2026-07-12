@@ -62,8 +62,8 @@ describe("mutableStore", () => {
       expect(initial).toEqual(snapshot);
     });
 
-    // TODO(phase-2 dedup): overlaps "never mutates the initial on the first divergence"
-    // above (was mutable.test.ts "copy-on-writes only touched branches").
+    // kept: also reads state.value.a.v === 10 back to verify the divergence's new
+    // value, which the partner does not.
     it("copies a touched branch and never touches the default", () => {
       const initial = { a: { v: 1 }, b: { v: 2 } };
       const state = mutableStore(initial);

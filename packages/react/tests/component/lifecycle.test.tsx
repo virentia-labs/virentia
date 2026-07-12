@@ -172,7 +172,7 @@ describe("component (lifecycle)", () => {
     expect(button().textContent).toBe("0");
   });
 
-  // TODO(phase-2 dedup): overlaps "rewrites a props change into the props store so reactions observe it"
+  // kept: uniquely asserts context.mounted/unmounted reactions and mounts.value (mounted:1, unmounted:0); partner only covers the props-change path
   it("drives a component model through prop updates and lifecycle events", async () => {
     const appScope = scope();
     const lifecycle: string[] = [];
@@ -235,54 +235,6 @@ describe("component (lifecycle)", () => {
     view.unmount();
 
     expect(lifecycle).toEqual(["mounted:1", "unmounted:0"]);
-  });
-
-  // TODO(phase-2 dedup): overlaps "reuses the instance and keeps reactions alive across a StrictMode remount"
-  it("keeps factory model reactions alive across a StrictMode remount cycle", async () => {
-    const appScope = scope();
-
-    function createCounterModel(context: ModelContext<{ step: number }>) {
-      const clicked = event<void>();
-      const count = store(0);
-
-      reaction({
-        on: clicked,
-        run() {
-          count.value += context.props.step;
-        },
-      });
-
-      return { clicked, count };
-    }
-
-    const Counter = component({
-      model: createCounterModel,
-      view({ model }) {
-        return createElement("button", { onClick: () => model.clicked() }, model.count);
-      },
-    });
-
-    // StrictMode runs mount -> unmount -> remount in dev with no render in
-    // between. The deferred-dispose must skip disposing the reused instance.
-    await act(async () => {
-      render(
-        createElement(
-          StrictMode,
-          null,
-          createElement(ScopeProvider, { scope: appScope }, createElement(Counter, { step: 2 })),
-        ),
-      );
-    });
-
-    expect(button().textContent).toBe("0");
-
-    // Without the fix the reaction is detached on the fake unmount, so the
-    // click is a no-op and the text stays "0".
-    await act(async () => {
-      fireEvent.click(button());
-    });
-
-    expect(button().textContent).toBe("2");
   });
 
   it("unwraps nested units at depth in the view while staying reactive", async () => {

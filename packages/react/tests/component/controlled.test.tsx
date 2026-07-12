@@ -158,7 +158,7 @@ describe("component.create (controlled)", () => {
     expect(button().textContent).toBe("2");
   });
 
-  // TODO(phase-2 dedup): overlaps "renders a controlled component with no ScopeProvider using the model's creation scope"
+  // kept: asserts a full controlled lifecycle (context.mounted/unmounted, mounts.value, props update to 7, survives unmount to 12) far beyond the partner's creation-scope render
   it("creates a controlled component model outside React", async () => {
     const appScope = scope();
     const lifecycle: string[] = [];
@@ -222,47 +222,4 @@ describe("component.create (controlled)", () => {
     model.dispose();
   });
 
-  // TODO(phase-2 dedup): overlaps "forwards a raw child ComponentModel from a parent as a controlled prop"
-  it("passes child component models through parent component models", async () => {
-    const appScope = scope();
-
-    function createCounterModel(context: ModelContext<{ step: number }>) {
-      const clicked = event<void>();
-      const count = store(0);
-
-      reaction({
-        on: clicked,
-        run() {
-          count.value += context.props.step;
-        },
-      });
-
-      return { clicked, count };
-    }
-
-    const Counter = component({
-      model: createCounterModel,
-      view({ model }) {
-        return createElement("button", { onClick: () => model.clicked() }, model.count);
-      },
-    });
-    const Parent = component({
-      model() {
-        const counter = Counter.create({ step: 1 });
-
-        return { counter };
-      },
-      view({ model }) {
-        return createElement(Counter, { step: 2, model: model.counter });
-      },
-    });
-
-    renderWithScope(appScope, createElement(Parent, {}));
-
-    await act(async () => {
-      fireEvent.click(button());
-    });
-
-    expect(button().textContent).toBe("2");
-  });
 });

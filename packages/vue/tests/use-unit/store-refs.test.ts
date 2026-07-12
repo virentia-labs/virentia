@@ -153,7 +153,7 @@ describe("bindUnit", () => {
 });
 
 describe("useUnit", () => {
-  // TODO(phase-2 dedup): overlaps "dispatches the event inside the bound scope on every invocation"
+  // kept: covers component-level useUnit for a store ref and an event callable plus cross-scope isolation (dispatch in another scope leaves the component untouched), beyond the primitive bindUnit partner
   it("reads a store and dispatches an event in the provided scope", async () => {
     const appScope = scope();
     const otherScope = scope();
