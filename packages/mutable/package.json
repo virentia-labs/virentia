@@ -39,7 +39,7 @@
   },
   "scripts": {
     "build": "tsdown",
-    "test": "vitest run",
+    "test": "vitest run && vitest typecheck --run --passWithNoTests",
     "test:watch": "vitest",
     "bench": "vitest bench --run"
   },
