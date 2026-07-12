@@ -51,7 +51,7 @@ describe("useUnit", () => {
     expect((bound[0] as Ref<string>).value).toBe("z");
   });
 
-  // TODO(phase-2 dedup): overlaps "preserves positional order for a mixed tuple of store and event units"
+  // kept: also covers record-shape binding ({ changed, name }) into refs and callables, which the tuple-only partner doesn't
   it("binds tuple and record shapes into refs and callables", async () => {
     const appScope = scope();
     const changed = event<string>();

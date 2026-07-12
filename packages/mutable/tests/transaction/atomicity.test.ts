@@ -74,8 +74,8 @@ describe("mutableStore", () => {
       });
     });
 
-    // TODO(phase-2 dedup): overlaps "commits a replace followed by mutations as one
-    // combined result" (was mutable.test.ts "defers a replace + mutation").
+    // kept: also reads the committed value back from the store after the commit,
+    // which the partner (asserts only the subscription payload) does not.
     it("defers a replace plus mutation to a single atomic commit inside a reaction", async () => {
       const s = scope();
       const go = event<void>();

@@ -70,8 +70,8 @@ describe("mutableStore", () => {
       expect(aRuns).toBe(0); // the `a` reader is untouched by a `b` change
     });
 
-    // TODO(phase-2 dedup): overlaps "re-runs an unwrap of a subtree on any store
-    // change" (was mutable.test.ts "unwrap takes a coarse dependency").
+    // kept: unwraps the whole store value (root); the partner unwraps a subtree,
+    // a distinct scenario.
     it("re-runs an unwrap of the whole value on any change", async () => {
       const s = scope();
       const bump = event<void>();

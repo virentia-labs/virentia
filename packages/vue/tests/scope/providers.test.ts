@@ -84,18 +84,3 @@ describe("scope providers", () => {
     expect(wrapper.text()).toBe("hi");
   });
 });
-
-describe("useProvidedScope", () => {
-  // TODO(phase-2 dedup): overlaps "throws from useProvidedScope when no scope is provided"
-  it("throws when mounted without a provided scope", () => {
-    const Reader = defineComponent({
-      setup() {
-        useProvidedScope();
-
-        return () => null;
-      },
-    });
-
-    expect(() => mount(Reader)).toThrow("[useProvidedScope] Scope is not provided");
-  });
-});

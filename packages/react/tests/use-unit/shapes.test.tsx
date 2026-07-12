@@ -125,7 +125,7 @@ describe("useUnit (shapes)", () => {
     expect(all.some((e) => /hook/i.test(e.message))).toBe(true);
   });
 
-  // TODO(phase-2 dedup): overlaps "unwraps each key of an object shape identically"
+  // kept: partner only does a static record read; this uniquely asserts record-shape reactivity (units.name updates "Ada"->"Grace" on dispatch) plus combined tuple+record use
   it("unwraps a tuple shape and a record shape in the same component", async () => {
     const appScope = scope();
     const changed = event<string>();

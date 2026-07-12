@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { event, reaction, scope, scoped, store } from "@virentia/core";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { act, createElement } from "react";
 import { describe, expect, it } from "vitest";
 import { useUnit } from "../../lib";
@@ -130,44 +130,4 @@ describe("useUnit (store binding)", () => {
     expect(rendersB).toBe(baseB);
   });
 
-  // TODO(phase-2 dedup): overlaps "re-renders once per committed scoped write"
-  it("reads a store value and dispatches an event through the provided scope", async () => {
-    const appScope = scope();
-    const otherScope = scope();
-    const incremented = event<number>();
-    const count = store(0);
-
-    reaction({
-      on: incremented,
-      run(amount) {
-        count.value += amount;
-      },
-    });
-
-    function Counter() {
-      const value = useUnit(count);
-      const increment = useUnit(incremented);
-
-      return createElement("button", { onClick: () => increment(2) }, value);
-    }
-
-    renderWithScope(appScope, createElement(Counter));
-
-    expect(button().textContent).toBe("0");
-
-    await act(async () => {
-      fireEvent.click(button());
-    });
-
-    expect(button().textContent).toBe("2");
-
-    await act(async () => {
-      await scoped(otherScope, () => incremented(10));
-    });
-
-    expect(button().textContent).toBe("2");
-    scoped(otherScope, () => {
-      expect(count.value).toBe(10);
-    });
-  });
 });
