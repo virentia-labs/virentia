@@ -423,6 +423,8 @@ function createComputed<T>(
   // stores in different scopes is invalidated precisely rather than from a
   // global union of every scope's branches.
   const staticDependencies = new Set<Node>();
+  // Set once a scope-less observer activates this computed (see `activate`).
+  let activated = false;
   const invalidator = node({
     meta: withInspectorMeta(undefined, {
       type: "computed.invalidate",
@@ -475,6 +477,7 @@ function createComputed<T>(
   });
 
   invalidator.next = [storeNode];
+  storeNode.onObserve = activate;
   prepareInspectorSnapshotNode(storeNode, inspectDependencies);
 
   for (const dependency of initialDependencies) {
@@ -660,6 +663,65 @@ function createComputed<T>(
 
     append(dependency, invalidator);
     staticDependencies.add(dependency);
+  }
+
+  // Called when a scope-less (global) observer attaches to this computed. A
+  // global subscription must fire in EVERY scope its dependency changes in, not
+  // only in scopes where the computed happened to be read. Dependencies are
+  // normally discovered lazily, per-scope, on evaluation — so an unread computed
+  // has no edges in a fresh scope and never invalidates there. Here we evaluate
+  // once in a throwaway scope to discover the dependencies and promote them to
+  // GLOBAL edges (like a `.map` source), then transitively activate any computed
+  // dependency so a chain of computeds also becomes global.
+  //
+  // The per-scope precision of an UN-observed computed is untouched: this only
+  // runs when a global observer opts in.
+  function activate(): void {
+    if (activated) {
+      return;
+    }
+    activated = true;
+
+    // A `.map`/`.filter` chain already propagates globally through its static
+    // source edges and has no dynamic deps of its own. Do NOT re-run its fn here
+    // (that would break its laziness / compute-count contract) — only make sure
+    // the chain ABOVE it is activated too, so a raw computed at the root of the
+    // chain also becomes global.
+    if (staticDependencies.size > 0) {
+      for (const dependency of staticDependencies) {
+        dependency.onObserve?.();
+      }
+      return;
+    }
+
+    // A raw computed discovers its deps lazily and per-scope, so an unread one has
+    // no edges in a fresh scope. Evaluate once in a throwaway scope to discover
+    // them and promote them to GLOBAL edges (like a static source), then
+    // transitively activate any computed dependency.
+    const previousScope = setActiveScope({
+      values: new Map(),
+      handlers: new Map(),
+      deps: new Map(),
+    });
+
+    try {
+      const collected = collectNodes(fn);
+
+      for (const dependency of collected.nodes) {
+        if (dependency === storeNode) {
+          continue;
+        }
+
+        attachStaticDependency(dependency);
+        dependency.onObserve?.();
+      }
+    } catch {
+      // A computed that throws on eager evaluation (e.g. it reads a dependency
+      // not provided in a bare scope) keeps its lazy, per-scope behavior — it
+      // still fires in any scope where it is read directly.
+    } finally {
+      setActiveScope(previousScope);
+    }
   }
 }
 

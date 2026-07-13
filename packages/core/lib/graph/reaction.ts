@@ -295,6 +295,13 @@ export function reaction(
   if (explicit) {
     for (const source of toArray(input.on)) {
       attach(source.node, reactionNode);
+      // A scope-less reaction observes globally: let a lazy computed source make
+      // its dependency edges global too, so this reaction fires in every scope
+      // the dependency changes in — not only where the computed was already read.
+      // A scoped reaction keeps the per-scope opt-in and does NOT globalize.
+      if (useGlobalEdges) {
+        source.node.onObserve?.();
+      }
       currentDependencies.add(source.node);
     }
   } else {
