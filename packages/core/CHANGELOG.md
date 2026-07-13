@@ -1,5 +1,11 @@
 # @virentia/core
 
+## 0.7.0
+
+### Minor Changes
+
+- feat: some fixes, component mapProps & shape protocol
+
 ## 0.6.4
 
 ### Patch Changes

@@ -1,5 +1,17 @@
 # @virentia/inspector
 
+## 0.3.0
+
+### Minor Changes
+
+- feat: some fixes, component mapProps & shape protocol
+
+### Patch Changes
+
+- Updated dependencies
+  - @virentia/core@0.7.0
+  - @virentia/react@0.3.0
+
 ## 0.2.10
 
 ### Patch Changes
