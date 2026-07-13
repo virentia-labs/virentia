@@ -4,7 +4,7 @@ import { flush } from "../support/async-flush";
 
 describe("effect", () => {
   describe("pre-aborted external signal", () => {
-    it("pins the observed lifecycle for a call made with an already-aborted signal", async () => {
+    it("emits only aborted and the fail channel, never started", async () => {
       const appScope = scope();
       const reason = new Error("pre-aborted");
       const controller = new AbortController();
@@ -14,7 +14,7 @@ describe("effect", () => {
         handlerRan = true;
         return "should-not-run";
       });
-      const events: unknown[] = [];
+      const events: [string, unknown][] = [];
 
       reaction({ on: fx.started, run: (value) => events.push(["started", value]) });
       reaction({ on: fx.aborted, run: (value) => events.push(["aborted", value]) });
@@ -31,19 +31,16 @@ describe("effect", () => {
       // The handler never runs; the call rejects with the signal's reason.
       expect(handlerRan).toBe(false);
 
-      // OBSERVED / PINNED lifecycle for a pre-aborted signal:
-      //   the call still emits `started` (the counter goes up before the execute
-      //   node sees the aborted signal), and `aborted` is emitted eagerly while the
-      //   call is created — BEFORE `started` — followed by the fail trio. Both the
-      //   abort channel and the fail channel fire, matching the mid-flight abort
-      //   contract (aborted + failData). `done`/`doneData` never fire.
+      // A call whose signal was already aborted before it ran never starts:
+      // `aborted` fires (eagerly, as the call is created), then the fail channel
+      // (failed / failData / settled). `started`, `done`, and `doneData` never fire.
       expect(events).toEqual([
         ["aborted", { params: 9, reason }],
-        ["started", 9],
         ["failed", { params: 9, error: reason }],
         ["failData", reason],
         ["settled", { status: "fail", params: 9, error: reason }],
       ]);
+      expect(events.some(([kind]) => kind === "started")).toBe(false);
 
       scoped(appScope, () => {
         expect(fx.inFlight.value).toBe(0);

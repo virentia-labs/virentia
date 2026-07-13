@@ -359,6 +359,15 @@ export function effect<Params, Done, Fail = unknown>(
         ? ctx.value
         : createCall(ctx.value as Params, undefined, ctx.scope);
 
+      // A call whose signal was already aborted before it ran never starts:
+      // `aborted` has already fired (in createCall), so do NOT emit `started` or
+      // bump inFlight — go straight to settling the fail channel (failed /
+      // failData / settled) via the execute node.
+      if (call.controller.signal.aborted) {
+        ctx.launch(executeNode, call);
+        return call.params;
+      }
+
       activeCalls.add(call);
       setInFlight(call.scope, inFlightOf(call.scope) + 1);
       void started(call.params);
