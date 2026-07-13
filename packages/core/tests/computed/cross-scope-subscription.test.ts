@@ -54,4 +54,43 @@ describe("computed", () => {
       expect(seen).toEqual([11]); // 5*2 + 1
     });
   });
+
+  describe("a scope-less subscription on a computed", () => {
+    it("fires when a dependency changes in a scope the computed was never read in", async () => {
+      const s = store(0);
+      const c = computed(() => s.value * 2);
+      const seen: number[] = [];
+      c.subscribe((value) => seen.push(value));
+
+      const sc = scope();
+      await scoped(sc, () => {
+        s.value = 5;
+      });
+      await flush();
+
+      expect(seen).toEqual([10]);
+    });
+
+    it("delivers the scope each change happened in", async () => {
+      const s = store(0);
+      const c = computed(() => s.value + 1);
+      const seen: [number, unknown][] = [];
+      c.subscribe((value, changedScope) => seen.push([value, changedScope]));
+
+      const a = scope();
+      const b = scope();
+      await scoped(a, () => {
+        s.value = 1;
+      });
+      await scoped(b, () => {
+        s.value = 2;
+      });
+      await flush();
+
+      expect(seen).toEqual([
+        [2, a],
+        [3, b],
+      ]);
+    });
+  });
 });

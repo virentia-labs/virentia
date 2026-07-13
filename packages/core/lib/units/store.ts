@@ -490,6 +490,10 @@ function createComputed<T>(
 
     subscribe(fn: StoreSubscriber<T>): () => void {
       subscribers.add(fn);
+      // A subscription carries no scope, so it observes globally: activate the
+      // computed so a dependency change in any scope reaches this subscriber,
+      // even a scope the computed was never read in.
+      activate();
 
       const unsubscribe = () => {
         subscribers.delete(fn);
