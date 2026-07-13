@@ -19,8 +19,8 @@ import type {
   ModelInstance,
   ReactiveModel,
 } from "./types";
-import { bindUnit } from "./use-unit";
-import { isPlainObject, isUnitLike, writeStore } from "./utils";
+import { bindUnit, bindUnits } from "./use-unit";
+import { getShape, isPlainObject, isUnitLike, SHAPE, writeStore } from "./utils";
 
 export function useModel<Model extends object>(model: Model): ReactiveModel<Model>;
 export function useModel<Props, Model extends object>(
@@ -165,7 +165,12 @@ export function buildReactiveModel<Model extends object>(
   for (const key of Reflect.ownKeys(model)) {
     const descriptor = Reflect.getOwnPropertyDescriptor(model, key);
 
-    if (key === "dispose" || key === disposeSymbol || (descriptor && !descriptor.enumerable)) {
+    if (
+      key === "dispose" ||
+      key === disposeSymbol ||
+      key === SHAPE ||
+      (descriptor && !descriptor.enumerable)
+    ) {
       continue;
     }
 
@@ -202,6 +207,12 @@ function buildModelValue(value: unknown, scope: Scope): unknown {
 
   if (isComponentModel(value)) {
     return value;
+  }
+
+  // A field that declares `@@shape` binds through that declaration, so an opaque
+  // value (a class-based sub-model) still reaches the view as bound units.
+  if (getShape(value) !== undefined) {
+    return bindUnits(value, scope);
   }
 
   if (isPlainObject(value)) {
