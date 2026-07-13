@@ -6,6 +6,11 @@ export interface Node {
   next?: Node[];
   enabled?: boolean | (() => boolean);
   meta?: Record<string, unknown>;
+  // Called when a scope-less (global) observer attaches to this node. A lazy
+  // computed uses it to eagerly discover its dependencies and make its edges
+  // global, so a global subscription fires in every scope the dependency changes
+  // in — not only in scopes where the computed was already evaluated.
+  onObserve?: () => void;
 }
 
 export interface KernelContext<T = unknown> {
