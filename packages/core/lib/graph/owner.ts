@@ -36,7 +36,12 @@ export function owner<T>(fn: (dispose: () => void, owner: Owner) => T): T {
       nextOwner,
     );
   } catch (error) {
-    nextOwner.dispose();
+    try {
+      nextOwner.dispose();
+    } catch {
+      // A cleanup that throws during this rescue dispose must not mask the
+      // original error from `fn` — surface `fn`'s error, drop the cleanup's.
+    }
     throw error;
   } finally {
     activeOwner = previousOwner;

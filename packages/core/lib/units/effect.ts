@@ -363,11 +363,14 @@ export function effect<Params, Done, Fail = unknown>(
       setInFlight(call.scope, inFlightOf(call.scope) + 1);
       void started(call.params);
 
-      return call;
+      // Drive the internal execution with the full call state, but propagate the
+      // PARAMS to external observers — a `reaction({ on: effect })` is typed to
+      // receive the effect's params, not the internal call object.
+      ctx.launch(executeNode, call);
+
+      return call.params;
     },
   });
-
-  effectNode.next = [executeNode];
 
   linkEffectSubunit("pending", pending.node);
   linkEffectSubunit("inFlight", inFlightStore.node);
