@@ -6,6 +6,8 @@ import type {
   CachedComponentConfig,
   ComponentConfig,
   ComponentModel,
+  MappedCachedComponentConfig,
+  MappedComponentConfig,
   ModelInstance,
   VirentiaComponent,
 } from "./types";
@@ -18,14 +20,28 @@ import {
 } from "./use-model";
 import { getComponentName } from "./utils";
 
-export function component<Props, Model extends object>(
-  config: ComponentConfig<Props, Model>,
-): VirentiaComponent<Props, Model>;
+// Mapped overloads first: they require `mapProps`, so a config that provides it
+// binds here (pinning external `Props` from `mapProps`' parameter, which Vue's
+// loose `Component` view type cannot), and a config without `mapProps` falls
+// through to the plain overloads below.
+export function component<Props, ModelProps, Key, Model extends object>(
+  config: MappedCachedComponentConfig<Props, ModelProps, Key, Model>,
+): VirentiaComponent<Props, Model, ModelProps>;
+export function component<Props, ModelProps, Model extends object>(
+  config: MappedComponentConfig<Props, ModelProps, Model>,
+): VirentiaComponent<Props, Model, ModelProps>;
 export function component<Props, Key, Model extends object>(
   config: CachedComponentConfig<Props, Key, Model>,
-): VirentiaComponent<Props, Model>;
+): VirentiaComponent<Props, Model, Props>;
+export function component<Props, Model extends object>(
+  config: ComponentConfig<Props, Model>,
+): VirentiaComponent<Props, Model, Props>;
 export function component(
-  config: ComponentConfig<any, any> | CachedComponentConfig<any, any, any>,
+  config:
+    | ComponentConfig<any, any>
+    | MappedComponentConfig<any, any, any>
+    | CachedComponentConfig<any, any, any>
+    | MappedCachedComponentConfig<any, any, any, any>,
 ): VirentiaComponent<any, any> {
   const wrapper = defineComponent({
     name: getComponentName(config.view),
@@ -34,11 +50,15 @@ export function component(
       const providedScope = useOptionalProvidedScope();
       const controlledModel = attrs.model as ComponentModel<any> | undefined;
       const controlledInstance = controlledModel ? readExposedModelInstance(controlledModel) : null;
-      const readModelProps = (): Record<string, unknown> => {
+      const readExternalProps = (): Record<string, unknown> => {
         const { model: _model, ...rest } = attrs as Record<string, unknown>;
 
         return rest;
       };
+      // `mapProps` derives the model props from the external ones; without it
+      // the two coincide. Re-evaluated by the lifecycle watcher on prop changes.
+      const readModelProps = (): unknown =>
+        config.mapProps ? config.mapProps(readExternalProps()) : readExternalProps();
       const key = "cache" in config ? config.key(readModelProps()) : undefined;
       let instance: ModelInstance<any, any, any>;
 
@@ -70,7 +90,7 @@ export function component(
         disposeOnUnmount: !controlledModel && !cached,
       });
 
-      return () => h(config.view, { ...readModelProps(), model: reactiveModel }, slots);
+      return () => h(config.view, { ...readExternalProps(), model: reactiveModel }, slots);
     },
   });
 

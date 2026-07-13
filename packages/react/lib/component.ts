@@ -4,6 +4,8 @@ import type {
   CachedComponentConfig,
   ComponentConfig,
   ComponentPublicProps,
+  MappedCachedComponentConfig,
+  MappedComponentConfig,
   VirentiaComponent,
 } from "./types";
 import { getOrCreateCachedInstance } from "./model-cache";
@@ -17,21 +19,37 @@ import {
 } from "./use-model";
 import { getComponentName } from "./utils";
 
-export function component<Props, Model extends object>(
-  config: ComponentConfig<Props, Model>,
-): VirentiaComponent<Props, Model>;
+// Mapped overloads first: they require `mapProps`, so a config that provides it
+// binds here (pinning external `Props` from `mapProps`' parameter), and a config
+// without `mapProps` falls through to the plain overloads below.
+export function component<Props, ModelProps, Key, Model extends object>(
+  config: MappedCachedComponentConfig<Props, ModelProps, Key, Model>,
+): VirentiaComponent<Props, Model, ModelProps>;
+export function component<Props, ModelProps, Model extends object>(
+  config: MappedComponentConfig<Props, ModelProps, Model>,
+): VirentiaComponent<Props, Model, ModelProps>;
 export function component<Props, Key, Model extends object>(
   config: CachedComponentConfig<Props, Key, Model>,
-): VirentiaComponent<Props, Model>;
+): VirentiaComponent<Props, Model, Props>;
+export function component<Props, Model extends object>(
+  config: ComponentConfig<Props, Model>,
+): VirentiaComponent<Props, Model, Props>;
 export function component(
-  config: ComponentConfig<any, any> | CachedComponentConfig<any, any, any>,
+  config:
+    | ComponentConfig<any, any>
+    | MappedComponentConfig<any, any, any>
+    | CachedComponentConfig<any, any, any>
+    | MappedCachedComponentConfig<any, any, any, any>,
 ): VirentiaComponent<any, any> {
   const VirentiaComponent = (props: ComponentPublicProps<any, any>) => {
-    const { model: controlledModel, ...modelProps } = props;
+    const { model: controlledModel, ...externalProps } = props;
     const providedScope = useOptionalProvidedScope();
     const controlledInstance = controlledModel
       ? readExposedModelInstance(controlledModel)
       : null;
+    // Mapped during render, so `mapProps` may read context or call hooks. Called
+    // unconditionally when present, keeping hook order stable across renders.
+    const modelProps = config.mapProps ? config.mapProps(externalProps) : externalProps;
     const key = "cache" in config ? config.key(modelProps) : undefined;
     const instance = useMemo(() => {
       if (controlledModel) {
@@ -63,7 +81,7 @@ export function component(
       disposeOnUnmount: !controlledModel && !cached,
     });
 
-    return createElement(config.view, { ...modelProps, model });
+    return createElement(config.view, { ...externalProps, model });
   };
 
   VirentiaComponent.displayName = getComponentName(config.view);

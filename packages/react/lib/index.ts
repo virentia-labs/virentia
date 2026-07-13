@@ -3,6 +3,7 @@ export { createModelCache } from "./model-cache";
 export { ScopeProvider, useProvidedScope } from "./scope";
 export { useModel } from "./use-model";
 export { useUnit } from "./use-unit";
+export { SHAPE } from "./utils";
 export type {
   ModelCache,
   ModelContext,
@@ -13,6 +14,9 @@ export type {
   ComponentModel,
   ComponentPublicProps,
   VirentiaComponent,
+  Bound,
+  ShapeSource,
   UnitLike,
+  UnitShape,
   UnitValue,
 } from "./types";
