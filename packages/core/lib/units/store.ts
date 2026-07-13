@@ -303,7 +303,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
 
   const proxy = new Proxy(
     api,
-    createStoreProxyHandlers(options, () => readStateForProxy(), writeProperty),
+    createStoreProxyHandlers(options, () => readStateForProxy(), writeProperty, deleteKeyProperty),
   );
 
   storeReaders.set(proxy as object, () =>
@@ -362,6 +362,31 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
     return true;
   }
 
+  function deleteKeyProperty(property: PropertyKey): boolean {
+    const scope = requireActiveScope(() => `update ${describeNode(storeNode)}`);
+    const state = readState(scope, id, initial);
+
+    // Deleting an absent key (or from a non-object state) is a no-op success.
+    if (!isObject(state) || !(property in (state as object))) {
+      return true;
+    }
+
+    const next = removeProperty(state, property);
+
+    withTransaction(() => {
+      writeTransactionStore(
+        {
+          id,
+          scope,
+          commit: (value) => commitState(scope, value),
+        },
+        next,
+      );
+    });
+
+    return true;
+  }
+
   function commitState(scope: Scope, next: T): StoreCommitResult {
     if (options.hasSkipToken && Object.is(next, options.skipToken)) {
       return {
@@ -384,9 +409,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
     return {
       changed: true,
       notify() {
-        for (const subscriber of subscribers) {
-          subscriber(next, scope);
-        }
+        notifySubscribers(subscribers, next, scope);
 
         void run({
           unit: storeNode,
@@ -403,9 +426,24 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
 
   function commitImmediateState(scope: Scope, next: T): void {
     scope.values.set(id, next);
+    notifySubscribers(subscribers, next, scope);
+  }
+}
 
-    for (const subscriber of subscribers) {
+// Notify every subscriber, isolating each: a subscriber that throws must not
+// starve the remaining subscribers, nor the store's reactive propagation that
+// runs after this loop. Errors are contained here rather than surfaced out of
+// the write path (which would break the graph mid-commit).
+function notifySubscribers<T>(
+  subscribers: Iterable<StoreSubscriber<T>>,
+  next: T,
+  scope: Scope,
+): void {
+  for (const subscriber of subscribers) {
+    try {
       subscriber(next, scope);
+    } catch {
+      // contained — see the note above.
     }
   }
 }
@@ -423,8 +461,10 @@ function createComputed<T>(
   // stores in different scopes is invalidated precisely rather than from a
   // global union of every scope's branches.
   const staticDependencies = new Set<Node>();
-  // Set once a scope-less observer activates this computed (see `activate`).
-  let activated = false;
+  // Set once a scope-less observer activates this computed (see `activate`). While
+  // observed, dynamic deps discovered by real evaluations are promoted to global
+  // edges so the observer fires in every scope, not only where the computed was read.
+  let observed = false;
   const invalidator = node({
     meta: withInspectorMeta(undefined, {
       type: "computed.invalidate",
@@ -468,9 +508,7 @@ function createComputed<T>(
         return previous;
       }
 
-      for (const subscriber of subscribers) {
-        subscriber(next, ctx.scope);
-      }
+      notifySubscribers(subscribers, next, ctx.scope);
 
       return next;
     },
@@ -632,6 +670,19 @@ function createComputed<T>(
       }
     }
 
+    if (observed) {
+      // A globally-observed computed subscribes in every scope: promote each
+      // dependency discovered by this REAL evaluation (real scope values, the
+      // real branch taken) to a global edge, and activate any computed dependency
+      // transitively. Accumulating deps from real evaluations across scopes covers
+      // conditional branches that a bootstrap eval could not reach.
+      for (const dependency of dynamic) {
+        attachStaticDependency(dependency);
+        dependency.onObserve?.();
+      }
+      return;
+    }
+
     reconcileScopedEdges(scope, invalidator, dynamic);
   }
 
@@ -681,10 +732,10 @@ function createComputed<T>(
   // The per-scope precision of an UN-observed computed is untouched: this only
   // runs when a global observer opts in.
   function activate(): void {
-    if (activated) {
+    if (observed) {
       return;
     }
-    activated = true;
+    observed = true;
 
     // A `.map`/`.filter` chain already propagates globally through its static
     // source edges and has no dynamic deps of its own. Do NOT re-run its fn here
@@ -698,10 +749,12 @@ function createComputed<T>(
       return;
     }
 
-    // A raw computed discovers its deps lazily and per-scope, so an unread one has
-    // no edges in a fresh scope. Evaluate once in a throwaway scope to discover
-    // them and promote them to GLOBAL edges (like a static source), then
-    // transitively activate any computed dependency.
+    // Bootstrap a raw computed: discover its deps once so the FIRST write in a
+    // scope it was never read in already reaches it (real evaluations then refine
+    // the global set — see reconcileDynamicDependencies). The body is wrapped so a
+    // read that throws (an unprovided `dependency()`, a cycle) still leaves the
+    // deps collected BEFORE the throw promoted; the computed re-evaluates correctly
+    // in the real scope on the next propagation, where the value IS available.
     const previousScope = setActiveScope({
       values: new Map(),
       handlers: new Map(),
@@ -709,7 +762,13 @@ function createComputed<T>(
     });
 
     try {
-      const collected = collectNodes(fn);
+      const collected = collectNodes(() => {
+        try {
+          fn();
+        } catch {
+          // Partial discovery: keep whatever was read before the throw.
+        }
+      });
 
       for (const dependency of collected.nodes) {
         if (dependency === storeNode) {
@@ -719,10 +778,6 @@ function createComputed<T>(
         attachStaticDependency(dependency);
         dependency.onObserve?.();
       }
-    } catch {
-      // A computed that throws on eager evaluation (e.g. it reads a dependency
-      // not provided in a bare scope) keeps its lazy, per-scope behavior — it
-      // still fires in any scope where it is read directly.
     } finally {
       setActiveScope(previousScope);
     }
@@ -733,6 +788,7 @@ function createStoreProxyHandlers<T>(
   options: Pick<StoreOptions<T>, "writable" | "mode">,
   read: () => T,
   write?: (property: PropertyKey, value: unknown) => boolean,
+  del?: (property: PropertyKey) => boolean,
 ): ProxyHandler<StoreApi<T>> {
   const { mode } = options;
 
@@ -776,6 +832,26 @@ function createStoreProxyHandlers<T>(
       }
 
       return write ? write(property, value) : false;
+    },
+
+    deleteProperty(target, property) {
+      if (property in target) {
+        return Reflect.deleteProperty(target, property);
+      }
+
+      if (!options.writable) {
+        throw new Error("Store is read-only");
+      }
+
+      if (mode === "ref") {
+        throw new Error("Store value must be written through .value");
+      }
+
+      if (!hasStateKey(property)) {
+        return true;
+      }
+
+      return del ? del(property) : false;
     },
 
     has(target, property) {
@@ -871,6 +947,22 @@ function assignProperty<T>(state: T, property: PropertyKey, value: unknown): T {
     ...(state as object),
     [property]: value,
   } as T;
+}
+
+function removeProperty<T>(state: T, property: PropertyKey): T {
+  if (Array.isArray(state)) {
+    const next = state.slice();
+
+    Reflect.deleteProperty(next, property);
+
+    return next as T;
+  }
+
+  const next = { ...(state as object) };
+
+  Reflect.deleteProperty(next, property);
+
+  return next as T;
 }
 
 function isObject(value: unknown): value is object {

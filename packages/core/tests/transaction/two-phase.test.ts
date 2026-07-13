@@ -107,7 +107,7 @@ describe("transaction two-phase commit", () => {
       scoped(s, () => expect(st.value).toBe(5));
     });
 
-    it("notifies every subscriber even when one throws, keeping state applied", () => {
+    it("contains a throwing subscriber, still notifying the rest and keeping state applied", () => {
       const s = scope();
       const st1 = store(0);
       const st2 = store(0);
@@ -122,6 +122,8 @@ describe("transaction two-phase commit", () => {
         seen2.push(value);
       });
 
+      // A throwing subscriber is contained: it does not surface out of the write
+      // (which would break the graph mid-commit), and the rest still run.
       expect(() =>
         withTransaction(() => {
           scoped(s, () => {
@@ -129,7 +131,7 @@ describe("transaction two-phase commit", () => {
             st2.value = 2;
           });
         }),
-      ).toThrowError("notify failed");
+      ).not.toThrow();
 
       // The commit phase succeeded, so the state stays applied...
       scoped(s, () => {
