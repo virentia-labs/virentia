@@ -1,5 +1,16 @@
 # @virentia/mutable
 
+## 0.2.0
+
+### Minor Changes
+
+- feat: some fixes, component mapProps & shape protocol
+
+### Patch Changes
+
+- Updated dependencies
+  - @virentia/core@0.7.0
+
 ## 0.1.5
 
 ### Patch Changes

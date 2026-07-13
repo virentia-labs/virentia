@@ -1,5 +1,16 @@
 # @virentia/effector
 
+## 0.4.0
+
+### Minor Changes
+
+- feat: some fixes, component mapProps & shape protocol
+
+### Patch Changes
+
+- Updated dependencies
+  - @virentia/core@0.7.0
+
 ## 0.3.10
 
 ### Patch Changes
