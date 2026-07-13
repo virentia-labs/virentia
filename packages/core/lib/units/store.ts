@@ -854,6 +854,20 @@ function createStoreProxyHandlers<T>(
       return del ? del(property) : false;
     },
 
+    defineProperty(target, property, descriptor) {
+      if (property in target) {
+        return Reflect.defineProperty(target, property, descriptor);
+      }
+
+      // Without this trap `Object.defineProperty` would fall through to the shared
+      // api target, silently defining a non-reactive, cross-scope-leaking field.
+      throw new Error(
+        options.writable
+          ? "Store fields are written through assignment, not defineProperty"
+          : "Store is read-only",
+      );
+    },
+
     has(target, property) {
       return property in target || hasStateKey(property);
     },

@@ -3,7 +3,7 @@ import type { Node } from "../kernel";
 import { describeNode, withInspectorMeta } from "../kernel/inspector";
 import type { Scope } from "../scope";
 import { scoped } from "../scope";
-import { getActiveScope, requireActiveScope } from "../scope/internal";
+import { getActiveScope, requireActiveScope, setActiveScope } from "../scope/internal";
 import { readonlyStore } from "./store";
 import type { Store, StoreSubscriber } from "./store";
 
@@ -388,6 +388,28 @@ function createLazyUnit<T>(loader: LazyLoader<T>, ensureLoaded?: (scope: Scope) 
   }
 }
 
+// Install the launching scope for the loader's SYNCHRONOUS entry, so a loader
+// that reads scope state (e.g. `const cfg = configStore.value`) at its start
+// resolves against the right scope. The loader's async tail still runs detached
+// (the ambient scope is not preserved across its awaits) — read scope state
+// before the first await.
+function runLoaderInScope<T>(
+  loader: LazyLoader<T>,
+  scope: Scope | null | undefined,
+): T | PromiseLike<T> {
+  if (!scope) {
+    return loader(scope);
+  }
+
+  const previous = setActiveScope(scope);
+
+  try {
+    return loader(scope);
+  } finally {
+    setActiveScope(previous);
+  }
+}
+
 function createLazyResolver<T>(
   loader: LazyLoader<T>,
   setPending?: (scope: Scope, value: boolean) => void,
@@ -433,7 +455,7 @@ function createLazyResolver<T>(
         }
 
         promise = Promise.resolve()
-          .then(() => loader(scope))
+          .then(() => runLoaderInScope(loader, scope))
           .then((result) => {
             primeValue(result);
 
