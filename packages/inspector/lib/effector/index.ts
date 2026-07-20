@@ -7,7 +7,7 @@ import {
   type DevtoolsSnapshot,
 } from "@virentia/core/devtools";
 import type { Scope, Unit } from "effector";
-import { createEffectorGraph } from "./graph";
+import { createEffectorGraph, type ComposeName, type EffectorNameContext } from "./graph";
 import { createEffectorTimeline } from "./timeline";
 import { triggerEffectorUnit } from "./trigger";
 
@@ -28,6 +28,14 @@ export interface ConnectEffectorOptions {
    * automatically, but effector cannot enumerate forked scopes, so pass them to
    * see scoped activity in the timeline and to trigger units in a scope. */
   scopes?: readonly EffectorScopeOption[];
+  /** Optional. Custom display-name composer for graph nodes. Receives
+   * everything the connector knows about a unit (own name, nearest factory
+   * name, loc, sid); a non-empty return overrides the display name, a falsy
+   * one falls back to the default chain (name → factory → loc → sid → #id).
+   * Lets apps encode library-specific policies, e.g. farfetched:
+   * `ff.unnamed.$status` + factory `renameSessionMutation` →
+   * `ff.renameSessionMutation.$status`. */
+  composeName?: ComposeName;
 }
 
 export interface EffectorInspectorConnection {
@@ -60,7 +68,7 @@ export function connectEffector(options: ConnectEffectorOptions = {}): EffectorI
   let disposed = false;
   let graphQueued = false;
 
-  const graph = createEffectorGraph({ onChange: queueGraph });
+  const graph = createEffectorGraph({ onChange: queueGraph, composeName: options.composeName });
   const timeline = createEffectorTimeline({
     onEvent: (event) => {
       endpoint.send({ type: "timeline", event });
@@ -209,3 +217,5 @@ export function openEffectorInspector(
 function isScopeEntry(value: EffectorScopeOption): value is { scope: Scope; name?: string } {
   return typeof value === "object" && value !== null && "scope" in value;
 }
+
+export type { ComposeName, EffectorNameContext } from "./graph";

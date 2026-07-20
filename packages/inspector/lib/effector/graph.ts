@@ -17,6 +17,35 @@ interface EffectorRegion {
   region?: EffectorRegion;
 }
 
+/**
+ * Everything the connector knows about a unit when composing its display
+ * name. Passed to the `composeName` option.
+ */
+export interface EffectorNameContext {
+  id: string;
+  /** Node type: "store" | "event" | "effect" | ... */
+  type: string;
+  /** The unit's own name as effector reports it (may be a library-generated one, e.g. farfetched's `ff.unnamed.$status`). */
+  name?: string;
+  /** Name of the nearest factory the unit was created in (`withFactory({ name })`). */
+  factory?: string;
+  loc?: string;
+  sid?: string;
+}
+
+/**
+ * Custom display-name composer. Return a string to override the node's
+ * display name; return `undefined`/`null` to fall back to the default chain
+ * (name → factory → loc → sid → #id). The mechanism is generic — the policy
+ * lives with the app, e.g. a farfetched-aware one:
+ *
+ *   composeName: ({ name, factory }) =>
+ *     factory && name?.startsWith("ff.unnamed.")
+ *       ? `ff.${factory}.${name.slice("ff.unnamed.".length)}`
+ *       : undefined
+ */
+export type ComposeName = (context: EffectorNameContext) => string | undefined | null;
+
 /** Metadata for a unit we know about but hold no live node for. */
 export interface DiscoveredUnit {
   kind?: string;
@@ -51,7 +80,9 @@ export interface EffectorGraph {
   dispose(): void;
 }
 
-export function createEffectorGraph(options: { onChange?: () => void } = {}): EffectorGraph {
+export function createEffectorGraph(
+  options: { onChange?: () => void; composeName?: ComposeName } = {},
+): EffectorGraph {
   // Roots the developer explicitly handed us. The live graph is re-walked from
   // these on every snapshot, so late-wired connections are picked up and
   // detached subgraphs naturally drop out (effector has no teardown signal).
@@ -157,6 +188,7 @@ export function createEffectorGraph(options: { onChange?: () => void } = {}): Ef
         discovered,
         scopeEntries,
         breakpoints,
+        composeName: options.composeName,
       });
     },
 
@@ -229,6 +261,34 @@ function meaningfulName(name: string | undefined): string | undefined {
   return name;
 }
 
+/**
+ * Apply the app-provided composer first (its non-empty result wins), then the
+ * default fallback chain.
+ */
+function resolveName(
+  unit: DiscoveredUnit,
+  type: string,
+  id: string,
+  composeName: ComposeName | undefined,
+): string {
+  if (composeName) {
+    const composed = composeName({
+      id,
+      type,
+      name: unit.name,
+      factory: unit.factory,
+      loc: unit.loc,
+      sid: unit.sid,
+    });
+
+    if (typeof composed === "string" && composed.length > 0) {
+      return composed;
+    }
+  }
+
+  return displayName(unit, type, id);
+}
+
 /** Display-name fallback chain: name → factory → loc → sid → #id. */
 function displayName(unit: DiscoveredUnit, type: string, id: string): string {
   const name = meaningfulName(unit.name);
@@ -296,8 +356,9 @@ function buildSnapshot(input: {
   discovered: Map<string, DiscoveredUnit>;
   scopeEntries: Map<string, EffectorScopeEntry>;
   breakpoints: Iterable<string>;
+  composeName?: ComposeName;
 }): DevtoolsSnapshot {
-  const { liveNodes, discovered, scopeEntries } = input;
+  const { liveNodes, discovered, scopeEntries, composeName } = input;
   const visible = new Map<string, VisibleNode>();
 
   for (const [id, node] of liveNodes) {
@@ -320,10 +381,11 @@ function buildSnapshot(input: {
     visible.set(id, {
       ...classification,
       id,
-      name: displayName(
+      name: resolveName(
         { name: node.meta.name as string | undefined, derived: false, factory, loc, sid },
         String(node.meta.op ?? "node"),
         id,
+        composeName,
       ),
       factory,
       loc,
@@ -349,7 +411,7 @@ function buildSnapshot(input: {
       ...classification,
       key: classification.key && !service,
       id,
-      name: displayName(unit, classification.type, id),
+      name: resolveName(unit, classification.type, id, composeName),
       factory: unit.factory,
       loc: unit.loc,
       sid: unit.sid,

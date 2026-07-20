@@ -122,3 +122,49 @@ describe("anonymous unit display-name fallbacks (#5)", () => {
     expect(numericNamed).toEqual([]);
   });
 });
+
+describe("composeName option", () => {
+  it("lets the app encode a farfetched-aware naming policy", () => {
+    const connection = connect({
+      channel: "test-naming-compose",
+      composeName: ({ name, factory }) =>
+        factory && name?.startsWith("ff.unnamed.")
+          ? `ff.${factory}.${name.slice("ff.unnamed.".length)}`
+          : undefined,
+    });
+
+    withFactory({
+      sid: "session/rename.ts:renameSessionMutation",
+      name: "renameSessionMutation",
+      fn: () => createStore("initial", { name: "ff.unnamed.$status", sid: "compose-x1" }),
+    });
+
+    const node = connection
+      .snapshot()
+      .nodes.find((candidate) => candidate.name === "ff.renameSessionMutation.$status");
+
+    expect(node).toBeDefined();
+    expect(node?.meta.factory).toBe("renameSessionMutation");
+  });
+
+  it("falls back to the default chain when the composer returns undefined", () => {
+    const connection = connect({
+      channel: "test-naming-compose-fallback",
+      composeName: () => undefined,
+    });
+
+    withFactory({
+      sid: "app.ts:fallbackModel",
+      name: "fallbackModel",
+      fn: () => createStore(0, { sid: "fallback-x1" }),
+    });
+
+    const node = connection
+      .snapshot()
+      .nodes.find(
+        (candidate) => candidate.meta.factory === "fallbackModel" && candidate.type === "store" && candidate.key,
+      );
+
+    expect(node?.name).toBe("fallbackModel.store");
+  });
+});
