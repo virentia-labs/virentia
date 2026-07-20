@@ -1,4 +1,4 @@
-import { Box } from "@mantine/core";
+import { Box, Tooltip } from "@mantine/core";
 import type { DevtoolsGraphNode } from "../api";
 import type { ReactElement } from "react";
 
@@ -8,16 +8,16 @@ export function NodeLabel(props: { node: DevtoolsGraphNode }): ReactElement {
   return (
     <Box className="virentia-inspector__node-label">
       {/* Long names ellipsize inside the fixed-width card; the full value
-          stays reachable through the native hover tooltip. */}
-      <span className="virentia-inspector__node-name" title={name}>
-        {name}
-      </span>
+          stays reachable through the hover tooltip. */}
+      <Tooltip label={name} openDelay={300} withinPortal>
+        <span className="virentia-inspector__node-name">{name}</span>
+      </Tooltip>
       <span className="virentia-inspector__node-meta">
         <span className="virentia-inspector__node-type">{type}</span>
         {meta.factory ? (
-          <span className="virentia-inspector__node-factory" title={`factory: ${meta.factory}`}>
-            {meta.factory}
-          </span>
+          <Tooltip label={`factory: ${meta.factory}`} openDelay={300} withinPortal>
+            <span className="virentia-inspector__node-factory">{meta.factory}</span>
+          </Tooltip>
         ) : null}
         {key ? <span className="virentia-inspector__node-key">key</span> : null}
       </span>
