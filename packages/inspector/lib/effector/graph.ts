@@ -10,17 +10,32 @@ import {
   type EffectorScopeEntry,
 } from "./types";
 
+/** Structural shape of `Declaration["region"]` (the type itself is not exported by effector). */
+interface EffectorRegion {
+  type: "region" | "factory";
+  name?: string;
+  region?: EffectorRegion;
+}
+
 /** Metadata for a unit we know about but hold no live node for. */
 export interface DiscoveredUnit {
   kind?: string;
   name?: string;
   derived: boolean;
   named?: unknown;
+  /** Name of the nearest factory region the unit was created in (`withFactory({ name })`). */
+  factory?: string;
+  /** Formatted source location ("file.ts:line:column") from `addLoc` builds. */
+  loc?: string;
+  sid?: string;
 }
 
 interface VisibleNode extends NodeClassification {
   id: string;
   name: string;
+  factory?: string;
+  loc?: string;
+  sid?: string;
 }
 
 export interface EffectorGraph {
@@ -58,6 +73,9 @@ export function createEffectorGraph(options: { onChange?: () => void } = {}): Ef
         kind: declaration.kind,
         name: declaration.name,
         derived: Boolean(declaration.derived),
+        factory: nearestFactoryName(declaration.region as EffectorRegion | undefined),
+        loc: formatLoc(declaration.loc),
+        sid: declaration.sid ?? undefined,
       });
 
       if (added) {
@@ -163,9 +181,75 @@ function recordDiscovered(
     name: next.name ?? previous?.name,
     derived: next.derived || Boolean(previous?.derived),
     named: next.named ?? previous?.named,
+    factory: next.factory ?? previous?.factory,
+    loc: next.loc ?? previous?.loc,
+    sid: next.sid ?? previous?.sid,
   });
 
   return previous === undefined;
+}
+
+/**
+ * Nearest factory name up the region chain. Regions are created by
+ * `withFactory` (the effector babel/swc plugin wraps every registered factory
+ * call in it, passing the assignment variable name), so this is the
+ * developer-facing name for units the factory created.
+ */
+function nearestFactoryName(region: EffectorRegion | undefined): string | undefined {
+  for (let current = region; current; current = current.region) {
+    if (current.type === "factory" && typeof current.name === "string" && current.name.length > 0) {
+      return current.name;
+    }
+  }
+
+  return undefined;
+}
+
+/** Shorten an absolute `addLoc` path to its last two segments: "api/users.ts:42:11". */
+function formatLoc(loc: { file: string; line: number; column: number } | undefined): string | undefined {
+  if (!loc) {
+    return undefined;
+  }
+
+  const segments = String(loc.file).split(/[\\/]/).filter(Boolean);
+
+  return `${segments.slice(-2).join("/")}:${loc.line}:${loc.column}`;
+}
+
+/**
+ * effector assigns a bare numeric auto-name ("1", "15", …) to units created
+ * without one — as a display name it is as opaque as the node id, so the
+ * naming fallbacks below treat it as missing.
+ */
+function meaningfulName(name: string | undefined): string | undefined {
+  if (name === undefined || /^\d+$/.test(name)) {
+    return undefined;
+  }
+
+  return name;
+}
+
+/** Display-name fallback chain: name → factory → loc → sid → #id. */
+function displayName(unit: DiscoveredUnit, type: string, id: string): string {
+  const name = meaningfulName(unit.name);
+
+  if (name) {
+    return name;
+  }
+
+  if (unit.factory) {
+    return `${unit.factory}.${type}`;
+  }
+
+  if (unit.loc) {
+    return `${type} @ ${unit.loc}`;
+  }
+
+  if (unit.sid) {
+    return `${type} (${unit.sid})`;
+  }
+
+  return `${type} #${id}`;
 }
 
 /** Walk the whole connected component reachable from the given root units. */
@@ -223,10 +307,27 @@ function buildSnapshot(input: {
       continue;
     }
 
+    // A live node's graphite meta has no factory context — that only comes
+    // through inspectGraph declarations. Merge the discovered record (units
+    // created after connect have one) so addUnits-passed units keep it.
+    const record = discovered.get(id);
+    const loc =
+      formatLoc(node.meta.loc as { file: string; line: number; column: number } | undefined) ??
+      record?.loc;
+    const sid = (typeof node.meta.sid === "string" ? node.meta.sid : undefined) ?? record?.sid;
+    const factory = record?.factory;
+
     visible.set(id, {
       ...classification,
       id,
-      name: nodeName(node, id),
+      name: displayName(
+        { name: node.meta.name as string | undefined, derived: false, factory, loc, sid },
+        String(node.meta.op ?? "node"),
+        id,
+      ),
+      factory,
+      loc,
+      sid,
     });
   }
 
@@ -248,7 +349,10 @@ function buildSnapshot(input: {
       ...classification,
       key: classification.key && !service,
       id,
-      name: unit.name ?? `${classification.type} #${id}`,
+      name: displayName(unit, classification.type, id),
+      factory: unit.factory,
+      loc: unit.loc,
+      sid: unit.sid,
     });
   }
 
@@ -317,6 +421,9 @@ function buildSnapshot(input: {
         callable: node.callable,
         writable: node.writable,
         internal: node.internal,
+        factory: node.factory,
+        loc: node.loc,
+        sid: node.sid,
       },
     };
   });
@@ -329,10 +436,6 @@ function buildSnapshot(input: {
   const breakpoints = [...new Set(input.breakpoints)].filter((id) => visible.has(id));
 
   return { nodes, edges, scopes, breakpoints };
-}
-
-function nodeName(node: EffectorNode, id: string): string {
-  return node.meta.name ?? `${node.meta.op ?? "node"} #${id}`;
 }
 
 /**

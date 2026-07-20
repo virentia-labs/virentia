@@ -165,7 +165,11 @@ body {
 .virentia-inspector__node-name {
   font-weight: 650;
   line-height: 1.2;
-  overflow-wrap: anywhere;
+  /* A name wider than the fixed-width card ellipsizes on one line; the full
+     value is shown in the hover tooltip (title attr on the span). */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .virentia-inspector__node-type {
@@ -369,4 +373,21 @@ body {
     align-items: flex-start;
     flex-direction: column;
   }
+}
+
+.virentia-inspector__node-factory {
+  border: 1px solid rgba(76, 110, 245, 0.34);
+  border-radius: 4px;
+  color: var(--mantine-color-indigo-3);
+  /* The badge is the only shrinkable item in the meta row: a long factory
+     name must ellipsize inside the card instead of overflowing it. */
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  overflow: hidden;
+  padding: 2px 4px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
