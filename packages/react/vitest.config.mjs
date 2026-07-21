@@ -15,6 +15,7 @@ export default defineConfig({
     cache: false,
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     typecheck: {
+      tsconfig: "./tsconfig.vitest.json",
       include: ["tests/types/**/*.test-d.ts", "tests/types/**/*.test-d.tsx"],
     },
   },
