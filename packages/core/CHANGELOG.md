@@ -1,5 +1,11 @@
 # @virentia/core
 
+## 0.7.1
+
+### Patch Changes
+
+- fix: effector naming in inspector
+
 ## 0.7.0
 
 ### Minor Changes
