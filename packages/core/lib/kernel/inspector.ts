@@ -54,6 +54,12 @@ export interface InspectorNodeMeta {
   writable?: boolean;
   internal?: boolean;
   description?: string;
+  /** Name of the nearest factory this node was created in (effector: `withFactory({ name })`). */
+  factory?: string;
+  /** Source location ("path/to/file.ts:line:column") when the app is built with `addLoc`. */
+  loc?: string;
+  /** Stable unit id when the app is built with a sid-generating plugin. */
+  sid?: string;
 }
 
 export interface InspectorScopeMeta {
