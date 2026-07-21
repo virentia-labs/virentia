@@ -1,5 +1,14 @@
 # @virentia/inspector
 
+## 0.3.1
+
+### Patch Changes
+
+- fix: effector naming in inspector
+- Updated dependencies
+  - @virentia/core@0.7.1
+  - @virentia/react@0.3.1
+
 ## 0.3.0
 
 ### Minor Changes

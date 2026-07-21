@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createEffect, createStore, withFactory } from "effector";
+import { createEffect, createStore } from "effector";
 import { createEffectorGraph } from "../../lib/effector/graph";
 import { createConnectTracker } from "../support/effector-connection";
+import { withFactory } from "../support/effector-factory";
 
 const { connect } = createConnectTracker();
 
