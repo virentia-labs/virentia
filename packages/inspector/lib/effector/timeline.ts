@@ -2,6 +2,7 @@ import { serializeDevtoolsValue, type DevtoolsTimelineEvent } from "@virentia/co
 import { inspect } from "effector/inspect";
 import type { Subscription } from "effector";
 import { isPrimaryUnit, isUnitOp } from "./kinds";
+import { formatLoc, resolveName, type ComposeName, type DiscoveredUnit } from "./graph";
 import type { EffectorScopeEntry } from "./types";
 
 interface InspectMessage {
@@ -11,6 +12,8 @@ interface InspectMessage {
   kind?: string;
   id: string;
   name?: string;
+  sid?: string | null;
+  loc?: { file: string; line: number; column: number };
   derived?: boolean;
   meta?: { derived?: number | boolean; named?: unknown };
 }
@@ -29,6 +32,10 @@ export function createEffectorTimeline(options: {
     derived: boolean;
     named?: unknown;
   }) => void;
+  /** Graph's discovered record for a unit — carries factory/loc/sid the inspect message lacks. */
+  describeUnit?: (id: string) => DiscoveredUnit | undefined;
+  /** Same app-defined display-name policy the graph applies. */
+  composeName?: ComposeName;
 }): EffectorTimeline {
   const subscriptions = new Set<Subscription>();
   const subscribedScopeIds = new Set<string>();
@@ -56,7 +63,7 @@ export function createEffectorTimeline(options: {
         return;
       }
 
-      options.onEvent(toTimelineEvent(++sequence, message, entry, true));
+      options.onEvent(toTimelineEvent(++sequence, message, entry, true, options));
       return;
     }
 
@@ -72,7 +79,7 @@ export function createEffectorTimeline(options: {
       return;
     }
 
-    options.onEvent(toTimelineEvent(++sequence, message, entry, failure));
+    options.onEvent(toTimelineEvent(++sequence, message, entry, failure, options));
   };
 
   return {
@@ -123,15 +130,35 @@ function toTimelineEvent(
   message: InspectMessage,
   entry: EffectorScopeEntry | null,
   failed: boolean,
+  naming: { describeUnit?: (id: string) => DiscoveredUnit | undefined; composeName?: ComposeName },
 ): DevtoolsTimelineEvent {
   const nodeType = message.kind ?? "node";
   const nodeId = String(message.id);
+
+  // Same resolution the graph uses (name -> factory -> loc -> sid -> #id,
+  // numeric auto-names treated as missing) — otherwise anonymous effects show
+  // up as bare numbers in Call history. The inspect message itself carries
+  // loc/sid only in addLoc/sid builds; the graph's discovered record fills in
+  // the factory context.
+  const described = naming.describeUnit?.(nodeId);
+  const nodeName = resolveName(
+    {
+      derived: isDerived(message),
+      name: message.name ?? described?.name,
+      factory: described?.factory,
+      loc: formatLoc(message.loc) ?? described?.loc,
+      sid: message.sid ?? described?.sid,
+    },
+    nodeType,
+    nodeId,
+    naming.composeName,
+  );
 
   return {
     id: `timeline:${sequence}`,
     sequence,
     nodeId,
-    nodeName: message.name ?? `${nodeType} #${nodeId}`,
+    nodeName,
     nodeType,
     scopeId: entry?.id ?? null,
     scopeName: entry?.name ?? null,

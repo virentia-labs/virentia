@@ -70,6 +70,8 @@ export function connectEffector(options: ConnectEffectorOptions = {}): EffectorI
 
   const graph = createEffectorGraph({ onChange: queueGraph, composeName: options.composeName });
   const timeline = createEffectorTimeline({
+    describeUnit: (id) => graph.describe(id),
+    composeName: options.composeName,
     onEvent: (event) => {
       endpoint.send({ type: "timeline", event });
     },
