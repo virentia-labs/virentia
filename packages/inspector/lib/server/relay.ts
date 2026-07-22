@@ -8,6 +8,8 @@ const websocketKeySuffix = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 interface RelayClient {
   buffer: Buffer;
   socket: Duplex;
+  /** Reassembly buffer for a fragmented message (FIN=0 start + continuations). */
+  fragments: Buffer[];
 }
 
 interface UpgradeServer {
@@ -41,6 +43,7 @@ export function installVirentiaInspectorRelay(server: UpgradeServer): () => void
     const client: RelayClient = {
       buffer: Buffer.alloc(0),
       socket,
+      fragments: [],
     };
 
     clients.add(client);
@@ -105,11 +108,44 @@ function handleData(client: RelayClient, chunk: Buffer, clients: Set<RelayClient
       continue;
     }
 
-    if (frame.opcode !== 0x1) {
+    // Browsers fragment large messages (Chrome: > ~128 KiB): the first frame
+    // carries the data opcode with FIN=0, continuations use opcode 0x0, the
+    // last one has FIN=1. Reassemble before broadcasting — dropping
+    // continuations silently destroys every large payload.
+    if (frame.opcode === 0x1) {
+      if (frame.fin && client.fragments.length === 0) {
+        broadcast(client, clients, frame.payload.toString("utf8"));
+        continue;
+      }
+
+      client.fragments = [frame.payload];
+
+      if (frame.fin) {
+        // A lone FIN=1 start while a previous message never completed —
+        // deliver it and reset.
+        broadcast(client, clients, frame.payload.toString("utf8"));
+        client.fragments = [];
+      }
+
       continue;
     }
 
-    broadcast(client, clients, frame.payload.toString("utf8"));
+    if (frame.opcode === 0x0) {
+      if (client.fragments.length === 0) {
+        // Continuation without a start — protocol violation, skip.
+        continue;
+      }
+
+      client.fragments.push(frame.payload);
+
+      if (frame.fin) {
+        const message = Buffer.concat(client.fragments).toString("utf8");
+        client.fragments = [];
+        broadcast(client, clients, message);
+      }
+
+      continue;
+    }
   }
 }
 
@@ -125,6 +161,7 @@ function broadcast(sender: RelayClient, clients: Set<RelayClient>, message: stri
 
 function readFrame(buffer: Buffer): {
   opcode: number;
+  fin: boolean;
   payload: Buffer;
   rest: Buffer;
 } | null {
@@ -133,6 +170,7 @@ function readFrame(buffer: Buffer): {
   }
 
   const opcode = buffer[0] & 0x0f;
+  const fin = (buffer[0] & 0x80) === 0x80;
   const masked = (buffer[1] & 0x80) === 0x80;
   let length = buffer[1] & 0x7f;
   let offset = 2;
@@ -176,6 +214,7 @@ function readFrame(buffer: Buffer): {
 
   return {
     opcode,
+    fin,
     payload,
     rest: buffer.subarray(offset + length),
   };
