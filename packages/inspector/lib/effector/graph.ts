@@ -72,6 +72,8 @@ export interface EffectorGraph {
   addScope(scope: Scope, name?: string): EffectorScopeEntry;
   /** Record a unit seen via inspect() so it appears even without `units`. Returns true if new. */
   observe(unit: DiscoveredUnit & { id: string }): boolean;
+  /** Everything discovered about a unit (factory/loc/sid) — for the timeline's name resolution. */
+  describe(id: string): DiscoveredUnit | undefined;
   scopes(): EffectorScopeEntry[];
   getNode(id: string): EffectorNode | undefined;
   getUnit(id: string): AnyEffectorUnit | undefined;
@@ -166,6 +168,10 @@ export function createEffectorGraph(
       return recordDiscovered(discovered, unit.id, unit);
     },
 
+    describe(id) {
+      return discovered.get(id);
+    },
+
     scopes() {
       return [...scopeEntries.values()];
     },
@@ -238,7 +244,7 @@ function nearestFactoryName(region: EffectorRegion | undefined): string | undefi
 }
 
 /** Shorten an absolute `addLoc` path to its last two segments: "api/users.ts:42:11". */
-function formatLoc(loc: { file: string; line: number; column: number } | undefined): string | undefined {
+export function formatLoc(loc: { file: string; line: number; column: number } | undefined): string | undefined {
   if (!loc) {
     return undefined;
   }
@@ -265,7 +271,7 @@ function meaningfulName(name: string | undefined): string | undefined {
  * Apply the app-provided composer first (its non-empty result wins), then the
  * default fallback chain.
  */
-function resolveName(
+export function resolveName(
   unit: DiscoveredUnit,
   type: string,
   id: string,
