@@ -6,13 +6,7 @@ import { act, createElement, useState } from "react";
 import { describe, expect, it } from "vitest";
 import { useUnit } from "../../lib";
 import { resetAmbientScopeAfterEach } from "../support/ambient-scope-reset";
-import {
-  button,
-  captureHookError,
-  ErrorBoundary,
-  renderWithScope,
-  withScope,
-} from "../support/render-harness";
+import { button, ErrorBoundary, renderWithScope, withScope } from "../support/render-harness";
 
 resetAmbientScopeAfterEach();
 
@@ -97,7 +91,7 @@ describe("useUnit (shapes)", () => {
     expect(seen[seen.length - 1]).not.toBe(seen[0]);
   });
 
-  it("throws a hooks-count error when the useUnit array grows between renders", async () => {
+  it("grows the useUnit array between renders without a hooks-count error", async () => {
     const appScope = scope();
     const a = store(1);
     const b = store(2);
@@ -106,11 +100,7 @@ describe("useUnit (shapes)", () => {
     function Flipper() {
       const [big, setBig] = useState(false);
       const units = useUnit(big ? [a, b] : [a]);
-      return createElement(
-        "button",
-        { onClick: () => setBig(true) },
-        String(units.length),
-      );
+      return createElement("button", { onClick: () => setBig(true) }, units.join(","));
     }
 
     render(
@@ -121,8 +111,13 @@ describe("useUnit (shapes)", () => {
     );
     expect(button().textContent).toBe("1");
 
-    const all = await captureHookError(() => fireEvent.click(button()), errors);
-    expect(all.some((e) => /hook/i.test(e.message))).toBe(true);
+    // One useSyncExternalStore backs the whole shape, so the array changing size
+    // is no longer a hooks-count violation — the new element simply appears.
+    await act(async () => {
+      fireEvent.click(button());
+    });
+    expect(errors).toEqual([]);
+    expect(button().textContent).toBe("1,2");
   });
 
   // kept: partner only does a static record read; this uniquely asserts record-shape reactivity (units.name updates "Ada"->"Grace" on dispatch) plus combined tuple+record use

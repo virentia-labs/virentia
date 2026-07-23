@@ -10,7 +10,7 @@ import {
   type Store,
   type StoreWritable,
 } from "@virentia/core";
-import { getCurrentScope as getCurrentVueScope, onScopeDispose, shallowRef, type Ref } from "vue";
+import { customRef, getCurrentScope as getCurrentVueScope, onScopeDispose, type Ref } from "vue";
 import { useProvidedScope } from "./scope";
 import type { AnyStore, Bound, ShapeSource, UnitLike, UnitShape } from "./types";
 import { getShape, isStoreUnit, isUnitLike, readStore } from "./utils";
@@ -38,9 +38,7 @@ export function useUnit(input: unknown): any {
 
 export function bindUnits(input: unknown, scope: Scope, seen?: WeakSet<object>): unknown {
   if (Array.isArray(input)) {
-    return guardShapeNode(input, seen, (path) =>
-      input.map((unit) => bindUnits(unit, scope, path)),
-    );
+    return guardShapeNode(input, seen, (path) => input.map((unit) => bindUnits(unit, scope, path)));
   }
 
   // Units before `getShape`: a reactive store is a Proxy whose arbitrary key
@@ -105,21 +103,51 @@ export function bindUnit(unit: UnitLike, scope: Scope): unknown {
 }
 
 function bindStoreRef<T>(unit: AnyStore<T>, scope: Scope): Readonly<Ref<T>> {
-  const state = shallowRef<T>(readStore(unit, scope));
-  const unsubscribe = unit.subscribe((_value, nextScope) => {
-    if (nextScope !== scope) {
-      return;
-    }
+  // Lazy: the store is subscribed only once the ref is actually read (in a
+  // template, computed, or watcher). A model field the view never touches — a
+  // sub-model's stores included — never subscribes. The disposal hook is
+  // registered eagerly so it captures the binding's effect scope even though the
+  // subscription itself is installed later.
+  let unsubscribe: (() => void) | null = null;
+  let disposed = false;
+  let cached = readStore(unit, scope);
 
-    state.value = readStore(unit, scope);
-  });
+  const state = customRef<T>((track, trigger) => ({
+    get() {
+      track();
 
-  // Re-read once: a write may have landed between the initial snapshot and the
-  // subscription being installed.
-  state.value = readStore(unit, scope);
+      // Once the owning scope is disposed the subscription is gone, so freeze at
+      // the last observed value rather than reading a store that may since have
+      // moved on in another scope.
+      if (!disposed) {
+        if (!unsubscribe) {
+          unsubscribe = unit.subscribe((_value, nextScope) => {
+            if (nextScope !== scope) {
+              return;
+            }
+
+            cached = readStore(unit, scope);
+            trigger();
+          });
+        }
+
+        // Live read: reflects writes that landed before the subscription (or
+        // outside any tracking context, e.g. an event handler).
+        cached = readStore(unit, scope);
+      }
+
+      return cached;
+    },
+    set() {
+      // A bound store ref is read-only; writes go through the unit itself.
+    },
+  }));
 
   if (getCurrentVueScope()) {
-    onScopeDispose(unsubscribe);
+    onScopeDispose(() => {
+      disposed = true;
+      unsubscribe?.();
+    });
   }
 
   return state as Readonly<Ref<T>>;
