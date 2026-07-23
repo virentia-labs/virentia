@@ -48,12 +48,38 @@ describe("createFlowLayout", () => {
     });
   });
 
-  // NOTE(prod-bug): createFlowLayout does NOT terminate on a cyclic graph.
-  // Unlike createReactiveSelection (which carries a `visited` set), the level
-  // BFS re-enqueues a node every time the longest path to it grows, and a cycle
-  // makes that grow without bound — an infinite loop. Any test that calls
-  // createFlowLayout on a graph with a cycle (e.g. a<->b) HANGS the whole run,
-  // so there is deliberately no such test here. A devtools graph can be cyclic
-  // (e.g. two units that react to each other), so this can hang the inspector UI.
-  // Reported as a pinned prod bug, not executed as a test.
+  describe("cyclic graphs (regression: the level pass used to loop forever)", () => {
+    it("terminates on a pure cycle and keeps walk-order levels", () => {
+      const layout = createFlowLayout(
+        snapshot(
+          [node("a"), node("b"), node("c")],
+          [edge("a", "b"), edge("b", "c"), edge("c", "a")],
+        ),
+      );
+
+      expect(xOf(layout, "a")).toBe(0);
+      expect(xOf(layout, "b")).toBe(220);
+      expect(xOf(layout, "c")).toBe(440);
+    });
+
+    it("terminates on a self-loop", () => {
+      const layout = createFlowLayout(snapshot([node("a")], [edge("a", "a")]));
+
+      expect(posOf(layout, "a")).toEqual({ id: "a", x: 0, y: 0 });
+    });
+
+    it("terminates on mutual feedback and still layers the tail after it", () => {
+      // a <-> b feedback, then b -> c: the back edge is ignored for layering.
+      const layout = createFlowLayout(
+        snapshot(
+          [node("a"), node("b"), node("c")],
+          [edge("a", "b"), edge("b", "a"), edge("b", "c")],
+        ),
+      );
+
+      expect(xOf(layout, "a")).toBe(0);
+      expect(xOf(layout, "b")).toBe(220);
+      expect(xOf(layout, "c")).toBe(440);
+    });
+  });
 });

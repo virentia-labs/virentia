@@ -38,84 +38,118 @@ export function createReactiveSelection(
     previousByNode.get(edge.target)?.push(edge);
   }
 
-  walkForward(selectedNodeId, new Set());
-  walkBackward(selectedNodeId, new Set());
+  // Iterative walks: real-world closures reach tens of thousands of nodes,
+  // recursion would overflow the stack on long chains.
+  walk(selectedNodeId, nextByNode, (edge) => edge.target);
+  walk(selectedNodeId, previousByNode, (edge) => edge.source);
 
   return {
     nodeIds: [...nodeIds],
     edgeIds: [...edgeIds],
   };
 
-  function walkForward(nodeId: string, visited: Set<string>): void {
-    if (visited.has(nodeId)) {
-      return;
-    }
+  function walk(
+    startId: string,
+    edgesByNode: Map<string, DevtoolsGraphEdge[]>,
+    step: (edge: DevtoolsGraphEdge) => string,
+  ): void {
+    const visited = new Set<string>([startId]);
+    const stack = [startId];
 
-    visited.add(nodeId);
-    nodeIds.add(nodeId);
+    nodeIds.add(startId);
 
-    for (const edge of nextByNode.get(nodeId) ?? []) {
-      edgeIds.add(edge.id);
-      nodeIds.add(edge.target);
-      walkForward(edge.target, visited);
-    }
-  }
+    while (stack.length) {
+      const nodeId = stack.pop() as string;
 
-  function walkBackward(nodeId: string, visited: Set<string>): void {
-    if (visited.has(nodeId)) {
-      return;
-    }
+      for (const edge of edgesByNode.get(nodeId) ?? []) {
+        const next = step(edge);
 
-    visited.add(nodeId);
-    nodeIds.add(nodeId);
+        edgeIds.add(edge.id);
+        nodeIds.add(next);
 
-    for (const edge of previousByNode.get(nodeId) ?? []) {
-      edgeIds.add(edge.id);
-      nodeIds.add(edge.source);
-      walkBackward(edge.source, visited);
+        if (!visited.has(next)) {
+          visited.add(next);
+          stack.push(next);
+        }
+      }
     }
   }
 }
 
 export function createFlowLayout(snapshot: DevtoolsSnapshot): FlowLayoutNode[] {
-  const incoming = new Map<string, number>();
   const nextByNode = new Map<string, string[]>();
 
   for (const node of snapshot.nodes) {
-    incoming.set(node.id, 0);
     nextByNode.set(node.id, []);
   }
 
   for (const edge of snapshot.edges) {
-    incoming.set(edge.target, (incoming.get(edge.target) ?? 0) + 1);
     nextByNode.get(edge.source)?.push(edge.target);
   }
 
-  const roots = snapshot.nodes.filter((node) => (incoming.get(node.id) ?? 0) === 0);
-  const queue = [...(roots.length ? roots : snapshot.nodes)].map((node) => node.id);
-  const levelByNode = new Map<string, number>();
+  // Effector graphs are not DAGs — feedback loops (store → event → store) are
+  // idiomatic, and a naive longest-path relaxation loops forever on them: each
+  // pass around a cycle raises every level by one. Iterative DFS instead:
+  // back edges (to a node still on the DFS stack) are dropped, the reverse
+  // finishing order is a topological order of the remaining DAG.
+  const state = new Map<string, "on-stack" | "done">();
+  const forwardByNode = new Map<string, string[]>();
+  const finished: string[] = [];
 
-  for (const id of queue) {
-    levelByNode.set(id, 0);
-  }
+  for (const root of snapshot.nodes) {
+    if (state.has(root.id)) {
+      continue;
+    }
 
-  while (queue.length) {
-    const nodeId = queue.shift() as string;
-    const level = levelByNode.get(nodeId) ?? 0;
+    const stack: Array<{ id: string; nextIndex: number }> = [{ id: root.id, nextIndex: 0 }];
 
-    for (const next of nextByNode.get(nodeId) ?? []) {
-      const nextLevel = Math.max(levelByNode.get(next) ?? 0, level + 1);
+    state.set(root.id, "on-stack");
+    forwardByNode.set(root.id, []);
 
-      if (nextLevel !== levelByNode.get(next)) {
-        levelByNode.set(next, nextLevel);
-        queue.push(next);
+    while (stack.length) {
+      const frame = stack[stack.length - 1];
+      const targets = nextByNode.get(frame.id) ?? [];
+
+      if (frame.nextIndex >= targets.length) {
+        state.set(frame.id, "done");
+        finished.push(frame.id);
+        stack.pop();
+        continue;
+      }
+
+      const target = targets[frame.nextIndex];
+
+      frame.nextIndex += 1;
+
+      if (state.get(target) === "on-stack") {
+        continue;
+      }
+
+      forwardByNode.get(frame.id)?.push(target);
+
+      if (!state.has(target)) {
+        state.set(target, "on-stack");
+        forwardByNode.set(target, []);
+        stack.push({ id: target, nextIndex: 0 });
       }
     }
   }
 
+  // Longest path over the DAG: relax targets in topological order.
+  const levelByNode = new Map<string, number>();
+
   for (const node of snapshot.nodes) {
-    if (!levelByNode.has(node.id)) {
-      levelByNode.set(node.id, 0);
+    levelByNode.set(node.id, 0);
+  }
+
+  for (let index = finished.length - 1; index >= 0; index -= 1) {
+    const nodeId = finished[index];
+    const level = levelByNode.get(nodeId) ?? 0;
+
+    for (const target of forwardByNode.get(nodeId) ?? []) {
+      if ((levelByNode.get(target) ?? 0) < level + 1) {
+        levelByNode.set(target, level + 1);
+      }
     }
   }
 
