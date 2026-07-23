@@ -8,6 +8,7 @@ import {
 } from "@virentia/core/devtools";
 import type { Scope, Unit } from "effector";
 import { createEffectorGraph, type ComposeName, type EffectorNameContext } from "./graph";
+import { createTrailingThrottle } from "./throttle";
 import { createEffectorTimeline } from "./timeline";
 import { triggerEffectorUnit } from "./trigger";
 
@@ -38,6 +39,10 @@ export interface ConnectEffectorOptions {
   composeName?: ComposeName;
 }
 
+/** Minimum pause between full-graph broadcasts triggered by graph changes.
+ * Direct sends (initial, request-graph, breakpoints) stay immediate. */
+const graphBroadcastIntervalMs = 1000;
+
 export interface EffectorInspectorConnection {
   readonly appId: string;
   readonly channel: string;
@@ -66,7 +71,15 @@ export function connectEffector(options: ConnectEffectorOptions = {}): EffectorI
   const endpoint = createAppEndpoint(channel, inspectorUrl);
   const breakpoints = new Set<string>();
   let disposed = false;
-  let graphQueued = false;
+
+  // Runtime discovery fires on every computation (busy apps: dozens per
+  // second) and a real-world snapshot weighs megabytes — a microtask coalesce
+  // is not enough, the wire needs a time-based cap on full-graph broadcasts.
+  const graphBroadcast = createTrailingThrottle(() => {
+    if (!disposed) {
+      sendGraph();
+    }
+  }, graphBroadcastIntervalMs);
 
   const graph = createEffectorGraph({ onChange: queueGraph, composeName: options.composeName });
   const timeline = createEffectorTimeline({
@@ -90,22 +103,14 @@ export function connectEffector(options: ConnectEffectorOptions = {}): EffectorI
   }
 
   function sendGraph(): void {
+    graphBroadcast.touch();
     endpoint.send({ type: "graph", snapshot: graph.snapshot(breakpoints) });
   }
 
   function queueGraph(): void {
-    if (graphQueued || disposed) {
-      return;
+    if (!disposed) {
+      graphBroadcast.schedule();
     }
-
-    graphQueued = true;
-    queueMicrotask(() => {
-      graphQueued = false;
-
-      if (!disposed) {
-        sendGraph();
-      }
-    });
   }
 
   function addUnits(units: readonly Unit<any>[]): void {
@@ -190,6 +195,7 @@ export function connectEffector(options: ConnectEffectorOptions = {}): EffectorI
       }
 
       disposed = true;
+      graphBroadcast.dispose();
       unsubscribeMessages();
       timeline.dispose();
       graph.dispose();

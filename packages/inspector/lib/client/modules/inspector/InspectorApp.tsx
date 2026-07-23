@@ -114,6 +114,8 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
   const setRecording = useUnit(recordingChanged);
   const clientRef = useRef<VirentiaInspectorClient | null>(null);
   const recordingRef = useRef(recording);
+  const pendingTimelineRef = useRef<DevtoolsTimelineEvent[]>([]);
+  const timelineFlushTimerRef = useRef<number | null>(null);
   const breakpointPickerInitialIdsRef = useRef<string[]>([]);
   const breakpointPickerReturnStageRef = useRef<TriggerStage>("payload");
 
@@ -137,7 +139,19 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
       }
 
       if (message.type === "timeline" && recordingRef.current) {
-        setTimeline((items) => [message.event, ...items].slice(0, 300));
+        // Busy apps stream dozens of events per second — a setState per event
+        // re-renders the whole surface into a solid freeze. Batch and flush.
+        pendingTimelineRef.current.push(message.event);
+
+        if (timelineFlushTimerRef.current === null) {
+          timelineFlushTimerRef.current = window.setTimeout(() => {
+            timelineFlushTimerRef.current = null;
+            const batch = pendingTimelineRef.current;
+
+            pendingTimelineRef.current = [];
+            setTimeline((items) => [...batch.reverse(), ...items].slice(0, 300));
+          }, 250);
+        }
       }
     });
 
@@ -147,6 +161,12 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
       unsubscribe();
       client.dispose();
       clientRef.current = null;
+      pendingTimelineRef.current = [];
+
+      if (timelineFlushTimerRef.current !== null) {
+        window.clearTimeout(timelineFlushTimerRef.current);
+        timelineFlushTimerRef.current = null;
+      }
     };
   }, [props.channel]);
 
@@ -185,11 +205,17 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
     [selectedFlow],
   );
   const draftBreakpointIdSet = useMemo(() => new Set(draftBreakpointIds), [draftBreakpointIds]);
-  const flow = useFlowGraph(renderSnapshot, selectedFlow, {
-    breakpointIds: draftBreakpointIdSet,
-    breakpointSelectionActive,
-    eligibleNodeIds: breakpointEligibleNodeIds,
-  });
+  // Stable identity: an inline object would invalidate the flow memo (layout
+  // over hundreds of nodes) on every render, including timeline ticks.
+  const flowOptions = useMemo(
+    () => ({
+      breakpointIds: draftBreakpointIdSet,
+      breakpointSelectionActive,
+      eligibleNodeIds: breakpointEligibleNodeIds,
+    }),
+    [draftBreakpointIdSet, breakpointSelectionActive, breakpointEligibleNodeIds],
+  );
+  const flow = useFlowGraph(renderSnapshot, selectedFlow, flowOptions);
   const triggerNode = useMemo(
     () => snapshot.nodes.find((node) => node.id === triggerNodeId) ?? null,
     [snapshot.nodes, triggerNodeId],
