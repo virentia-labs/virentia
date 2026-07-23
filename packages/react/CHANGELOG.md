@@ -1,5 +1,16 @@
 # @virentia/react
 
+## 0.4.0
+
+### Minor Changes
+
+- feat: granular subscription react/vue update
+
+### Patch Changes
+
+- Updated dependencies
+  - @virentia/core@0.8.0
+
 ## 0.3.1
 
 ### Patch Changes
