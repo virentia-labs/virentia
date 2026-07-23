@@ -1,5 +1,11 @@
 # @virentia/core
 
+## 0.8.0
+
+### Minor Changes
+
+- feat: granular subscription react/vue update
+
 ## 0.7.1
 
 ### Patch Changes
