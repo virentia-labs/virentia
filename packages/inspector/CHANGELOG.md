@@ -1,5 +1,11 @@
 # @virentia/inspector
 
+## 0.4.1
+
+### Patch Changes
+
+- fix(inspector): survive production-size effector graphs — cycle-safe layout, broadcast throttle, render cap + focus mode
+
 ## 0.4.0
 
 ### Minor Changes
