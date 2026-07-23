@@ -46,6 +46,7 @@ import { TimelineRow, UnitFlowNode, type UnitFlowNodeModel } from "../../shared/
 import { recording as recordingStore, recordingChanged } from "./model";
 import { capSnapshot } from "./capSnapshot";
 import { focusSnapshot } from "./focusSnapshot";
+import { hideIsolatedNodes, hideNonKeyNodes } from "./snapshotFilters";
 
 export interface VirentiaInspectorProps {
   channel?: string;
@@ -846,47 +847,3 @@ function useFlowGraph(
   }, [options, selectedEdgeIds, selectedNodeIds, snapshot]);
 }
 
-function hideIsolatedNodes(snapshot: DevtoolsSnapshot): DevtoolsSnapshot {
-  const connectedNodeIds = new Set<string>();
-
-  for (const node of snapshot.nodes) {
-    if (node.key) {
-      connectedNodeIds.add(node.id);
-    }
-  }
-
-  for (const edge of snapshot.edges) {
-    if (edge.kind === "reactive") {
-      connectedNodeIds.add(edge.source);
-      connectedNodeIds.add(edge.target);
-    }
-  }
-
-  for (const node of snapshot.nodes) {
-    if (node.parentId && connectedNodeIds.has(node.id)) {
-      connectedNodeIds.add(node.parentId);
-    }
-  }
-
-  return {
-    ...snapshot,
-    breakpoints: snapshot.breakpoints.filter((id) => connectedNodeIds.has(id)),
-    edges: snapshot.edges.filter(
-      (edge) => connectedNodeIds.has(edge.source) && connectedNodeIds.has(edge.target),
-    ),
-    nodes: snapshot.nodes.filter((node) => connectedNodeIds.has(node.id)),
-  };
-}
-
-function hideNonKeyNodes(snapshot: DevtoolsSnapshot): DevtoolsSnapshot {
-  const visibleNodeIds = new Set(snapshot.nodes.filter((node) => node.key).map((node) => node.id));
-
-  return {
-    ...snapshot,
-    breakpoints: snapshot.breakpoints.filter((id) => visibleNodeIds.has(id)),
-    edges: snapshot.edges.filter(
-      (edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target),
-    ),
-    nodes: snapshot.nodes.filter((node) => visibleNodeIds.has(node.id)),
-  };
-}
