@@ -31,6 +31,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   type Edge,
+  useReactFlow,
   type NodeMouseHandler,
   type NodeTypes,
 } from "@xyflow/react";
@@ -43,6 +44,8 @@ import {
 } from "../../shared/graph";
 import { TimelineRow, UnitFlowNode, type UnitFlowNodeModel } from "../../shared/ui";
 import { recording as recordingStore, recordingChanged } from "./model";
+import { capSnapshot } from "./capSnapshot";
+import { focusSnapshot } from "./focusSnapshot";
 
 export interface VirentiaInspectorProps {
   channel?: string;
@@ -96,6 +99,7 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
   const [showAllUnits, setShowAllUnits] = useState(false);
   const [showIsolatedUnits, setShowIsolatedUnits] = useState(false);
   const [scopeFilter, setScopeFilter] = useState<string>(allScopesValue);
+  const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [triggerNodeId, setTriggerNodeId] = useState<string | null>(null);
   const [triggerStage, setTriggerStage] = useState<TriggerStage | null>(null);
   const [triggerModalOpened, setTriggerModalOpened] = useState(false);
@@ -154,20 +158,34 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
     () => (showIsolatedUnits ? keyFilteredSnapshot : hideIsolatedNodes(keyFilteredSnapshot)),
     [keyFilteredSnapshot, showIsolatedUnits],
   );
+  // Focus mode: narrow the graph to the reactive closure of one unit picked
+  // in the toolbar search — the "debug this event" view. Falls back to the
+  // full visible snapshot when nothing is focused.
+  const focusedSnapshot = useMemo(
+    () => focusSnapshot(visibleSnapshot, focusedNodeId),
+    [visibleSnapshot, focusedNodeId],
+  );
+  // Render cap: ReactFlow freezes on huge graphs (#8) — keep the informative
+  // subset and surface how much was hidden so the user narrows with filters.
+  const capped = useMemo(
+    () => capSnapshot(focusedSnapshot ?? visibleSnapshot),
+    [focusedSnapshot, visibleSnapshot],
+  );
+  const renderSnapshot = capped.snapshot;
   const selectedFlow = useMemo(
     () =>
       createReactiveSelection(
-        visibleSnapshot,
+        renderSnapshot,
         breakpointSelectionActive ? triggerNodeId : selectedNodeId,
       ),
-    [breakpointSelectionActive, selectedNodeId, triggerNodeId, visibleSnapshot],
+    [breakpointSelectionActive, selectedNodeId, triggerNodeId, renderSnapshot],
   );
   const breakpointEligibleNodeIds = useMemo(
     () => new Set(selectedFlow?.nodeIds ?? []),
     [selectedFlow],
   );
   const draftBreakpointIdSet = useMemo(() => new Set(draftBreakpointIds), [draftBreakpointIds]);
-  const flow = useFlowGraph(visibleSnapshot, selectedFlow, {
+  const flow = useFlowGraph(renderSnapshot, selectedFlow, {
     breakpointIds: draftBreakpointIdSet,
     breakpointSelectionActive,
     eligibleNodeIds: breakpointEligibleNodeIds,
@@ -212,6 +230,12 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
     ],
     [snapshot.scopes],
   );
+  // Search covers the whole filtered snapshot, not just the rendered cap —
+  // reaching units hidden by the cap is the point of focus mode.
+  const focusOptions = useMemo(
+    () => visibleSnapshot.nodes.map((node) => ({ value: node.id, label: node.name })),
+    [visibleSnapshot.nodes],
+  );
   const triggerScopeId = scopeFilter === allScopesValue ? null : scopeFilter;
   const visibleTimeline = useMemo(
     () =>
@@ -222,10 +246,10 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
   );
 
   useEffect(() => {
-    if (selectedNodeId && !visibleSnapshot.nodes.some((node) => node.id === selectedNodeId)) {
+    if (selectedNodeId && !renderSnapshot.nodes.some((node) => node.id === selectedNodeId)) {
       setSelectedNodeId(null);
     }
-  }, [selectedNodeId, visibleSnapshot.nodes]);
+  }, [selectedNodeId, renderSnapshot.nodes]);
 
   useEffect(() => {
     if (
@@ -235,6 +259,25 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
       setScopeFilter(allScopesValue);
     }
   }, [scopeFilter, snapshot.scopes]);
+
+  useEffect(() => {
+    if (focusedNodeId && !visibleSnapshot.nodes.some((node) => node.id === focusedNodeId)) {
+      setFocusedNodeId(null);
+    }
+  }, [focusedNodeId, visibleSnapshot.nodes]);
+
+  const reactFlow = useReactFlow();
+
+  useEffect(() => {
+    // ReactFlow keeps the old viewport when the node set is swapped — after a
+    // focus change the closure lands outside of it. Refit once nodes are
+    // measured (fitView with no dimensions is a no-op, hence the delay).
+    const timer = window.setTimeout(() => {
+      void reactFlow.fitView({ padding: 0.2 });
+    }, 100);
+
+    return () => window.clearTimeout(timer);
+  }, [focusedNodeId, reactFlow]);
 
   const beginDrawerResize = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>): void => {
@@ -422,6 +465,20 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
                   w={150}
                 />
               ) : null}
+              <Select
+                aria-label="Focus unit"
+                clearable
+                comboboxProps={{ width: 320, position: "bottom-start" }}
+                data={focusOptions}
+                limit={30}
+                nothingFoundMessage="No units match"
+                onChange={setFocusedNodeId}
+                placeholder="Focus unit…"
+                searchable
+                size="xs"
+                value={focusedNodeId}
+                w={220}
+              />
             </Group>
             <Group gap="xs">
               <Switch
@@ -438,12 +495,24 @@ function InspectorSurface(props: VirentiaInspectorProps): ReactElement {
                 onChange={(event) => setShowIsolatedUnits(event.currentTarget.checked)}
                 size="xs"
               />
-              <Badge color={visibleSnapshot.nodes.length ? "green" : "gray"} variant="light">
-                {visibleSnapshot.nodes.length} units
+              <Badge color={renderSnapshot.nodes.length ? "green" : "gray"} variant="light">
+                {capped.hiddenCount
+                  ? `${renderSnapshot.nodes.length} of ${capped.totalCount} units`
+                  : `${renderSnapshot.nodes.length} units`}
               </Badge>
               <Badge variant="light" color="gray">
-                {visibleSnapshot.edges.length} links
+                {renderSnapshot.edges.length} links
               </Badge>
+              {focusedNodeId ? (
+                <Badge variant="light" color="blue" title="Showing only units that trigger the focused unit or depend on it. Clear the search to see the whole graph.">
+                  focused
+                </Badge>
+              ) : null}
+              {capped.hiddenCount ? (
+                <Badge variant="light" color="yellow" title="Large graph: rendering the most informative subset (connected units first). Focus a unit or narrow with the toggles to see specific areas.">
+                  capped
+                </Badge>
+              ) : null}
               {breakpointIds.length ? (
                 <Badge variant="light" color="red">
                   {breakpointIds.length} breakpoints
