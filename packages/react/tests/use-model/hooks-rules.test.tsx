@@ -2,7 +2,7 @@
 
 import { event, scope, store } from "@virentia/core";
 import { fireEvent, render } from "@testing-library/react";
-import { createElement, useState } from "react";
+import { act, createElement, useState } from "react";
 import { describe, expect, it } from "vitest";
 import { useModel } from "../../lib";
 import type { ModelContext } from "../../lib";
@@ -12,15 +12,16 @@ import { button, captureHookError, ErrorBoundary, withScope } from "../support/r
 resetAmbientScopeAfterEach();
 
 describe("useModel (Rules of Hooks)", () => {
-  it("throws a hooks error when a field's unit-kind flips at the same call site", async () => {
+  it("handles a field's unit-kind flipping at the same call site without a hooks error", async () => {
     const appScope = scope();
     const asStore = { field: store(0) };
     const asEvent = { field: event<void>() };
     const errors: Error[] = [];
 
+    let captured: { field: unknown } | null = null;
     function Flipper() {
       const [flip, setFlip] = useState(false);
-      useModel(flip ? asEvent : asStore);
+      captured = useModel(flip ? asEvent : asStore) as { field: unknown };
       return createElement("button", { onClick: () => setFlip(true) }, "go");
     }
 
@@ -31,12 +32,16 @@ describe("useModel (Rules of Hooks)", () => {
       ),
     );
 
-    const all = await captureHookError(() => fireEvent.click(button()), errors);
-    // Flipping a field's unit-kind (store => 4 hooks via useStoreUnit, event => 1
-    // hook) at the same call site violates the Rules of Hooks. React surfaces
-    // this as a render crash to the error boundary (the exact message is
-    // version-specific), so we assert an error was raised, not its wording.
-    expect(all.length).toBeGreaterThan(0);
+    // The whole model binds through one useSyncExternalStore, so its hook count
+    // is independent of a field's unit-kind. Flipping store => event at the same
+    // call site is no longer a Rules-of-Hooks violation: the store field reads as
+    // a value, and after the flip the event field reads as a bound callable.
+    expect(captured!.field).toBe(0);
+    await act(async () => {
+      fireEvent.click(button());
+    });
+    expect(errors).toEqual([]);
+    expect(typeof captured!.field).toBe("function");
   });
 
   it("throws a hooks error when swapping factory and raw-model branches at one call site", async () => {

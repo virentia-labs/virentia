@@ -19,10 +19,21 @@ import type {
   ModelInstance,
   ReactiveModel,
 } from "./types";
-import { useUnitWithScope } from "./use-unit";
+import {
+  bindCallable,
+  defineStoreLeaf,
+  defineValue,
+  guardCycle,
+  isComponentModel,
+  modelInstanceSymbol,
+  resolveUnitNode,
+  useTrackedTree,
+  type TrackContext,
+} from "./tracked";
 import {
   getShape,
   isPlainObject,
+  isStoreUnit,
   isUnitLike,
   SHAPE,
   useIsomorphicLayoutEffect,
@@ -188,6 +199,18 @@ export function useReactiveModel<Model extends object>(
   model: Model,
   scope: Scope,
 ): ReactiveModel<Model> {
+  return useTrackedTree(model, scope, walkModel) as ReactiveModel<Model>;
+}
+
+// Builds a model's tracked tree. A model differs from a bare `useUnit` shape:
+// keys `dispose`/`@@shape`/non-enumerable are dropped, arrays and class
+// instances stay raw, a nested `ComponentModel` passes through untouched, a
+// field declaring `@@shape` binds through it, and a plain object recurses with
+// these same model rules.
+const walkModel = (model: unknown, ctx: TrackContext): unknown =>
+  resolveModelObject(model as object, ctx, new WeakSet<object>());
+
+function resolveModelObject(model: object, ctx: TrackContext, seen: WeakSet<object>): object {
   const result: Record<PropertyKey, unknown> = {};
 
   for (const key of Reflect.ownKeys(model)) {
@@ -202,16 +225,61 @@ export function useReactiveModel<Model extends object>(
       continue;
     }
 
-    result[key] = useModelValue(Reflect.get(model, key), scope);
+    defineModelChild(result, key, Reflect.get(model, key), ctx, seen);
   }
 
-  return result as ReactiveModel<Model>;
+  return result;
+}
+
+function defineModelChild(
+  target: object,
+  key: PropertyKey,
+  raw: unknown,
+  ctx: TrackContext,
+  seen: WeakSet<object>,
+): void {
+  if (isUnitLike(raw)) {
+    if (isStoreUnit(raw)) {
+      defineStoreLeaf(target, key, raw, ctx);
+    } else {
+      defineValue(target, key, bindCallable(raw, ctx.scope));
+    }
+    return;
+  }
+
+  if (isComponentModel(raw)) {
+    defineValue(target, key, raw);
+    return;
+  }
+
+  // A field that declares `@@shape` binds through that declaration, so an opaque
+  // value (a class-based sub-model) still reaches the view as bound units.
+  const shape = getShape(raw);
+
+  if (shape !== undefined) {
+    defineValue(
+      target,
+      key,
+      guardCycle(raw as object, seen, () => resolveUnitNode(shape, ctx, seen)),
+    );
+    return;
+  }
+
+  if (isPlainObject(raw)) {
+    defineValue(
+      target,
+      key,
+      guardCycle(raw, seen, () => resolveModelObject(raw, ctx, seen)),
+    );
+    return;
+  }
+
+  // Arrays, class instances, plain methods, and primitives stay raw.
+  defineValue(target, key, raw);
 }
 
 const disposeSymbol =
   typeof Symbol.dispose === "symbol" ? Symbol.dispose : Symbol.for("Symbol.dispose");
-
-const modelInstanceSymbol = Symbol("virentia.react.modelInstance");
 
 type ModelWithInstance<Props, Model extends object, Key> = {
   [modelInstanceSymbol]?: ModelInstance<Props, Model, Key>;
@@ -226,34 +294,4 @@ function defineHidden(target: DisposableOwner, key: PropertyKey, value: unknown)
     configurable: true,
     value,
   });
-}
-
-function useModelValue(value: unknown, scope: Scope): unknown {
-  if (isUnitLike(value)) {
-    return useUnitWithScope(value, scope);
-  }
-
-  if (isComponentModel(value)) {
-    return value;
-  }
-
-  // A field that declares `@@shape` binds through that declaration, so an opaque
-  // value (a class-based sub-model) still reaches the view as bound units.
-  if (getShape(value) !== undefined) {
-    return useUnitWithScope(value, scope);
-  }
-
-  if (isPlainObject(value)) {
-    return useReactiveModel(value, scope);
-  }
-
-  return value;
-}
-
-function isComponentModel(value: unknown): value is ComponentModel<object> {
-  return Boolean(
-    value &&
-    typeof value === "object" &&
-    (value as ModelWithInstance<unknown, object, unknown>)[modelInstanceSymbol],
-  );
 }

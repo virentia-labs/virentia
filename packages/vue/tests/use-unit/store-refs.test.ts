@@ -90,6 +90,9 @@ describe("bindUnit", () => {
     let bound!: Ref<number>;
     es.run(() => {
       bound = bindUnit(tracked, appScope) as Ref<number>;
+      // The binding is lazy: the store is subscribed on first read, not at bind.
+      // The read happens inside `es.run` so the disposal hook binds to this scope.
+      void bound.value;
     });
 
     expect(getActive()).toBe(1);
