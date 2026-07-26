@@ -1,5 +1,3 @@
-export { attach } from "./attach";
-export type { AttachSourceShape, AttachSourceValue } from "./attach";
 export { effect } from "./effect";
 export type {
   Effect,

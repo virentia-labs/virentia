@@ -89,7 +89,13 @@ draft.dispose();
 
 ## Main API
 
-`scope`, `scoped`, `store`, `computed`, `event`, `effect`, `attach`, `reaction`, `owner`, `onCleanup`, `getOwner`, `withOwner`, `lazyModel`.
+`scope`, `scoped`, `store`, `computed`, `event`, `effect`, `reaction`, `owner`, `onCleanup`, `getOwner`, `withOwner`, `lazyModel`.
+
+Derived effects come from `effect(...).variant(...)`: a variant is a separately
+observable front door to the same effect — its own `pending`, `doneData`, and
+`abort`, optionally its own params via a mapping function — and calling it drives
+the base effect's full lifecycle, so the base's `pending`/`done`/`fail` account
+for every call made through any of its variants.
 
 Low-level kernel building blocks for authoring custom units/stores live in `@virentia/core/internal`: `node`, `run`, `context`, `withContexts`, plus tracking, scope, and transaction primitives.
 

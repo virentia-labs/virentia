@@ -1,5 +1,24 @@
 # @virentia/core
 
+## 0.9.0
+
+### Minor Changes
+
+- Remove `attach` and make `effect(...).variant(...)` drive the base effect's full lifecycle.
+
+  `variant` used to run only the base effect's handler, so the base's `started`,
+  `pending`/`inFlight`, `done`/`doneData`/`settled` and `failed`/`failData` stayed
+  silent for calls made through a variant. A variant now _calls_ the base effect, so
+  those units fire for every call routed through it and `basefx.pending` aggregates
+  work started by any of its variants. Aborting a variant call cancels the base call
+  it made, and both effects emit `aborted`. A scope handler override on the variant
+  itself still replaces the delegation outright, leaving the base untouched.
+
+  `attach` is removed along with the internal `runEffectHandler` helper. Its
+  `mapParams` maps to `variant(params)`; its `source` option has no direct
+  replacement — read the stores inside the handler instead (`token.value` resolves
+  against the calling scope exactly as an attached `source` did).
+
 ## 0.8.0
 
 ### Minor Changes
