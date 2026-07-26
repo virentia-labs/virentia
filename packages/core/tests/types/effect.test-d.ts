@@ -1,7 +1,6 @@
 import { describe, expectTypeOf, it } from "vitest";
-import { attach, effect, store } from "../../lib";
+import { effect } from "../../lib";
 import type {
-  AttachSourceValue,
   Effect,
   EffectAborted,
   EffectCallArgs,
@@ -155,79 +154,5 @@ describe("effect types", () => {
     expectTypeOf<EffectCallArgs<number>>().toEqualTypeOf<
       [params: number, options?: import("../../lib").EffectCallOptions]
     >();
-  });
-});
-
-describe("attach types", () => {
-  it("computes AttachSourceValue over store / tuple / record / non-source", () => {
-    expectTypeOf<AttachSourceValue<Store<number>>>().toEqualTypeOf<number>();
-    expectTypeOf<
-      AttachSourceValue<readonly [Store<number>, Store<string>]>
-    >().toEqualTypeOf<readonly [number, string]>();
-    expectTypeOf<
-      AttachSourceValue<{ a: Store<number>; b: Store<string> }>
-    >().toEqualTypeOf<{ a: number; b: string }>();
-    // a non-source shape resolves to never.
-    expectTypeOf<AttachSourceValue<number>>().toBeNever();
-  });
-
-  it("infers attach() return effects across overloads", () => {
-    const base = effect(async (id: string): Promise<number> => id.length);
-
-    // wrapping an effect keeps its signature.
-    expectTypeOf(attach({ effect: base })).toEqualTypeOf<Effect<string, number, unknown>>();
-
-    // mapParams re-types the outer Params.
-    expectTypeOf(
-      attach({ effect: base, mapParams: (outer: { id: string }) => outer.id }),
-    ).toEqualTypeOf<Effect<{ id: string }, number, unknown>>();
-
-    // with a store source + mapParams.
-    const token = store("t");
-    expectTypeOf(
-      attach({
-        source: token,
-        effect: base,
-        mapParams: (outer: number, src: string) => `${src}:${outer}`,
-      }),
-    ).toEqualTypeOf<Effect<number, number, unknown>>();
-
-    // inline handler with a source produces an effect over the handler Params.
-    expectTypeOf(
-      attach({
-        source: token,
-        effect: (src: string, params: number): Promise<string> => Promise.resolve(`${src}${params}`),
-      }),
-    ).toEqualTypeOf<Effect<number, string, unknown>>();
-  });
-
-  it("infers source, param, and return types across overloads", () => {
-    const s1 = store(1);
-    const s2 = store("x");
-    const baseFx = effect(async (p: { id: number }) => p.id);
-
-    // Tuple source: mapParams' `source` arg is the positional value tuple, and
-    // the result Effect is keyed by the AttachedParams of mapParams.
-    const tupleAttached = attach({
-      source: [s1, s2] as const,
-      effect: baseFx,
-      mapParams: (p: { id: number }, src: readonly [number, string]) => {
-        expectTypeOf(src).toEqualTypeOf<readonly [number, string]>();
-        return p;
-      },
-    });
-    expectTypeOf(tupleAttached).toEqualTypeOf<Effect<{ id: number }, number, unknown>>();
-
-    // Single-store source without mapParams: the inline handler's source arg is
-    // the scalar store value.
-    const scalarAttached = attach({
-      source: s1,
-      effect: (src: number, _p: number) => src,
-    });
-    expectTypeOf(scalarAttached).toEqualTypeOf<Effect<number, number, unknown>>();
-
-    // Passthrough: no source, base Effect — params/done/fail preserved.
-    const passthrough = attach({ effect: baseFx });
-    expectTypeOf(passthrough).toEqualTypeOf<Effect<{ id: number }, number, unknown>>();
   });
 });

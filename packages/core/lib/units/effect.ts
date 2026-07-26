@@ -15,8 +15,6 @@ import type { Event, EventCallable } from "./event";
 import { readonlyStore } from "./store";
 import type { Store } from "./store";
 
-const effectHandlerRunner = Symbol("virentia.effectHandlerRunner");
-
 export interface EffectHandlerContext {
   signal: AbortSignal;
   scope: Scope;
@@ -116,10 +114,6 @@ interface EffectCallState<Params, Done> {
 
 let currentEffectCall: EffectCallState<unknown, unknown> | null = null;
 
-interface EffectInternal<Params, Done> {
-  [effectHandlerRunner](params: Params, ctx: EffectHandlerContext): Done | PromiseLike<Done>;
-}
-
 type EffectOutcome<Params, Done, Fail> =
   | {
       status: "done";
@@ -177,7 +171,18 @@ export function effect<Params, Done, Fail = unknown>(
     return effect<unknown, Done, Fail>((call, ctx) => {
       const params = mapParams ? mapParams(call) : (call as Params);
 
-      return runEffectHandler(result, params, ctx);
+      // A variant is a front door to the base effect, not a copy of it: it CALLS
+      // the base, so the base's own lifecycle (started, inFlight/pending,
+      // done/doneData/settled, failed/failData) fires for every variant call too.
+      // The base call is created while this handler is the `currentEffectCall`,
+      // so it inherits the variant's abort signal and cancels along with it.
+      const previousScope = setActiveScope(ctx.scope);
+
+      try {
+        return result(params);
+      } finally {
+        setActiveScope(previousScope);
+      }
     }, variantDevtools);
   }) as Effect<Params, Done, Fail>["variant"];
 
@@ -429,11 +434,6 @@ export function effect<Params, Done, Fail = unknown>(
     },
   );
 
-  Object.defineProperty(result, effectHandlerRunner, {
-    enumerable: false,
-    value: handler,
-  });
-
   return result;
 
   function linkEffectSubunit(role: string, child: Node): void {
@@ -514,18 +514,6 @@ export function effect<Params, Done, Fail = unknown>(
       });
     });
   }
-}
-
-export function runEffectHandler<Params, Done>(
-  effect: Effect<Params, Done, any>,
-  params: Params,
-  ctx: EffectHandlerContext,
-): Done | PromiseLike<Done> {
-  const handler =
-    getScopeHandler(ctx.scope, effect) ??
-    (effect as unknown as EffectInternal<Params, Done>)[effectHandlerRunner];
-
-  return handler(params, ctx);
 }
 
 // getAbortReason is called more than once per abort (the rejection and the
