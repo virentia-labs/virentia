@@ -35,8 +35,12 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
+      # Pinned to 11.x: npm 12 changed `npm info --json` to return an array
+      # instead of an object, so changesets reads `.versions` off it, gets
+      # undefined, and treats every package as unpublished. It then retries an
+      # already-published version and crashes handling the resulting E403.
       - name: Set up npm
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
