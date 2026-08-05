@@ -382,8 +382,9 @@ describe("overlapping async auto runs", () => {
     expect(nextOf(extra.node)).not.toContain(r.node);
 
     phase = 1;
-    // Kernel absorbs the async rejection into ctx.failed; the run promise resolves.
-    const rerun = run({ unit: trig.node, payload: 1, scope: a });
+    // The run now rejects with the body's error (async follows sync); the point
+    // of this test is that the latest run's dependencies are committed anyway.
+    const rerun = run({ unit: trig.node, payload: 1, scope: a }).catch(() => undefined);
     gates.release(1);
     await rerun;
     await flush();

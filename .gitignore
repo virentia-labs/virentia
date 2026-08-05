@@ -5,3 +5,6 @@ docs/.vitepress/dist
 docs/.vitepress/cache
 .md
 .claude/settings.local.json
+
+# Left behind when a `vitest typecheck` run is interrupted; vitest removes it on a clean exit.
+tsconfig.vitest-temp.json

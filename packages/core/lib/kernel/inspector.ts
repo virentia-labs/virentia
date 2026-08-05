@@ -371,6 +371,29 @@ export function readInspectorNodeMeta(node: Node): InspectorNodeMeta {
  * plus the stable inspector id (`event #12`) so the unit can still be located
  * in devtools even when it was never explicitly named.
  */
+// Where a unit was declared, as a single "file:line:col" frame. Captured once
+// at creation — units are created during model setup, not per update — so an
+// anonymous unit in a failure report still points at real source.
+export function captureDeclarationSite(): string | undefined {
+  const stack = new Error().stack;
+
+  if (!stack) return undefined;
+
+  // Skip frames belonging to this library — its source tree during development,
+  // its bundles once published — so the first remaining frame is the caller's.
+  const internal = /[/\\](?:packages[/\\]core[/\\]lib|dist[/\\](?:index|internal|devtools|kernel-))|@virentia[/\\]core/;
+
+  for (const frame of stack.split("\n").slice(1)) {
+    if (internal.test(frame)) continue;
+
+    const match = /\(?([^()\s]+:\d+:\d+)\)?\s*$/.exec(frame.trim());
+
+    if (match?.[1]) return match[1];
+  }
+
+  return undefined;
+}
+
 export function describeNode(node: Node): string {
   const meta = readInspectorNodeMeta(node);
   const type = meta.type ?? "unit";

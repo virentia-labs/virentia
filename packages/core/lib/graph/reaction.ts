@@ -1,6 +1,6 @@
 import { node, run } from "../kernel";
 import type { Node } from "../kernel";
-import { withInspectorMeta } from "../kernel/inspector";
+import { captureDeclarationSite, withInspectorMeta } from "../kernel/inspector";
 import { getActiveScope, setActiveScope } from "../scope/internal";
 import type { Scope } from "../scope";
 import { detachScopedDependent, reconcileScopedEdges } from "../kernel/scoped-edges";
@@ -148,6 +148,7 @@ export function reaction(
       name,
       key,
       internal: false,
+      loc: captureDeclarationSite(),
     }),
     run: (ctx) => {
       if (stopped || !matchesScope(allowedScopes, ctx.scope)) {

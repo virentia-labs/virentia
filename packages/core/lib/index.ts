@@ -6,3 +6,8 @@ export type * from "./kernel";
 export * from "./graph";
 export * from "./scope";
 export * from "./units";
+
+// Where contained observer failures are reported. Apps wire this to their crash
+// reporter; the default prints a readable report to the console.
+export { setErrorReporter } from "./kernel/report";
+export type { VirentiaErrorReporter, VirentiaFailureReport } from "./kernel/report";

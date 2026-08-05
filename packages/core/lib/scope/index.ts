@@ -117,6 +117,12 @@ function runScopedExec<T>(scope: Scope, fn: () => T): T {
 
   if (!isThenable(result)) {
     setActiveScope(previousScope);
+    // Nobody is awaiting a synchronous body, so any work it spawned would settle
+    // with no handler attached — and a rejection there would take the process
+    // down. The failure has already been reported through the contained-error
+    // funnel, so absorb it here instead of turning a logged bug into a crash.
+    void settleAll(spawned);
+
     return result;
   }
 

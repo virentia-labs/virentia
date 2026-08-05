@@ -252,7 +252,7 @@ describe("scope restoration", () => {
       expect((thrown as Error).message).toBe("sync");
     });
 
-    it("resolves the scoped promise even when an async reaction fails", async () => {
+    it("rejects the scoped promise when an async reaction fails", async () => {
       const s = scope();
       const ev = event();
       let ran = false;
@@ -266,7 +266,9 @@ describe("scope restoration", () => {
         },
       });
 
-      await expect(scoped(s, () => ev())).resolves.toBeUndefined();
+      // An uncaught throw inside an async reaction reaches whoever awaited the
+      // trigger, exactly as it would from any other async call chain.
+      await expect(scoped(s, () => ev())).rejects.toThrow("reaction fail");
       expect(ran).toBe(true);
     });
 

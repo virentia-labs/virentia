@@ -20,7 +20,8 @@ describe("reactive", () => {
 
         expect(r.b).toBe(2);
         expect("b" in r).toBe(true);
-        expect(Object.keys(r)).toEqual(expect.arrayContaining(["a", "b"]));
+        // Exact, not arrayContaining: api members must not leak into enumeration.
+        expect(Object.keys(r)).toEqual(["a", "b"]);
 
         const spread = { ...(r as Record<string, unknown>) };
         expect(spread.a).toBe(1);

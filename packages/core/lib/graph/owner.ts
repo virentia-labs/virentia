@@ -28,6 +28,12 @@ export function owner<T>(fn: (dispose: () => void, owner: Owner) => T): T {
   const nextOwner = createOwner();
   const previousOwner = activeOwner;
 
+  // An owner created inside another owner is its child: disposing the parent
+  // tears the child down too. Without this a sub-model outlives the feature that
+  // built it, keeping its reactions subscribed and its effects in flight.
+  // `dispose` is idempotent, so disposing the child by hand first is still fine.
+  previousOwner?.onCleanup(() => nextOwner.dispose());
+
   activeOwner = nextOwner;
 
   try {

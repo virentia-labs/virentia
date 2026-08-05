@@ -4,6 +4,7 @@ import { describeNode, withInspectorMeta } from "../kernel/inspector";
 import type { Scope } from "../scope";
 import { scoped } from "../scope";
 import { getActiveScope, requireActiveScope, setActiveScope } from "../scope/internal";
+import { unwrapMicroScope } from "../scope/micro";
 import { readonlyStore } from "./store";
 import type { Store, StoreSubscriber } from "./store";
 
@@ -13,7 +14,13 @@ type AnyFunction = (this: unknown, ...args: any[]) => unknown;
 export type LazyModelLoader<Model extends object> = () => Model | PromiseLike<Model>;
 
 export type LazyModel<Model extends object> = Model & {
+  /** True while a load is in flight. False both BEFORE and AFTER it — use `loaded` to gate reads. */
   readonly pending: Store<boolean>;
+  /**
+   * True once the loader has produced the model. Reading a lazy unit before this
+   * is true throws, so this is the flag to gate a defensive read on.
+   */
+  readonly loaded: Store<boolean>;
 };
 
 type LazyLoader<T> = (scope?: Scope | null) => T | PromiseLike<T>;
@@ -37,11 +44,22 @@ interface MirroredNextList {
 
 export function lazyModel<Model extends object>(loader: LazyModelLoader<Model>): LazyModel<Model> {
   const pending = readonlyStore(false, undefined, { name: "lazyModel.pending" });
+  // Per-scope, exactly like `pending`: a scope learns the model is loaded once
+  // it has taken part in a load. That is the flag to gate a read on — `pending`
+  // reads false both before and after, so it cannot tell the two apart.
+  const loaded = readonlyStore(false, undefined, { name: "lazyModel.loaded" });
   const resolver = createLazyResolver(
     () => loader(),
     (scope, value) => {
       void run({
         unit: pending.node,
+        payload: value,
+        scope,
+      });
+    },
+    (scope, value) => {
+      void run({
+        unit: loaded.node,
         payload: value,
         scope,
       });
@@ -61,6 +79,10 @@ export function lazyModel<Model extends object>(loader: LazyModelLoader<Model>):
 
       if (property === "pending") {
         return pending;
+      }
+
+      if (property === "loaded") {
+        return loaded;
       }
 
       if (property in target) {
@@ -102,7 +124,7 @@ export function lazyModel<Model extends object>(loader: LazyModelLoader<Model>):
     },
 
     has(target, property) {
-      if (property === "pending") return true;
+      if (property === "pending" || property === "loaded") return true;
 
       if (property in target) return true;
 
@@ -118,7 +140,7 @@ export function lazyModel<Model extends object>(loader: LazyModelLoader<Model>):
     },
 
     getOwnPropertyDescriptor(target, property) {
-      if (property === "pending") {
+      if (property === "pending" || property === "loaded") {
         return {
           configurable: true,
           enumerable: true,
@@ -413,9 +435,11 @@ function runLoaderInScope<T>(
 function createLazyResolver<T>(
   loader: LazyLoader<T>,
   setPending?: (scope: Scope, value: boolean) => void,
+  setLoaded?: (scope: Scope, value: boolean) => void,
 ): LazyResolver<T> {
   const watchers = new Set<(value: T) => void>();
   const pendingScopes = new Set<Scope>();
+  const loadedScopes = new Set<Scope>();
   let loaded = false;
   let value: T;
   let promise: Promise<T> | null = null;
@@ -440,6 +464,9 @@ function createLazyResolver<T>(
 
     load(scope) {
       if (loaded) {
+        // A scope joining after the load still has to be told.
+        if (scope) markScopeLoaded(scope);
+
         return Promise.resolve(value);
       }
 
@@ -504,9 +531,20 @@ function createLazyResolver<T>(
   function flushPendingScopes(): void {
     for (const scope of pendingScopes) {
       setPending?.(scope, false);
+      setLoaded?.(scope, true);
+      loadedScopes.add(scope);
     }
 
     pendingScopes.clear();
+  }
+
+  function markScopeLoaded(scope: Scope): void {
+    if (loadedScopes.has(scope)) {
+      return;
+    }
+
+    loadedScopes.add(scope);
+    setLoaded?.(scope, true);
   }
 }
 
