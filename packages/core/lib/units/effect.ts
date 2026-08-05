@@ -1,4 +1,4 @@
-import { node, run } from "../kernel";
+import { node, run, runDetached } from "../kernel";
 import type { Node } from "../kernel";
 import { describeNode, linkInspectorNodes, withInspectorMeta } from "../kernel/inspector";
 import {
@@ -231,12 +231,12 @@ export function effect<Params, Done, Fail = unknown>(
 
   const setInFlight = (scope: Scope, next: number): void => {
     inFlightByScope.set(scope, next);
-    void run({ unit: inFlightStore.node, payload: next, scope });
-    void run({ unit: pending.node, payload: next > 0, scope });
+    runDetached({ unit: inFlightStore.node, payload: next, scope });
+    runDetached({ unit: pending.node, payload: next > 0, scope });
   };
 
   const emitAbort = (call: EffectCallState<Params, Done>, reason: unknown): void => {
-    void run({
+    runDetached({
       unit: aborted.node,
       payload: { params: call.params, reason },
       scope: call.scope,
@@ -419,7 +419,7 @@ export function effect<Params, Done, Fail = unknown>(
       const promise = new Promise<Done>((resolve, reject) => {
         const call = createCall(params, options, scope, resolve, reject);
 
-        void run({ unit: effectNode, payload: call, scope });
+        runDetached({ unit: effectNode, payload: call, scope });
       });
 
       // The awaiter gets the effect's own settle promise, which resolves from

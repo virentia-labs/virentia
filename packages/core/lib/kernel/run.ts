@@ -2,9 +2,10 @@ import type { KernelContextManager, KernelExecutionContext, RunOptions } from ".
 import type { Node } from "./types";
 import type { CreatePageOptions, KernelWorkItem, Page } from "./internal";
 import { getActiveScope, setActiveScope } from "../scope/internal";
-import { reportContainedError } from "./report";
+import { markErrorReported, reportContainedError, wasErrorReported } from "./report";
 import { unwrapMicroScope } from "../scope/micro";
 import {
+  describeNode,
   emitInspectorBreakpointHit,
   emitInspectorNodeEnd,
   emitInspectorNodeStart,
@@ -273,6 +274,27 @@ export async function run(options: RunOptions): Promise<void> {
   }
 }
 
+/**
+ * Fire-and-forget launch for updates the library itself initiates: a store
+ * commit notifying its graph, a reaction's creation pass, effect bookkeeping.
+ * Nobody awaits these, so a rejection of the `run()` promise would escape as an
+ * unhandled rejection and take the process down — while the failure itself was
+ * (for a propagated item) already delivered through the contained-error funnel.
+ * Absorb what was already reported; report what would otherwise vanish unseen.
+ */
+export function runDetached(options: RunOptions): void {
+  run(options).catch((error: unknown) => {
+    if (wasErrorReported(error)) return;
+
+    const unit = Array.isArray(options.unit) ? options.unit[0] : options.unit;
+
+    reportContainedError(error, {
+      kind: "detached update",
+      subject: unit ? describeNode(unit) : undefined,
+    });
+  });
+}
+
 function drainQueue(drain: DrainContext): Promise<void> | void {
   const previousDrain = activeDrain;
 
@@ -395,6 +417,9 @@ function continueDrain(
         ? first
         : new AggregateError(drain.containedErrors, "Multiple reactions failed");
 
+    // The members were each reported as they were contained; the aggregate
+    // wrapper wraps only reported failures, so a detached launch may absorb it.
+    markErrorReported(failure);
     drain.containedErrors.length = 0;
     activeDrain = previousDrain;
     settleFlushWaiters(drain, true, failure);

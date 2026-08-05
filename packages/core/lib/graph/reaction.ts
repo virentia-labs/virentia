@@ -1,4 +1,4 @@
-import { node, run } from "../kernel";
+import { node, runDetached } from "../kernel";
 import type { Node } from "../kernel";
 import { captureDeclarationSite, withInspectorMeta } from "../kernel/inspector";
 import { getActiveScope, setActiveScope } from "../scope/internal";
@@ -228,6 +228,12 @@ export function reaction(
       },
       (error) => {
         commitIfLatest();
+
+        // A stopped reaction has no owner left to care about its outcome:
+        // `stop()`/owner-dispose already detached it, and the rejection is
+        // normally just the teardown abort of whatever the body was awaiting.
+        if (stopped) return ctxValue;
+
         throw error;
       },
     );
@@ -288,6 +294,11 @@ export function reaction(
       },
       (error) => {
         settle();
+
+        // Same as the auto form: a stopped reaction's parked run settles
+        // quietly — its teardown abort is not a failure anyone can act on.
+        if (stopped) return ctxValue;
+
         throw error;
       },
     );
@@ -316,10 +327,10 @@ export function reaction(
     // `scope: [a, b]` auto reaction would subscribe (and ever fire) only in `a`.
     if (configuredScopes) {
       for (const configuredScope of configuredScopes) {
-        void run({ unit: reactionNode, scope: configuredScope });
+        runDetached({ unit: reactionNode, scope: configuredScope });
       }
     } else {
-      void run({ unit: reactionNode, scope: undefined });
+      runDetached({ unit: reactionNode, scope: undefined });
     }
   }
 
