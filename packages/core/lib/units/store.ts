@@ -1,4 +1,4 @@
-import { node, run } from "../kernel";
+import { node, runDetached } from "../kernel";
 import { reportContainedError } from "../kernel/report";
 import type { Node } from "../kernel";
 import {
@@ -426,7 +426,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
       notify() {
         notifySubscribers(subscribers, next, scope, storeNode);
 
-        void run({
+        runDetached({
           unit: storeNode,
           payload: {
             [committedStoreUpdate]: true,

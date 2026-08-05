@@ -32,6 +32,26 @@ export interface VirentiaFailureReport {
 
 export type VirentiaErrorReporter = (failure: VirentiaFailureReport) => void;
 
+// Errors already delivered through the reporter. A detached (fire-and-forget)
+// launch absorbs these instead of crashing the process with an unhandled
+// rejection; an error NOT in this set has never been seen and must be reported
+// by whoever absorbs it. Primitive throws can't be tracked — they read as
+// unreported, which at worst duplicates a report rather than losing one.
+const reportedErrors = new WeakSet<object>();
+
+export function markErrorReported(error: unknown): void {
+  if ((typeof error === "object" && error !== null) || typeof error === "function") {
+    reportedErrors.add(error as object);
+  }
+}
+
+export function wasErrorReported(error: unknown): boolean {
+  return (
+    ((typeof error === "object" && error !== null) || typeof error === "function") &&
+    reportedErrors.has(error as object)
+  );
+}
+
 export interface ContainedFailure {
   kind: string;
   item?: KernelWorkItem;
@@ -80,6 +100,8 @@ function propagationPath(item: KernelWorkItem): string[] {
 }
 
 export function reportContainedError(error: unknown, failure: ContainedFailure): void {
+  markErrorReported(error);
+
   const unit = failure.subject ?? (failure.item ? describeNode(failure.item.node) : "a unit");
   const declaredAt = failure.item ? readInspectorNodeMeta(failure.item.node).loc : undefined;
   const scope =

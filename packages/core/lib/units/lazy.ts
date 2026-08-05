@@ -1,4 +1,4 @@
-import { node, run } from "../kernel";
+import { node, runDetached } from "../kernel";
 import type { Node } from "../kernel";
 import { describeNode, withInspectorMeta } from "../kernel/inspector";
 import type { Scope } from "../scope";
@@ -51,14 +51,14 @@ export function lazyModel<Model extends object>(loader: LazyModelLoader<Model>):
   const resolver = createLazyResolver(
     () => loader(),
     (scope, value) => {
-      void run({
+      runDetached({
         unit: pending.node,
         payload: value,
         scope,
       });
     },
     (scope, value) => {
-      void run({
+      runDetached({
         unit: loaded.node,
         payload: value,
         scope,
