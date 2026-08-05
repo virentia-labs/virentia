@@ -213,6 +213,19 @@ export function effect<Params, Done, Fail = unknown>(
       attachAbortSignal(call, options.signal);
     }
 
+    // The owner that MADE this call cancels it when disposed. Without this, a
+    // screen torn down mid-request leaves the request running whenever the
+    // effect itself lives at module scope — the common shape, since effects are
+    // usually declared once and called from many models.
+    const unregisterCaller = registerCleanup(() => {
+      if (call.completed || call.controller.signal.aborted) return;
+
+      call.controller.abort(new Error("Effect caller disposed"));
+      emitAbort(call, getAbortReason(call.controller.signal));
+    });
+
+    addCallCleanup(call, unregisterCaller);
+
     return call;
   };
 

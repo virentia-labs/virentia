@@ -95,6 +95,16 @@ export const defaultDevtoolsChannel = "virentia-devtools";
 export const defaultInspectorUrl = "http://127.0.0.1:5174";
 export const relayPathname = "/__virentia_devtools";
 
+function describeThrown(error: unknown): string {
+  if (error instanceof Error) return error.message;
+
+  try {
+    return String(error);
+  } catch {
+    return "unknown error";
+  }
+}
+
 export function serializeDevtoolsValue(value: unknown): SerializedDevtoolsValue {
   const seen = new WeakSet<object>();
 
@@ -188,6 +198,14 @@ export function serializeDevtoolsValue(value: unknown): SerializedDevtoolsValue 
         kind: "object",
         preview: truncate(preview),
         value,
+      };
+    } catch (error) {
+      // Reading the value is the app's code, not ours: a throwing getter, a
+      // hostile Proxy trap, or a cross-realm object must degrade the inspector
+      // preview, never take the app down with it.
+      return {
+        kind: "unserializable",
+        preview: truncate(`<unserializable: ${describeThrown(error)}>`),
       };
     } finally {
       seen.delete(input);

@@ -78,36 +78,34 @@ describe("kernel async run", () => {
         throw err;
       });
 
-      await run({ unit: failing, scope: s });
+      await expect(run({ unit: failing, scope: s })).rejects.toBe(err);
       expect(cap.value).toBeUndefined();
       expect(cap.error).toBe(err);
       expect(cap.failed).toBe(true);
       reset();
     });
 
-    // KNOWN BUG #7 (reported, prod NOT changed): an async rejection is swallowed —
-    // downstream still runs with failed=false and run() resolves, whereas a SYNC
-    // throw halts and rejects run(). Whether this async/sync asymmetry is a defect
-    // or intentional fire-and-forget design is a contract decision, so this stays a
-    // characterization of current behavior rather than an it.fails. See Phase 0 report.
-    it("still propagates downstream with value, error, and failed all reset", async () => {
+    // Resolves the former KNOWN BUG #7: an async rejection used to be swallowed
+    // (downstream ran with failed=false, run() resolved) while a SYNC throw
+    // halted and rejected. Async now follows the same rule as sync — and the
+    // same rule an `async function` follows: the statements after an uncaught
+    // throw do not run, and the rejection reaches whoever awaits.
+    it("halts the branch instead of running downstream on the failure", async () => {
       const s = scope();
-      let dctx!: KernelExecutionContext;
+      const err = new Error("e");
+      let dctx: KernelExecutionContext | undefined;
       const downstream = node((ctx) => {
         dctx = ctx;
       });
       const failing = node({
         run: async () => {
-          throw new Error("e");
+          throw err;
         },
         next: [downstream],
       });
 
-      await run({ unit: failing, scope: s });
-      expect(dctx).toBeDefined();
-      expect(dctx.value).toBeUndefined();
-      expect(dctx.error).toBeUndefined();
-      expect(dctx.failed).toBe(false);
+      await expect(run({ unit: failing, scope: s })).rejects.toBe(err);
+      expect(dctx).toBeUndefined();
       reset();
     });
   });

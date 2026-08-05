@@ -20,11 +20,29 @@ interface KernelTransaction {
   depth: number;
   writes: WeakMap<Scope, Map<symbol, PendingStoreWrite>>;
   scopes: Scope[];
+  epoch: number;
 }
 
 const noPendingStoreValue = Symbol("virentia.noPendingStoreValue");
 
 let currentTransaction: KernelTransaction | null = null;
+// Identifies the store update currently being published. It advances the moment
+// a new value is STAGED — that is when readers start seeing it, well before the
+// commit — and stays put through the commit and the propagation that follows.
+// Derived units record the epoch they were first materialized in, which is how
+// a value that predates the update is told apart from one a read created in the
+// middle of it.
+let updateEpoch = 0;
+
+export function currentUpdateEpoch(): number {
+  return updateEpoch;
+}
+
+export function beginUpdateEpoch(): number {
+  updateEpoch += 1;
+
+  return updateEpoch;
+}
 
 export function enterTransaction(): void {
   if (currentTransaction) {
@@ -36,6 +54,7 @@ export function enterTransaction(): void {
     depth: 1,
     writes: new WeakMap(),
     scopes: [],
+    epoch: 0,
   };
 }
 
@@ -68,6 +87,7 @@ export function commitActiveTransaction(): void {
     depth,
     writes: new WeakMap(),
     scopes: [],
+    epoch: 0,
   };
 
   commitTransaction(transaction);
@@ -87,6 +107,12 @@ export function writeTransactionStore<T>(target: StoreTransactionTarget<T>, valu
   if (!currentTransaction) {
     withTransaction(() => writeTransactionStore(target, value));
     return;
+  }
+
+  // One epoch per transaction: a batch of writes that commits together is a
+  // single update, so everything staged in it shares one identity.
+  if (currentTransaction.epoch === 0) {
+    currentTransaction.epoch = beginUpdateEpoch();
   }
 
   let scopeWrites = currentTransaction.writes.get(target.scope);

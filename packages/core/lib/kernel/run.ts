@@ -2,6 +2,7 @@ import type { KernelContextManager, KernelExecutionContext, RunOptions } from ".
 import type { Node } from "./types";
 import type { CreatePageOptions, KernelWorkItem, Page } from "./internal";
 import { getActiveScope, setActiveScope } from "../scope/internal";
+import { reportContainedError } from "./report";
 import { unwrapMicroScope } from "../scope/micro";
 import {
   emitInspectorBreakpointHit,
@@ -58,6 +59,9 @@ interface FlushWaiter {
 }
 
 interface DrainContext {
+  // Failures contained mid-drain. Independent branches finish first; the drain
+  // then fails with them, so the caller awaiting `run()` still learns about it.
+  containedErrors: unknown[];
   queue: KernelWorkItem[];
   batchedItems: Map<string, KernelWorkItem>;
   waiters: FlushWaiter[];
@@ -118,6 +122,7 @@ export function writePageContext<T>(
 
 function createDrainContext(): DrainContext {
   return {
+    containedErrors: [],
     queue: [],
     batchedItems: new Map(),
     waiters: [],
@@ -296,7 +301,21 @@ function continueDrain(
 
           if (item.queueKey) drain.batchedItems.delete(item.queueKey);
 
-          const result = processItem(drain, item);
+          let result: ReturnType<typeof processItem>;
+
+          // A throwing node stops its OWN branch: `processItem` bails before
+          // enqueuing anything downstream, so nothing past the failure runs. The
+          // remaining queue belongs to independent branches of the same update
+          // and must still drain, so the error is reported rather than rethrown.
+          try {
+            result = processItem(drain, item);
+          } catch (error) {
+            if (!item.propagated) throw error;
+
+            reportContainedError(error, { kind: "reaction", item });
+            drain.containedErrors.push(error);
+            continue;
+          }
 
           if (isPromiseLike(result)) {
             exitTransaction();
@@ -316,9 +335,18 @@ function continueDrain(
                 return continueDrain(drain, resumed);
               },
               (error) => {
-                activeDrain = previousDrain;
-                settleFlushWaiters(drain, true, error);
-                throw error;
+                if (!item.propagated) {
+                  activeDrain = previousDrain;
+                  settleFlushWaiters(drain, true, error);
+                  throw error;
+                }
+
+                reportContainedError(error, { kind: "async reaction", item });
+                drain.containedErrors.push(error);
+                const resumed = activeDrain;
+                activeDrain = drain;
+
+                return continueDrain(drain, resumed);
               },
             );
           }
@@ -355,6 +383,22 @@ function continueDrain(
     activeDrain = previousDrain;
     settleFlushWaiters(drain, true, error);
     throw error;
+  }
+
+  // Every branch has now run. If any of them failed, the update as a whole did
+  // fail — surface it to whoever is awaiting this run rather than leaving the
+  // failure in the log alone.
+  if (drain.containedErrors.length > 0) {
+    const [first, ...rest] = drain.containedErrors;
+    const failure =
+      rest.length === 0
+        ? first
+        : new AggregateError(drain.containedErrors, "Multiple reactions failed");
+
+    drain.containedErrors.length = 0;
+    activeDrain = previousDrain;
+    settleFlushWaiters(drain, true, failure);
+    throw failure;
   }
 
   activeDrain = previousDrain;
@@ -451,6 +495,8 @@ function processItem(drain: DrainContext, item: KernelWorkItem): Promise<void> |
           currentPage = rootPage;
           setActiveScope(null);
 
+          let asyncFailure: { error: unknown } | null = null;
+
           return Promise.resolve(result)
             .then(
               (value) => {
@@ -462,12 +508,30 @@ function processItem(drain: DrainContext, item: KernelWorkItem): Promise<void> |
                 ctx.value = undefined;
                 ctx.error = error;
                 ctx.failed = true;
+                // Ordinary async semantics: the statements after an uncaught
+                // throw do not run, so nothing downstream of this node runs
+                // either — it must not continue on the `undefined` left behind.
+                ctx.stopped = true;
+                asyncFailure = { error };
               },
             )
             .then(() => {
               currentPage = previousPage;
               setActiveScope(previousScope);
               finishItem(drain, item, ctx, inspected, startedAt);
+
+              if (asyncFailure) {
+                const { error } = asyncFailure;
+
+                // Same rule as a synchronous failure, and the same rule an
+                // `async function` follows: the rejection reaches whoever awaits
+                // the call. The caller's own node rejects their promise; a
+                // propagated one is reported and fails the update as a whole.
+                if (!item.propagated) throw error;
+
+                reportContainedError(error, { kind: "async reaction", item });
+                drain.containedErrors.push(error);
+              }
             });
         } else {
           ctx.value = result;
@@ -549,6 +613,8 @@ function finishItem(
       failed: false,
       meta: ctx.meta,
       batchKey: item.batchKey,
+      propagated: true,
+      parent: item,
     });
   }
 
@@ -569,6 +635,8 @@ function finishItem(
         failed: false,
         meta: ctx.meta,
         batchKey: item.batchKey,
+        propagated: true,
+        parent: item,
       });
     }
   }

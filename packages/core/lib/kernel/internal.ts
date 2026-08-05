@@ -18,6 +18,13 @@ export interface KernelWorkItem {
   batchKey?: PropertyKey;
   queueKey?: string;
   meta: Record<string, unknown>;
+  // True for items the graph enqueued by following an edge, false for the item a
+  // `run()` caller initiated. A failure in a propagated item is contained and
+  // reported; a failure in the caller's own item still rejects their promise.
+  propagated?: boolean;
+  // The item whose propagation enqueued this one. Walked backwards only when
+  // something fails, so the happy path pays nothing but a field assignment.
+  parent?: KernelWorkItem;
 }
 
 export interface CreatePageOptions {

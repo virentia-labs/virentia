@@ -1,6 +1,9 @@
 import { node, run } from "../kernel";
+import { reportContainedError } from "../kernel/report";
 import type { Node } from "../kernel";
 import {
+  beginUpdateEpoch,
+  currentUpdateEpoch,
   isPendingStoreValue,
   readTransactionStore,
   withTransaction,
@@ -87,6 +90,18 @@ interface ComputedState<T> {
   initialized: boolean;
   skipped: boolean;
   value?: T;
+  // Snapshot of `value` taken when this computed went dirty, BEFORE any read
+  // could refresh the cache. Propagation compares against this instead of
+  // `value`: a read landing between the invalidation and the propagation
+  // recomputes `value`, and comparing the cache against itself would report
+  // "unchanged" and silently swallow the notification.
+  pendingCompare: boolean;
+  pendingHadValue: boolean;
+  pendingValue?: T;
+  // Epoch in which `value` was first materialized in this scope. A lazy derived
+  // read for the first time PARTWAY THROUGH an update already reflects the new
+  // world, so it must not be mistaken for a pre-change value.
+  materializedEpoch: number;
 }
 
 export function store<T>(
@@ -409,7 +424,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
     return {
       changed: true,
       notify() {
-        notifySubscribers(subscribers, next, scope);
+        notifySubscribers(subscribers, next, scope, storeNode);
 
         void run({
           unit: storeNode,
@@ -426,7 +441,10 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
 
   function commitImmediateState(scope: Scope, next: T): void {
     scope.values.set(id, next);
-    notifySubscribers(subscribers, next, scope);
+    // This path bypasses the transaction layer, so it opens the update epoch
+    // itself rather than inheriting one from a staged write.
+    beginUpdateEpoch();
+    notifySubscribers(subscribers, next, scope, storeNode);
   }
 }
 
@@ -438,12 +456,15 @@ function notifySubscribers<T>(
   subscribers: Iterable<StoreSubscriber<T>>,
   next: T,
   scope: Scope,
+  owner: Node,
 ): void {
   for (const subscriber of subscribers) {
     try {
       subscriber(next, scope);
-    } catch {
-      // contained — see the note above.
+    } catch (error) {
+      // Contained — see the note above — but never silent: a subscriber that
+      // throws is a bug worth seeing, not a phantom "nothing happened".
+      reportContainedError(error, { kind: "store subscriber", subject: describeNode(owner) });
     }
   }
 }
@@ -478,6 +499,19 @@ function createComputed<T>(
 
       const state = readComputedState<T>(ctx.scope, id);
 
+      // Freeze the pre-change value on the clean -> dirty edge only, so a burst
+      // of invalidations before one propagation still compares against the
+      // value that was last actually observed.
+      if (!state.pendingCompare) {
+        // A value first materialized during THIS propagation was computed from
+        // the already-updated sources, so it is not a "previous" value at all.
+        const materializedNow = state.initialized && state.materializedEpoch === currentUpdateEpoch();
+
+        state.pendingCompare = true;
+        state.pendingHadValue = state.initialized && !materializedNow;
+        state.pendingValue = materializedNow ? undefined : state.value;
+      }
+
       state.dirty = true;
 
       if (!hasObservers(ctx.scope)) {
@@ -499,8 +533,12 @@ function createComputed<T>(
       }
 
       const state = readComputedState<T>(ctx.scope, id);
-      const hadValue = state.initialized;
-      const previous = state.value;
+      const hadValue = state.pendingCompare ? state.pendingHadValue : state.initialized;
+      const previous = state.pendingCompare ? state.pendingValue : state.value;
+
+      state.pendingCompare = false;
+      state.pendingValue = undefined;
+
       const next = evaluate(ctx.scope, state);
 
       if (state.skipped || (hadValue && Object.is(previous, next))) {
@@ -508,7 +546,7 @@ function createComputed<T>(
         return previous;
       }
 
-      notifySubscribers(subscribers, next, ctx.scope);
+      notifySubscribers(subscribers, next, ctx.scope, storeNode);
 
       return next;
     },
@@ -643,11 +681,16 @@ function createComputed<T>(
               ? (undefined as T)
               : (collected.result as T);
           state.initialized = true;
+          state.materializedEpoch = currentUpdateEpoch();
         }
 
         state.skipped = true;
         state.dirty = false;
         return state.value as T;
+      }
+
+      if (!state.initialized) {
+        state.materializedEpoch = currentUpdateEpoch();
       }
 
       state.value = collected.result;
@@ -872,29 +915,43 @@ function createStoreProxyHandlers<T>(
       return property in target || hasStateKey(property);
     },
 
-    ownKeys(target) {
+    ownKeys() {
+      // Enumeration exposes the STATE, nothing else. `node`, `subscribe`, `map`,
+      // … stay reachable through `get`, but must never land in `Object.keys`,
+      // a spread, or `JSON.stringify`: a serialized snapshot would otherwise
+      // carry the store's inspector metadata into whatever consumes it (an SSR
+      // payload, localStorage), and fail to hydrate back.
+      //
+      // Omitting them is legal: the api target is a plain object literal, so all
+      // of its own properties are configurable, and `ownKeys` only has to report
+      // the NON-configurable ones.
       const stateKeys =
         mode === "ref" ? ["value"] : isObject(read()) ? Reflect.ownKeys(read() as object) : [];
 
       // Dedupe: a state field named like a StoreApi member (e.g. `node`, `map`)
       // would otherwise appear twice, violating the ownKeys proxy invariant
       // ("trap returned duplicate entries") and crashing any enumeration.
-      return [...new Set<string | symbol>([...Reflect.ownKeys(target), ...(stateKeys as (string | symbol)[])])];
+      return [...new Set<string | symbol>(stateKeys as (string | symbol)[])];
     },
 
     getOwnPropertyDescriptor(target, property) {
+      // A state key is enumerable even when it shares a name with an api member,
+      // so `ownKeys` and this trap agree on what enumeration sees.
+      if (hasStateKey(property)) {
+        return {
+          configurable: true,
+          enumerable: true,
+        };
+      }
+
       if (property in target) {
-        return Reflect.getOwnPropertyDescriptor(target, property);
+        const descriptor = Reflect.getOwnPropertyDescriptor(target, property);
+
+        // Reachable, but hidden from enumeration — see `ownKeys`.
+        return descriptor ? { ...descriptor, enumerable: false } : undefined;
       }
 
-      if (!hasStateKey(property)) {
-        return undefined;
-      }
-
-      return {
-        configurable: true,
-        enumerable: true,
-      };
+      return undefined;
     },
   };
 }
@@ -922,6 +979,9 @@ function readComputedState<T>(scope: Scope, id: symbol): ComputedState<T> {
       dirty: true,
       initialized: false,
       skipped: false,
+      pendingCompare: false,
+      pendingHadValue: false,
+      materializedEpoch: -1,
     } satisfies ComputedState<T>);
   }
 

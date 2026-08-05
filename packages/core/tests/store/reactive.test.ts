@@ -93,7 +93,8 @@ describe("reactive", () => {
         const spread = { ...r } as Record<string, unknown>;
         expect(spread.name).toBe("Ada");
         expect(spread.age).toBe(36);
-        expect(Object.keys(r)).toEqual(expect.arrayContaining(["name", "age"]));
+        // Exact, not arrayContaining: api members must not leak into enumeration.
+        expect(Object.keys(r)).toEqual(["name", "age"]);
         expect("age" in r).toBe(true);
         expect("name" in r).toBe(true);
       });
