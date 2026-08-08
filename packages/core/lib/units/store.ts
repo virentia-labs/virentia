@@ -365,7 +365,12 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
   }
 
   function writeProperty(property: PropertyKey, value: unknown): boolean {
-    const scope = requireActiveScope(() => `update ${describeNode(storeNode)}`);
+    // A write belongs to the real scope, never the per-run micro-scope overlay a
+    // reaction body installs: this scope keys the transaction staging AND is the
+    // identity handed to subscribers, who may compare it against the scope they
+    // provided (useUnit does) — a micro-scope there would make them drop the
+    // notification even though the value committed into their scope.
+    const scope = unwrapMicroScope(requireActiveScope(() => `update ${describeNode(storeNode)}`));
     const state = readState(scope, id, initial);
 
     // In "ref" mode the proxy `set` trap guarantees `property === "value"`, so the
@@ -396,7 +401,8 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
   }
 
   function deleteKeyProperty(property: PropertyKey): boolean {
-    const scope = requireActiveScope(() => `update ${describeNode(storeNode)}`);
+    // Same as writeProperty: writes are keyed and notified by the real scope.
+    const scope = unwrapMicroScope(requireActiveScope(() => `update ${describeNode(storeNode)}`));
     const state = readState(scope, id, initial);
 
     // Deleting an absent key (or from a non-object state) is a no-op success.
@@ -523,7 +529,8 @@ function createComputed<T>(
       if (!state.pendingCompare) {
         // A value first materialized during THIS propagation was computed from
         // the already-updated sources, so it is not a "previous" value at all.
-        const materializedNow = state.initialized && state.materializedEpoch === currentUpdateEpoch();
+        const materializedNow =
+          state.initialized && state.materializedEpoch === currentUpdateEpoch();
 
         state.pendingCompare = true;
         state.pendingHadValue = state.initialized && !materializedNow;
@@ -1007,13 +1014,17 @@ function readComputedState<T>(scope: Scope, id: symbol): ComputedState<T> {
 }
 
 function readState<T>(scope: Scope, id: symbol, initial: T): T {
-  const pending = readTransactionStore<T>(scope, id);
+  // Pending writes are staged under the real scope (see writeProperty), while a
+  // read inside a reaction body arrives here with the run's micro-scope — unwrap
+  // so a read-after-write within one transaction resolves to the same key.
+  const realScope = unwrapMicroScope(scope);
+  const pending = readTransactionStore<T>(realScope, id);
 
   if (isPendingStoreValue(pending)) {
     return pending as T;
   }
 
-  return readCommittedState(scope, id, initial);
+  return readCommittedState(realScope, id, initial);
 }
 
 function readCommittedState<T>(scope: Scope, id: symbol, initial: T): T {

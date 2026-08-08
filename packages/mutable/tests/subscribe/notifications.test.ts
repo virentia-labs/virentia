@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { event, reaction, scope, scoped } from "@virentia/core";
+import { event, reaction, scope, scoped, store } from "@virentia/core";
 import type { Scope } from "@virentia/core";
 import { mutableStore } from "../../lib";
 
@@ -92,6 +92,32 @@ describe("mutableStore", () => {
 
       expect(scoped(s, () => doubled.value)).toBe(4);
       expect(seen).toEqual([1, 2]); // one notification per transaction (batched)
+    });
+
+    it("is notified with the real scope when the write happens inside an auto-reaction", async () => {
+      const s = scope();
+      const trigger = store(0);
+      const state = mutableStore({ n: 0 });
+      const seen: Array<[number, Scope]> = [];
+
+      // An auto-reaction body runs with a per-run micro-scope as the ambient
+      // scope; the mutation must still commit into (and notify with) the real
+      // scope — a subscriber filtering by scope identity would drop it otherwise.
+      reaction(() => {
+        state.value.n = trigger.value;
+      });
+
+      state.subscribe((value, sc) => seen.push([value.n, sc]));
+
+      await scoped(s, () => {
+        trigger.value = 7;
+      });
+
+      expect(seen.map(([n]) => n)).toEqual([7]);
+      // Identity, not deep equality: a micro-scope deep-equals its parent
+      // (it shares the maps by reference), which is precisely the bug.
+      expect(seen[0]?.[1]).toBe(s);
+      expect(scoped(s, () => state.value.n)).toBe(7);
     });
   });
 });
