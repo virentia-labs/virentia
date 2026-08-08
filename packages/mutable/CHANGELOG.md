@@ -1,5 +1,12 @@
 # @virentia/mutable
 
+## 0.3.3
+
+### Patch Changes
+
+- Updated dependencies
+  - @virentia/core@0.11.0
+
 ## 0.3.2
 
 ### Patch Changes
