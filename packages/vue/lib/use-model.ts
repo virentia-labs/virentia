@@ -8,8 +8,21 @@ import {
   type ReactiveWritable,
   type Scope,
 } from "@virentia/core";
-import { onMounted, onUnmounted, toValue, watch, type MaybeRefOrGetter } from "vue";
+import { isModelDefinition, isModelInstance, isModelQuery } from "@virentia/core/models";
+import type {
+  AnyModel,
+  Dto,
+  InstanceApi,
+  InstanceOf,
+  Query as ModelQuery,
+  TypedQuery,
+  TypedUnionQuery,
+  UnionQuery,
+} from "@virentia/core/models";
+import { onMounted, onUnmounted, toValue, watch, type MaybeRefOrGetter, type Ref } from "vue";
 import { getOrCreateCachedInstance } from "./model-cache";
+import { useModelEntity, useModelQuery, useModelScreen } from "./models";
+import type { ModelScreenOptions } from "./models";
 import { useProvidedScope } from "./scope";
 import type {
   CacheOptions,
@@ -22,6 +35,17 @@ import type {
 import { bindUnit, bindUnits } from "./use-unit";
 import { getShape, isPlainObject, isUnitLike, SHAPE, writeStore } from "./utils";
 
+// §10.2 overloads first (mirror of React): definition → screen instance ref,
+// query/collection → live query ref, instance-or-null → entity ref.
+export function useModel<M extends AnyModel>(
+  definition: M,
+  props?: MaybeRefOrGetter<(Partial<Dto<M>> & { id?: string }) | undefined>,
+  options?: ModelScreenOptions,
+): Readonly<Ref<InstanceOf<M> | null>>;
+export function useModel<Q extends TypedQuery<any> | TypedUnionQuery<any> | ModelQuery | UnionQuery>(
+  query: Q,
+): Readonly<Ref<Q>>;
+export function useModel<I extends InstanceApi>(instance: I | null): Readonly<Ref<I | null>>;
 export function useModel<Model extends object>(model: Model): ReactiveModel<Model>;
 export function useModel<Props, Model extends object>(
   factory: ModelFactory<Props, Model>,
@@ -33,17 +57,40 @@ export function useModel<Props, Key, Model extends object>(
   options: CacheOptions<Props, Key, Model>,
 ): ReactiveModel<Model>;
 export function useModel(
-  modelOrFactory: Record<PropertyKey, unknown> | ModelFactory<any, object, any>,
+  modelOrFactory: Record<PropertyKey, unknown> | ModelFactory<any, object, any> | null,
   props?: MaybeRefOrGetter<unknown>,
-  options?: CacheOptions<any, any, object>,
+  options?: CacheOptions<any, any, object> | ModelScreenOptions,
 ): unknown {
+  // The input KIND must be stable per call site — same contract as the
+  // function/object dispatch below; entity-or-null is one kind.
+  if (isModelDefinition(modelOrFactory)) {
+    return useModelScreen(
+      modelOrFactory,
+      props as MaybeRefOrGetter<Record<string, unknown> | undefined>,
+      options as ModelScreenOptions | undefined,
+    );
+  }
+
+  if (modelOrFactory === null || modelOrFactory === undefined || isModelInstance(modelOrFactory)) {
+    return useModelEntity(modelOrFactory ?? null);
+  }
+
+  if (isModelQuery(modelOrFactory)) {
+    return useModelQuery(modelOrFactory);
+  }
+
   const scope = useProvidedScope();
 
   if (typeof modelOrFactory !== "function") {
     return buildReactiveModel(modelOrFactory, scope);
   }
 
-  const instance = useModelInstance(modelOrFactory, props, scope, options);
+  const instance = useModelInstance(
+    modelOrFactory,
+    props,
+    scope,
+    options as CacheOptions<any, any, object> | undefined,
+  );
 
   return buildReactiveModel(instance.model, instance.scope);
 }

@@ -33,7 +33,11 @@ importers:
         specifier: 0.34.6
         version: 0.34.6(happy-dom@20.9.0)(lightningcss@1.32.0)
 
-  packages/core: {}
+  packages/core:
+    devDependencies:
+      '@sinclair/typebox':
+        specifier: ^0.34.52
+        version: 0.34.52
 
   packages/effector:
     dependencies:
@@ -1134,6 +1138,9 @@ packages:
 
   '@sinclair/typebox@0.27.10':
     resolution: {integrity: sha512-MTBk/3jGLNB2tVxv6uLlFh1iu64iYOQ2PbdOSK3NW8JZsmlaOh2q6sdtKowBhfw8QFLmYNzTW4/oK4uATIi6ZA==}
+
+  '@sinclair/typebox@0.34.52':
+    resolution: {integrity: sha512-XiMQh7qqVlxZzcVD+kkGMNGMzcTrDMLWI7S4x7z1MkCkbDPrekpZXEUK0eZqZFMuHQg2a2DZOcDIh9o5v3Gonw==}
 
   '@testing-library/dom@10.4.1':
     resolution: {integrity: sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg==}
@@ -3277,6 +3284,8 @@ snapshots:
     optional: true
 
   '@sinclair/typebox@0.27.10': {}
+
+  '@sinclair/typebox@0.34.52': {}
 
   '@testing-library/dom@10.4.1':
     dependencies:

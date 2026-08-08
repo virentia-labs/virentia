@@ -89,6 +89,23 @@ export interface AutoReactionConfig {
   run(): void;
 }
 
+// Installed by @virentia/core/models around static-model setup runs (§3.4): it
+// wraps `run` with the per-instance broadcast router. Null outside those runs.
+let reactionConfigTransform:
+  | (<C extends { run: (...args: never[]) => unknown }>(config: C) => C)
+  | null = null;
+
+/** @internal models-only seam; returns the previous transform for restoration. */
+export function setReactionConfigTransform(
+  transform: typeof reactionConfigTransform,
+): typeof reactionConfigTransform {
+  const previous = reactionConfigTransform;
+
+  reactionConfigTransform = transform;
+
+  return previous;
+}
+
 export function reaction<On extends readonly SourceUnit<any>[]>(config: {
   on: On;
   name?: string;
@@ -119,8 +136,13 @@ export function reaction(config: AutoReactionConfig): Reaction;
 export function reaction(
   input: (() => unknown) | AutoReactionConfig | ReactionConfig<any, UnitList>,
 ): Reaction {
+  if (reactionConfigTransform && typeof input === "object" && "on" in input) {
+    input = reactionConfigTransform(input as never) as typeof input;
+  }
+
   const explicit = typeof input === "object" && "on" in input;
-  const runHandler = typeof input === "function" ? input : input.run;
+  const runHandler =
+    typeof input === "function" ? input : (input as { run: (...args: never[]) => unknown }).run;
   const name = typeof input === "object" ? input.name : undefined;
   const key = typeof input === "object" ? input.key : undefined;
   const configuredScopes = typeof input === "object" && input.scope ? toArray(input.scope) : null;
@@ -305,7 +327,7 @@ export function reaction(
   };
 
   if (explicit) {
-    for (const source of toArray(input.on)) {
+    for (const source of toArray((input as ReactionConfig<any, UnitList>).on)) {
       attach(source.node, reactionNode);
       // A scope-less reaction observes globally: let a lazy computed source make
       // its dependency edges global too, so this reaction fires in every scope

@@ -28,6 +28,7 @@ const defaultSkipToken = Symbol("virentia.skip");
 const committedStoreUpdate = Symbol("virentia.committedStoreUpdate");
 const storeReaders = new WeakMap<object, () => unknown>();
 const storeScopeWriters = new WeakMap<object, (scope: Scope, value: unknown) => void>();
+const storeInitials = new WeakMap<object, unknown>();
 
 // A `store` is always accessed through `.value`, regardless of whether it holds
 // a primitive or an object. For direct field access on object state use `reactive`.
@@ -127,6 +128,22 @@ export function readStoreValue<T>(store: Store<T>): T {
   }
 
   return reader() as T;
+}
+
+// The declaration-time initial of a plain (non-computed) store — what a fresh
+// scope reads before any write. `reset` restores targets to it; derived-store
+// operators use it as the derived initial. Computeds have no stored initial,
+// hence the predicate for callers that need to degrade instead of throw.
+export function hasInitialValue(store: Store<unknown>): boolean {
+  return storeInitials.has(store as object);
+}
+
+export function initialValueOf<T>(store: Store<T>): T {
+  if (!storeInitials.has(store as object)) {
+    throw new Error("initialValueOf: not a plain store (computeds have no stored initial)");
+  }
+
+  return storeInitials.get(store as object) as T;
 }
 
 export function seedScopeStoreValue<T>(scope: Scope, store: StoreWritable<T>, value: T): void {
@@ -328,6 +345,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
       initial,
     ),
   );
+  storeInitials.set(proxy as object, initial);
   if (options.writable) {
     storeScopeWriters.set(proxy as object, (scope, value) => {
       scope.values.set(id, value);

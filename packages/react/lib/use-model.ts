@@ -8,8 +8,21 @@ import {
   type ReactiveWritable,
   type Scope,
 } from "@virentia/core";
+import { isModelDefinition, isModelInstance, isModelQuery } from "@virentia/core/models";
+import type {
+  AnyModel,
+  Dto,
+  InstanceApi,
+  InstanceOf,
+  Query as ModelQuery,
+  TypedQuery,
+  TypedUnionQuery,
+  UnionQuery,
+} from "@virentia/core/models";
 import { useEffect, useMemo, useRef } from "react";
 import { getOrCreateCachedInstance } from "./model-cache";
+import { useModelEntity, useModelQuery, useModelScreen } from "./models";
+import type { ModelScreenOptions } from "./models";
 import { useProvidedScope } from "./scope";
 import type {
   CacheOptions,
@@ -40,6 +53,18 @@ import {
   writeStore,
 } from "./utils";
 
+// §10.1 overloads first: a model DEFINITION is a screen factory through its
+// collection; a query/collection is a live view; an instance (or null from
+// `todos.get(id)`) is an entity view. The legacy factory/object forms follow.
+export function useModel<M extends AnyModel>(
+  definition: M,
+  props?: Partial<Dto<M>> & { id?: string },
+  options?: ModelScreenOptions,
+): InstanceOf<M> | null;
+export function useModel<Q extends TypedQuery<any> | TypedUnionQuery<any> | ModelQuery | UnionQuery>(
+  query: Q,
+): Q;
+export function useModel<I extends InstanceApi>(instance: I | null): I | null;
 export function useModel<Model extends object>(model: Model): ReactiveModel<Model>;
 export function useModel<Props, Model extends object>(
   factory: ModelFactory<Props, Model>,
@@ -51,17 +76,40 @@ export function useModel<Props, Key, Model extends object>(
   options: CacheOptions<Props, Key, Model>,
 ): ReactiveModel<Model>;
 export function useModel(
-  modelOrFactory: Record<PropertyKey, unknown> | ModelFactory<any, object, any>,
+  modelOrFactory: Record<PropertyKey, unknown> | ModelFactory<any, object, any> | null,
   props?: unknown,
-  options?: CacheOptions<any, any, object>,
+  options?: CacheOptions<any, any, object> | ModelScreenOptions,
 ): unknown {
+  // The input KIND must be stable per call site (the pre-existing contract of
+  // the function/object dispatch below) — entity-or-null is one kind.
+  if (isModelDefinition(modelOrFactory)) {
+    return useModelScreen(
+      modelOrFactory,
+      props as Record<string, unknown> | undefined,
+      options as ModelScreenOptions | undefined,
+    );
+  }
+
+  if (modelOrFactory === null || modelOrFactory === undefined || isModelInstance(modelOrFactory)) {
+    return useModelEntity(modelOrFactory ?? null);
+  }
+
+  if (isModelQuery(modelOrFactory)) {
+    return useModelQuery(modelOrFactory);
+  }
+
   const scope = useProvidedScope();
 
   if (typeof modelOrFactory !== "function") {
     return useReactiveModel(modelOrFactory, scope);
   }
 
-  const instance = useModelInstance(modelOrFactory, props, scope, options);
+  const instance = useModelInstance(
+    modelOrFactory,
+    props,
+    scope,
+    options as CacheOptions<any, any, object> | undefined,
+  );
 
   return useReactiveModel(instance.model, instance.scope);
 }

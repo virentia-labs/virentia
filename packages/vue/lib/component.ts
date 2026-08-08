@@ -1,6 +1,9 @@
 import { getCurrentScope } from "@virentia/core";
-import { defineComponent, h } from "vue";
+import { collection, isModelDefinition, isModelInstance } from "@virentia/core/models";
+import type { AnyModel, Dto, InstanceOf } from "@virentia/core/models";
+import { defineComponent, h, type Component } from "vue";
 import { getOrCreateCachedInstance } from "./model-cache";
+import { useModelScreen } from "./models";
 import { useOptionalProvidedScope } from "./scope";
 import type {
   CachedComponentConfig,
@@ -20,10 +23,22 @@ import {
 } from "./use-model";
 import { getComponentName } from "./utils";
 
+/** §10.2: `component({ model: OrderScreen, view, keep })` — the model is a
+ * definition from @virentia/core/models, instances live in its collection. */
+export interface DefinitionComponentConfig<M extends AnyModel> {
+  model: M;
+  view: Component;
+  keep?: boolean;
+  mapProps?: (props: Record<string, unknown>) => Partial<Dto<M>> & { id?: string };
+}
+
 // Mapped overloads first: they require `mapProps`, so a config that provides it
 // binds here (pinning external `Props` from `mapProps`' parameter, which Vue's
 // loose `Component` view type cannot), and a config without `mapProps` falls
 // through to the plain overloads below.
+export function component<M extends AnyModel>(
+  config: DefinitionComponentConfig<M>,
+): VirentiaComponent<Record<string, unknown>, InstanceOf<M>>;
 export function component<Props, ModelProps, Key, Model extends object>(
   config: MappedCachedComponentConfig<Props, ModelProps, Key, Model>,
 ): VirentiaComponent<Props, Model, ModelProps>;
@@ -47,6 +62,36 @@ export function component(
     name: getComponentName(config.view),
     inheritAttrs: false,
     setup(_props, { attrs, slots }) {
+      // §10.2: a definition-model component — the collection is the instance's
+      // home, `keep`/controlled decide the end of life (§10.1).
+      if (isModelDefinition((config as { model?: unknown }).model)) {
+        const readExternal = (): Record<string, unknown> => {
+          const { model: _model, ...rest } = attrs as Record<string, unknown>;
+
+          return rest;
+        };
+        const readModelProps = (): Record<string, unknown> =>
+          config.mapProps
+            ? (config.mapProps(readExternal() as never) as Record<string, unknown>)
+            : readExternal();
+        const controlledAttr = attrs.model as object | undefined;
+        const controlled =
+          controlledAttr && isModelInstance(controlledAttr) ? controlledAttr : null;
+
+        if (controlledAttr && !controlled) {
+          throw new Error("[component] The model prop must be created with component.create().");
+        }
+
+        const facade = useModelScreen(
+          (config as { model: object }).model,
+          readModelProps,
+          { keep: (config as { keep?: boolean }).keep },
+          controlled,
+        );
+
+        return () => h(config.view, { ...readExternal(), model: facade.value }, slots);
+      }
+
       const providedScope = useOptionalProvidedScope();
       const controlledModel = attrs.model as ComponentModel<any> | undefined;
       const controlledInstance = controlledModel ? readExposedModelInstance(controlledModel) : null;
@@ -101,6 +146,16 @@ export function component(
       throw new Error(
         "[component.create] Parent component context is required. Call .create() while creating a parent component model.",
       );
+    }
+
+    // §10.2: a definition's controlled instance is a plain collection add.
+    if (isModelDefinition((config as { model?: unknown }).model)) {
+      return (
+        collection(
+          (config as unknown as { model: never }).model,
+          externalScope,
+        ) as unknown as { add(input: Record<PropertyKey, unknown>): object }
+      ).add(props ?? {});
     }
 
     const key = "cache" in config ? config.key(props) : undefined;

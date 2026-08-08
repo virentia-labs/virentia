@@ -1,5 +1,7 @@
 import { getCurrentScope } from "@virentia/core";
-import { createElement, useMemo } from "react";
+import { collection, isModelDefinition, isModelInstance } from "@virentia/core/models";
+import type { AnyModel, Dto, InstanceOf } from "@virentia/core/models";
+import { createElement, useMemo, type ComponentType } from "react";
 import type {
   CachedComponentConfig,
   ComponentConfig,
@@ -9,6 +11,7 @@ import type {
   VirentiaComponent,
 } from "./types";
 import { getOrCreateCachedInstance } from "./model-cache";
+import { useModelScreen } from "./models";
 import { useOptionalProvidedScope } from "./scope";
 import {
   createModelInstance,
@@ -19,9 +22,21 @@ import {
 } from "./use-model";
 import { getComponentName } from "./utils";
 
+/** §10.1: `component({ model: OrderScreen, view, keep })` — the model is a
+ * definition from @virentia/core/models, instances live in its collection. */
+export interface DefinitionComponentConfig<M extends AnyModel> {
+  model: M;
+  view: ComponentType<{ model: InstanceOf<M> } & Record<string, unknown>>;
+  keep?: boolean;
+  mapProps?: (props: Record<string, unknown>) => Partial<Dto<M>> & { id?: string };
+}
+
 // Mapped overloads first: they require `mapProps`, so a config that provides it
 // binds here (pinning external `Props` from `mapProps`' parameter), and a config
 // without `mapProps` falls through to the plain overloads below.
+export function component<M extends AnyModel>(
+  config: DefinitionComponentConfig<M>,
+): VirentiaComponent<Record<string, unknown>, InstanceOf<M>>;
 export function component<Props, ModelProps, Key, Model extends object>(
   config: MappedCachedComponentConfig<Props, ModelProps, Key, Model>,
 ): VirentiaComponent<Props, Model, ModelProps>;
@@ -42,6 +57,30 @@ export function component(
     | MappedCachedComponentConfig<any, any, any, any>,
 ): VirentiaComponent<any, any> {
   const VirentiaComponent = (props: ComponentPublicProps<any, any>) => {
+    // §10.1: a definition-model component — one uniform hook path handles both
+    // the owned instance and a controlled one from `component.create()`.
+    if (isModelDefinition((config as { model?: unknown }).model)) {
+      const { model: controlledModel, ...externalProps } = props;
+      const modelProps = config.mapProps
+        ? (config.mapProps(externalProps) as Record<string, unknown>)
+        : externalProps;
+      const controlled =
+        controlledModel && isModelInstance(controlledModel) ? (controlledModel as object) : null;
+
+      if (controlledModel && !controlled) {
+        throw new Error("[component] The model prop must be created with component.create().");
+      }
+
+      const facade = useModelScreen(
+        (config as { model: object }).model,
+        modelProps,
+        { keep: (config as { keep?: boolean }).keep },
+        controlled,
+      );
+
+      return createElement(config.view, { ...externalProps, model: facade });
+    }
+
     const { model: controlledModel, ...externalProps } = props;
     const providedScope = useOptionalProvidedScope();
     const controlledInstance = controlledModel
@@ -92,6 +131,17 @@ export function component(
       throw new Error(
         "[component.create] Parent component context is required. Call .create() while creating a parent component model.",
       );
+    }
+
+    // §10.1: a definition's controlled instance is a plain collection add —
+    // the collection is its home, the creator owns its end of life.
+    if (isModelDefinition((config as { model?: unknown }).model)) {
+      return (
+        collection(
+          (config as unknown as { model: never }).model,
+          externalScope,
+        ) as unknown as { add(input: Record<PropertyKey, unknown>): object }
+      ).add(props ?? {});
     }
 
     const key = "cache" in config ? config.key(props) : undefined;

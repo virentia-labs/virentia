@@ -216,10 +216,25 @@ export function registerInspectorNode(node: Node): void {
   emit({ type: "node-created", node });
 }
 
+// §10.3 (models): instance scopes must not flood devtools — an installed alias
+// collapses them to their application scope before any registration or id
+// minting. Non-model scopes pass through identically.
+let scopeAliasResolver: ((scope: Scope) => Scope) | null = null;
+
+export function setInspectorScopeAlias(resolver: ((scope: Scope) => Scope) | null): void {
+  scopeAliasResolver = resolver;
+}
+
+function resolveScopeAlias(scope: Scope): Scope {
+  return scopeAliasResolver ? scopeAliasResolver(scope) : scope;
+}
+
 export function registerInspectorScope(scope: Scope | null | undefined): void {
   if (!scope) {
     return;
   }
+
+  scope = resolveScopeAlias(scope);
 
   const known = scopes.has(scope);
 
@@ -342,6 +357,8 @@ export function getInspectorNodeId(node: Node): string {
 }
 
 export function getInspectorScopeId(scope: Scope): string {
+  scope = resolveScopeAlias(scope);
+
   let id = scopeIds.get(scope);
 
   if (!id) {

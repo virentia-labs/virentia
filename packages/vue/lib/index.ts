@@ -1,5 +1,7 @@
 export { component } from "./component";
+export type { DefinitionComponentConfig } from "./component";
 export { createModelCache } from "./model-cache";
+export type { ModelScreenOptions } from "./models";
 export { provideScope, ScopeProvider, useProvidedScope } from "./scope";
 export { useModel } from "./use-model";
 export { useUnit } from "./use-unit";
