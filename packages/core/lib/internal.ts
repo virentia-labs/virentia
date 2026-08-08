@@ -19,6 +19,13 @@ export { collectNodes, isTracking, trackNode } from "./graph/deps";
 // required" error when none is active.
 export { getActiveScope, requireActiveScope, setActiveScope } from "./scope/internal";
 
+// A reaction body runs with a per-run micro-scope installed as the ambient
+// scope (a tracking overlay sharing the real scope's maps by reference). A
+// custom store must unwrap it wherever scope IDENTITY matters — keying its own
+// per-scope state, staging transaction writes, and above all the scope handed
+// to subscribers, which scope-filtering consumers (useUnit) compare by `===`.
+export { isMicroScope, unwrapMicroScope } from "./scope/micro";
+
 // A plain store's declaration-time initial (what a fresh scope reads before any
 // write). Custom operators build reset-like behavior on it; computeds have no
 // stored initial — check with the predicate instead of catching.

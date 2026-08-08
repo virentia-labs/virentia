@@ -6,6 +6,7 @@ import {
   requireActiveScope,
   run,
   trackNode,
+  unwrapMicroScope,
   writeTransactionStore,
 } from "@virentia/core/internal";
 import type { StoreCommitResult } from "@virentia/core/internal";
@@ -85,7 +86,11 @@ export function mutableStore<T extends object>(
     return changed;
   };
 
-  const scopeOf = (verb: string): Scope => requireActiveScope(() => `${verb} a mutable store`);
+  // Unwrap a reaction run's micro-scope overlay: drafts, ownership, and the
+  // scope handed to subscribers must all key by the real scope — a micro-scope's
+  // identity dies with the run, and subscribers compare identities (useUnit).
+  const scopeOf = (verb: string): Scope =>
+    unwrapMicroScope(requireActiveScope(() => `${verb} a mutable store`));
 
   // The scope's committed value — the shared `initial` until the scope first
   // diverges (copy-on-write), never eagerly cloned.
