@@ -14,6 +14,8 @@
       "@virentia/core": ["packages/core/lib/index.ts"],
       "@virentia/core/devtools": ["packages/core/lib/devtools.ts"],
       "@virentia/core/internal": ["packages/core/lib/internal.ts"],
+      "@virentia/core/models": ["packages/core/lib/models.ts"],
+      "@virentia/core/utils": ["packages/core/lib/utils.ts"],
       "@virentia/effector": ["packages/effector/lib/index.ts"],
       "@virentia/inspector": ["packages/inspector/lib/index.ts"],
       "@virentia/inspector/effector": ["packages/inspector/lib/effector/index.ts"],
