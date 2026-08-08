@@ -1,5 +1,11 @@
 # @virentia/core
 
+## 0.11.0
+
+### Minor Changes
+
+- Add `@virentia/core/models` — the entity layer of the reactive stack. Declare an entity once (`model`/`staticModel` + `f.*` field schemas backed by TypeBox) and get collections with upsert `add`, traits with the one-declarer rule, relations (`refs`/`children`/`inverse`, delete policies, zero-annotation cycles), indexed reactive queries with referentially stable results, unions with exhaustive `match`, `json()` serialization with temporary ids, `rebind` with forwarding aliases, per-instance `onCleanup`, and instance-scope pooling. React and Vue `useModel`/`component` accept queries, `collection.get(id)` views, and model definitions (with the `keep` flag); the inspector aggregates collections instead of registering instance scopes. `@sinclair/typebox` becomes an optional peer of core — only apps importing the models subpath install it. Also ships the `@virentia/core/utils` operators entry.
+
 ## 0.10.0
 
 ### Minor Changes
