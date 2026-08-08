@@ -8,6 +8,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@virentia/core/internal": resolve(root, "../core/lib/internal.ts"),
+      "@virentia/core/models": resolve(root, "../core/lib/models.ts"),
       "@virentia/core": resolve(root, "../core/lib/index.ts"),
     },
   },

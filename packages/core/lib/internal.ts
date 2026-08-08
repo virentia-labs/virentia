@@ -19,6 +19,11 @@ export { collectNodes, isTracking, trackNode } from "./graph/deps";
 // required" error when none is active.
 export { getActiveScope, requireActiveScope, setActiveScope } from "./scope/internal";
 
+// A plain store's declaration-time initial (what a fresh scope reads before any
+// write). Custom operators build reset-like behavior on it; computeds have no
+// stored initial — check with the predicate instead of catching.
+export { hasInitialValue, initialValueOf } from "./units/store";
+
 // Transaction lifecycle. Writes registered with `writeTransactionStore` are
 // batched and committed together on the transaction boundary; each target's
 // `commit` reports whether it changed and how to notify.
