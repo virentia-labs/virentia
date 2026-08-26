@@ -8,21 +8,22 @@ import {
   type ReactiveWritable,
   type Scope,
 } from "@virentia/core";
-import { isModelDefinition, isModelInstance, isModelQuery } from "@virentia/core/models";
-import type {
-  AnyModel,
-  Dto,
-  InstanceApi,
-  InstanceOf,
-  Query as ModelQuery,
-  TypedQuery,
-  TypedUnionQuery,
-  UnionQuery,
-} from "@virentia/core/models";
 import { useEffect, useMemo, useRef } from "react";
 import { getOrCreateCachedInstance } from "./model-cache";
-import { useModelEntity, useModelQuery, useModelScreen } from "./models";
-import type { ModelScreenOptions } from "./models";
+import {
+  isModelDefinition,
+  isModelInstance,
+  isModelQuery,
+  useModelEntity,
+  useModelQuery,
+  useModelScreen,
+  type ModelDefinitionInstance,
+  type ModelDefinitionLike,
+  type ModelDefinitionProps,
+  type ModelEntity,
+  type ModelQueryLike,
+  type ModelScreenOptions,
+} from "./models";
 import { useProvidedScope } from "./scope";
 import type {
   CacheOptions,
@@ -56,15 +57,13 @@ import {
 // §10.1 overloads first: a model DEFINITION is a screen factory through its
 // collection; a query/collection is a live view; an instance (or null from
 // `todos.get(id)`) is an entity view. The legacy factory/object forms follow.
-export function useModel<M extends AnyModel>(
+export function useModel<M extends ModelDefinitionLike>(
   definition: M,
-  props?: Partial<Dto<M>> & { id?: string },
+  props?: ModelDefinitionProps<M>,
   options?: ModelScreenOptions,
-): InstanceOf<M> | null;
-export function useModel<Q extends TypedQuery<any> | TypedUnionQuery<any> | ModelQuery | UnionQuery>(
-  query: Q,
-): Q;
-export function useModel<I extends InstanceApi>(instance: I | null): I | null;
+): ModelDefinitionInstance<M> | null;
+export function useModel<Q extends ModelQueryLike>(query: Q): Q;
+export function useModel<I extends ModelEntity>(instance: I | null): I | null;
 export function useModel<Model extends object>(model: Model): ReactiveModel<Model>;
 export function useModel<Props, Model extends object>(
   factory: ModelFactory<Props, Model>,

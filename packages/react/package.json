@@ -1,6 +1,6 @@
 {
   "name": "@virentia/react",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "",
   "keywords": [],
   "homepage": "https://movpushmov.dev/virentia/react/",
@@ -32,7 +32,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown",
+    "build": "tsdown && node scripts/check-root-entry.mjs",
     "test": "vitest run && vitest typecheck --run --passWithNoTests",
     "test:watch": "vitest"
   },
