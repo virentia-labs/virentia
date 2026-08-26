@@ -7,6 +7,7 @@ import { unwrapMicroScope } from "../scope/micro";
 import type { Scope } from "../scope/types";
 import { seedScopeStoreValue, store } from "../units/store";
 import type { StoreWritable } from "../units/store";
+import { modelInstanceBinding, type ModelInstanceBinding } from "./bindings";
 import { composeShape, resolveDataDeclaration } from "./trait";
 import type { DataDeclaration, TraitDef } from "./trait";
 import { fieldIsOneWay, fieldOut } from "./fields";
@@ -478,6 +479,14 @@ export function createInstanceFacade(internal: InstanceInternal): object {
       internal.onRebind?.(oldId, newId);
     },
   };
+
+  Object.defineProperty(target, modelInstanceBinding, {
+    value: {
+      subscribe(listener) {
+        return internal.subscribeSelf?.(listener) ?? (() => {});
+      },
+    } satisfies ModelInstanceBinding,
+  });
 
   const facade = new Proxy(target, {
     get(base, property, receiver) {

@@ -1,4 +1,9 @@
-import { collection, queryReactivity, subscribeInstance } from "@virentia/core/models";
+import type { Scope } from "@virentia/core";
+import {
+  modelDefinitionBindingOf,
+  modelInstanceBindingOf,
+  modelQueryBindingOf,
+} from "@virentia/core/internal";
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useOptionalProvidedScope } from "./scope";
 import { useIsomorphicLayoutEffect } from "./utils";
@@ -8,20 +13,89 @@ import { useIsomorphicLayoutEffect } from "./utils";
 // core seams: query epochs (plan-memoised results keep referential identity,
 // so an unchanged result never re-renders) and the per-instance change feed.
 
-interface ModelEntity {
+export interface ModelDefinitionLike {
+  readonly "~model": true;
+  create(...args: any[]): any;
+}
+
+export type ModelDefinitionInput<M extends ModelDefinitionLike> =
+  M["create"] extends (input: infer Input, ...args: any[]) => any
+    ? Input extends Record<string, unknown>
+      ? Input
+      : Record<string, unknown>
+    : Record<string, unknown>;
+
+export type ModelDefinitionProps<M extends ModelDefinitionLike> = Partial<
+  ModelDefinitionInput<M>
+> & { id?: string };
+
+export type ModelDefinitionInstance<M extends ModelDefinitionLike> =
+  M["create"] extends (...args: any[]) => infer Instance
+    ? Instance extends object
+      ? Instance
+      : object
+    : object;
+
+export interface ModelQueryLike extends Iterable<unknown> {
+  readonly items: readonly unknown[];
+  readonly ids: readonly string[];
+  readonly count: number;
+  readonly first: unknown;
+  where(...args: any[]): ModelQueryLike;
+  sort(...args: any[]): ModelQueryLike;
+  take(count: number): ModelQueryLike;
+  select(...args: any[]): readonly unknown[];
+  set(...args: any[]): void;
+  remove(id?: string): void;
+  toArray(): readonly unknown[];
+}
+
+export interface ModelEntity {
   readonly id: string;
+  readonly key: string;
   readonly alive: boolean;
+  json(): Record<string, unknown>;
   dispose(): void;
+  rebind(newId: string): void;
+  onCleanup(cleanup: () => void): () => void;
 }
 
 export interface ModelScreenOptions {
   keep?: boolean;
 }
 
+export function isModelDefinition(value: unknown): value is ModelDefinitionLike {
+  return modelDefinitionBindingOf(value) !== undefined;
+}
+
+export function isModelInstance(value: unknown): value is ModelEntity {
+  return modelInstanceBindingOf(value) !== undefined;
+}
+
+export function isModelQuery(value: unknown): value is ModelQueryLike {
+  return modelQueryBindingOf(value) !== undefined;
+}
+
+export function modelCollectionFor(definition: object, scope: Scope): ScreenCollection {
+  const binding = modelDefinitionBindingOf(definition);
+
+  if (!binding) {
+    throw new Error("[models] Expected a model definition from @virentia/core/models.");
+  }
+
+  return binding.collection(scope) as ScreenCollection;
+}
+
 /** Query view: `useModel(todos.where(...).sort(...).take(50))`. The chain may
  * be rebuilt every render — plans are interned, results memoised (§8). */
-export function useModelQuery<Q extends object>(query: Q): Q {
-  const { versions } = queryReactivity(query);
+export function useModelQuery<Q extends ModelQueryLike>(query: Q): Q {
+  const binding = modelQueryBindingOf(query);
+
+  if (!binding) {
+    throw new Error("[useModel] Expected a collection query from @virentia/core/models.");
+  }
+
+  const versions = binding["~versions"]();
   const stableVersions = useStableArray(versions);
 
   const subscribe = useCallback(
@@ -39,7 +113,7 @@ export function useModelQuery<Q extends object>(query: Q): Q {
 
   // The snapshot IS the result identity: an epoch bump that does not change
   // the set keeps the same array, and React skips the re-render.
-  const getSnapshot = useCallback(() => (query as { items: unknown[] }).items, [query]);
+  const getSnapshot = useCallback(() => query.items, [query]);
 
   useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
@@ -55,7 +129,11 @@ export function useModelEntity<I extends object>(instance: I | null): I | null {
     (notify: () => void) => {
       if (!instance) return () => {};
 
-      return subscribeInstance(instance, () => {
+      const binding = modelInstanceBindingOf(instance);
+
+      if (!binding) return () => {};
+
+      return binding.subscribe(() => {
         revisionRef.current += 1;
         notify();
       });
@@ -93,7 +171,7 @@ export function useModelScreen(
       );
     }
 
-    return collection(definition as never, scope) as unknown as ScreenCollection;
+    return modelCollectionFor(definition, scope);
   }, [controlled, definition, scope]);
   const propsId = typeof props?.id === "string" ? (props.id as string) : undefined;
   const instance = useMemo(

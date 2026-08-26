@@ -2,6 +2,30 @@
 // storage in collections, field-declared indexes, descriptor queries, codec as
 // props bindings. Design: docs/design/dynamic-models.md.
 
+import { modelDefinitionBinding, type ModelDefinitionBinding } from "./bindings";
+import { collection } from "./collection";
+import {
+  model as createModel,
+  staticModel as createStaticModel,
+  type ModelConfig,
+  type ModelDefinition,
+} from "./definition";
+
+function bindDefinition(definition: ModelDefinition): ModelDefinition {
+  Object.defineProperty(definition, modelDefinitionBinding, {
+    value: {
+      collection: (scope) => collection(definition, scope),
+    } satisfies ModelDefinitionBinding,
+  });
+
+  return definition;
+}
+
+export const model = ((config: ModelConfig) =>
+  bindDefinition(createModel(config))) as typeof createModel;
+export const staticModel = ((config: ModelConfig) =>
+  bindDefinition(createStaticModel(config))) as typeof createStaticModel;
+
 export { f, fn, createPropsProxy, fieldIn, fieldOut, fieldIsOneWay } from "./fields";
 export type {
   Bound,
@@ -17,7 +41,7 @@ export type {
 } from "./fields";
 export { trait } from "./trait";
 export type { TraitConfig, TraitDef } from "./trait";
-export { model, staticModel, isModelDefinition, isModelInstance } from "./definition";
+export { isModelDefinition, isModelInstance } from "./definition";
 export type {
   DescriptorPredicate,
   DescriptorSort,
