@@ -31,6 +31,22 @@ export { isMicroScope, unwrapMicroScope } from "./scope/micro";
 // stored initial — check with the predicate instead of catching.
 export { hasInitialValue, initialValueOf } from "./units/store";
 
+// Optional entity-model bindings use this structural protocol. Keeping the
+// protocol here lets UI packages recognize models without importing
+// @virentia/core/models (and its optional TypeBox peer) themselves.
+export {
+  modelDefinitionBindingOf,
+  modelInstanceBindingOf,
+  modelQueryBindingOf,
+} from "./models/bindings";
+export type {
+  ModelCollectionBinding,
+  ModelDefinitionBinding,
+  ModelInstanceBinding,
+  ModelQueryBinding,
+  ModelVersionBinding,
+} from "./models/bindings";
+
 // Transaction lifecycle. Writes registered with `writeTransactionStore` are
 // batched and committed together on the transaction boundary; each target's
 // `commit` reports whether it changed and how to notify.

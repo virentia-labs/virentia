@@ -1,6 +1,4 @@
 import { getCurrentScope } from "@virentia/core";
-import { collection, isModelDefinition, isModelInstance } from "@virentia/core/models";
-import type { AnyModel, Dto, InstanceOf } from "@virentia/core/models";
 import { createElement, useMemo, type ComponentType } from "react";
 import type {
   CachedComponentConfig,
@@ -11,7 +9,15 @@ import type {
   VirentiaComponent,
 } from "./types";
 import { getOrCreateCachedInstance } from "./model-cache";
-import { useModelScreen } from "./models";
+import {
+  isModelDefinition,
+  isModelInstance,
+  modelCollectionFor,
+  useModelScreen,
+  type ModelDefinitionInstance,
+  type ModelDefinitionLike,
+  type ModelDefinitionProps,
+} from "./models";
 import { useOptionalProvidedScope } from "./scope";
 import {
   createModelInstance,
@@ -24,19 +30,19 @@ import { getComponentName } from "./utils";
 
 /** §10.1: `component({ model: OrderScreen, view, keep })` — the model is a
  * definition from @virentia/core/models, instances live in its collection. */
-export interface DefinitionComponentConfig<M extends AnyModel> {
+export interface DefinitionComponentConfig<M extends ModelDefinitionLike> {
   model: M;
-  view: ComponentType<{ model: InstanceOf<M> } & Record<string, unknown>>;
+  view: ComponentType<{ model: ModelDefinitionInstance<M> } & Record<string, unknown>>;
   keep?: boolean;
-  mapProps?: (props: Record<string, unknown>) => Partial<Dto<M>> & { id?: string };
+  mapProps?: (props: Record<string, unknown>) => ModelDefinitionProps<M>;
 }
 
 // Mapped overloads first: they require `mapProps`, so a config that provides it
 // binds here (pinning external `Props` from `mapProps`' parameter), and a config
 // without `mapProps` falls through to the plain overloads below.
-export function component<M extends AnyModel>(
+export function component<M extends ModelDefinitionLike>(
   config: DefinitionComponentConfig<M>,
-): VirentiaComponent<Record<string, unknown>, InstanceOf<M>>;
+): VirentiaComponent<Record<string, unknown>, ModelDefinitionInstance<M>>;
 export function component<Props, ModelProps, Key, Model extends object>(
   config: MappedCachedComponentConfig<Props, ModelProps, Key, Model>,
 ): VirentiaComponent<Props, Model, ModelProps>;
@@ -136,12 +142,7 @@ export function component(
     // §10.1: a definition's controlled instance is a plain collection add —
     // the collection is its home, the creator owns its end of life.
     if (isModelDefinition((config as { model?: unknown }).model)) {
-      return (
-        collection(
-          (config as unknown as { model: never }).model,
-          externalScope,
-        ) as unknown as { add(input: Record<PropertyKey, unknown>): object }
-      ).add(props ?? {});
+      return modelCollectionFor((config as { model: object }).model, externalScope).add(props ?? {});
     }
 
     const key = "cache" in config ? config.key(props) : undefined;
