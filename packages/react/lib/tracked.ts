@@ -1,5 +1,6 @@
 import { scoped, type Scope } from "@virentia/core";
 import { useCallback, useMemo, useRef, useSyncExternalStore } from "react";
+import { useStoreReadScope } from "./scope";
 import type { AnyStore, UnitLike } from "./types";
 import { getShape, isStoreUnit, isUnitLike, readStore } from "./utils";
 
@@ -21,6 +22,7 @@ export function isComponentModel(value: unknown): boolean {
 // is the immutable set of every store leaf in the tree, collected once at build.
 export interface TrackContext {
   readonly scope: Scope;
+  readonly readScope: Scope;
   readonly reads: Set<AnyStore>;
   readonly values: Map<AnyStore, unknown>;
   readonly stores: Set<AnyStore>;
@@ -44,7 +46,7 @@ export function defineStoreLeaf(
       if (ctx.values.has(unit)) {
         return ctx.values.get(unit);
       }
-      const value = readStore(unit, ctx.scope);
+      const value = readStore(unit, ctx.readScope);
       ctx.values.set(unit, value);
       return value;
     },
@@ -146,6 +148,7 @@ export function useTrackedTree(
   scope: Scope,
   walk: (input: unknown, ctx: TrackContext) => unknown,
 ): unknown {
+  const readScope = useStoreReadScope(scope);
   const readsRef = useRef<Set<AnyStore> | null>(null);
   if (readsRef.current === null) {
     readsRef.current = new Set<AnyStore>();
@@ -166,9 +169,9 @@ export function useTrackedTree(
 
   const built = useMemo(() => {
     const stores = new Set<AnyStore>();
-    const tree = walk(input, { scope, reads, values, stores });
+    const tree = walk(input, { scope, readScope, reads, values, stores });
     return { tree, stores };
-  }, [input, scope, reads, values, walk]);
+  }, [input, scope, readScope, reads, values, walk]);
 
   const subscribe = useCallback(
     (notify: () => void) => {

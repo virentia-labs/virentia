@@ -18,6 +18,8 @@ export interface ModelDefinitionBinding {
 }
 
 export interface ModelInstanceBinding {
+  /** Scope that isolates this model instance's static units. */
+  readonly scope: Scope;
   subscribe(listener: () => void): () => void;
 }
 

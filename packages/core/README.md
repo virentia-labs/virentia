@@ -87,6 +87,26 @@ draft.dispose();
 
 `using` can be used in runtimes or build pipelines that support Explicit Resource Management. Plain `model.dispose()` is the safe baseline.
 
+## Source-stable SIDs
+
+For server/client state transfer, the optional compiler gives imported `store`, `reactive`, `readonlyReactive` and `event` declarations source-stable SIDs. In a Vite application that uses Core with React, Vue or another JSX runtime:
+
+```ts
+// vite.config.ts
+import { defineConfig } from "vite";
+import virentiaCore from "@virentia/core/compiler/vite";
+
+export default defineConfig({
+  plugins: [virentiaCore({ namespace: "my-app" })],
+});
+```
+
+The adapter needs Babel 7 in the build and runs before Vite's regular transforms. It leaves JSX and TypeScript syntax for the rest of the build pipeline. It recognizes named, aliased and namespace imports from `@virentia/core` or `@virentia/ui`, rather than unrelated functions with the same names. The generated SID uses `namespace`, the module path relative to Vite's resolved root, and the source call position. Keep the same relative source paths and namespace on both sides; override `root` when Vite's resolved root is not the intended source root. Use `sid: false` to disable automatic SIDs.
+
+Other build tools can run the Babel 7 plugin exported by `@virentia/core/compiler`, passing a filename and options such as `[[virentiaCore, { root: projectRoot, namespace: "my-app" }]]` in their Babel plugin list. The [`@virentia/ui/vite`](../ui/README.md#ordinary-jsx-compiled-bindings) adapter already includes this Core pass while compiling native Virentia JSX.
+
+The compiler preserves an explicit `sid` in a literal metadata object. For a store without the compiler, pass `store(initial, skipToken, { sid: "session/user" })`; events accept `event({ sid: "session/changed" })`. Automatic SIDs identify declarations across server and client builds of the same source, but change when the source position changes. Native UI prefixes local SIDs per component instance; outside it, repeated factory calls in one scope need distinct explicit SIDs. Snapshots serialize materialized writable SID stores; event SIDs identify events but do not add event state to snapshots.
+
 ## Main API
 
 `scope`, `scoped`, `store`, `computed`, `event`, `effect`, `reaction`, `owner`, `onCleanup`, `getOwner`, `withOwner`, `lazyModel`.

@@ -1,0 +1,167 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #20312c;
+  background: #f7f8f2;
+  font-synthesis: none;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+main {
+  width: min(880px, calc(100% - 48px));
+  margin: 68px auto 32px;
+}
+.eyebrow,
+.badge,
+.position,
+.metrics,
+footer {
+  font-family: "DM Mono", monospace;
+  font-size: 12px;
+}
+.eyebrow {
+  color: #537a56;
+  letter-spacing: 0.12em;
+}
+h1 {
+  font-size: clamp(40px, 7vw, 68px);
+  line-height: 1.04;
+  letter-spacing: -0.055em;
+  margin: 22px 0;
+  font-weight: 600;
+}
+header p {
+  max-width: 560px;
+  font-size: 17px;
+  line-height: 1.6;
+}
+p {
+  color: #63716a;
+  line-height: 1.6;
+}
+header {
+  margin-bottom: 46px;
+}
+section {
+  border-top: 1px solid #d7ded0;
+  padding: 28px 0;
+}
+.section-heading,
+.actions,
+.counter,
+li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.section-heading {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+.badge {
+  color: #2d653d;
+  background: #e3efd9;
+  border-radius: 5px;
+  padding: 7px 10px;
+}
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid #bdcdb5;
+  background: #edf3e7;
+  color: #2c5135;
+  border-radius: 6px;
+  padding: 9px 14px;
+}
+button:hover {
+  background: #dfebd7;
+}
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid #628455;
+  outline-offset: 3px;
+}
+.counter {
+  margin: 16px 0;
+  gap: 24px;
+}
+.counter output {
+  font-size: 48px;
+  min-width: 80px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.counter button {
+  font-size: 24px;
+  width: 48px;
+}
+ul {
+  padding: 0;
+  list-style: none;
+}
+li {
+  border: 1px solid #d9e0d3;
+  background: #fff;
+  border-radius: 8px;
+  margin: 9px 0;
+  padding: 16px;
+}
+li label {
+  display: grid;
+  flex: 1;
+  gap: 7px;
+  font-size: 14px;
+}
+.position {
+  color: #879c7d;
+  padding: 0 9px;
+}
+input {
+  width: 100%;
+  border: 1px solid #e0e4da;
+  border-radius: 4px;
+  padding: 9px;
+  font: inherit;
+  color: #20312c;
+  background: #fafbf8;
+}
+.quiet {
+  background: transparent;
+  border-color: transparent;
+  color: #7c867b;
+  font-size: 12px;
+}
+.branch {
+  padding: 20px;
+  border-left: 3px solid #92ac7c;
+  background: #edf3e7;
+  line-height: 1.7;
+}
+.branch input {
+  margin-top: 12px;
+}
+footer {
+  border-top: 1px solid #d7ded0;
+  padding: 25px 0;
+  color: #83917c;
+}
+@media (max-width: 540px) {
+  main {
+    width: calc(100% - 28px);
+    margin-top: 32px;
+  }
+  li {
+    gap: 6px;
+    padding: 10px;
+  }
+  .position {
+    padding: 0 4px;
+  }
+}

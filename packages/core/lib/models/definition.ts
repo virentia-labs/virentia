@@ -99,6 +99,32 @@ export function isModelInstance(value: unknown): boolean {
   return typeof value === "object" && value !== null && instanceInternals.has(value);
 }
 
+/** A model field or store-like member observed by a synchronous read. */
+export interface ModelFieldReadSource {
+  subscribe(listener: () => void): () => void;
+}
+
+let modelFieldReadCollector: ((source: ModelFieldReadSource) => void) | null = null;
+
+/** Collect model store reads without changing ordinary reactive reads outside this call. */
+export function collectModelFieldReads<T>(
+  collector: (source: ModelFieldReadSource) => void,
+  read: () => T,
+): T {
+  const previous = modelFieldReadCollector;
+  modelFieldReadCollector = collector;
+  try {
+    return read();
+  } finally {
+    modelFieldReadCollector = previous;
+  }
+}
+
+function trackModelFieldRead(source: ModelFieldReadSource, node: never): void {
+  if (modelFieldReadCollector) modelFieldReadCollector(source);
+  else trackNode(node);
+}
+
 // ---------------------------------------------------------------------------
 // Instance-scope values: a Map that routes by static ownership (§3.2). Keys in
 // `locals` (the model's field state) live in the instance's own map; everything
@@ -337,13 +363,13 @@ export function relationStoreFor(internal: InstanceInternal, name: string): Stor
 function createFieldFacade(internal: InstanceInternal, name: string): object {
   const storeUnit = fieldStoreFor(internal, name);
 
-  return {
+  const facade: ModelFieldReadSource & { value: unknown; readonly node: unknown } = {
     get value(): unknown {
       requireAlive(internal);
-      // Register the dependency while the CALLER's collector/micro-scope is
-      // still ambient — runScopeTask replaces the scope, so a read inside an
-      // auto-reaction would otherwise track nothing and never re-run.
-      trackNode((storeUnit as unknown as { node: never }).node);
+      // Capture the facade while the caller's collector is ambient. Outside an
+      // explicit model-read collector, keep the ordinary Core node tracking:
+      // runScopeTask below switches to the instance scope before the store read.
+      trackModelFieldRead(facade, (storeUnit as unknown as { node: never }).node);
 
       return runInInstance(internal, () => storeUnit.value);
     },
@@ -368,6 +394,8 @@ function createFieldFacade(internal: InstanceInternal, name: string): object {
       });
     },
   };
+
+  return facade;
 }
 
 function memberOf(internal: InstanceInternal, name: string): unknown {
@@ -395,10 +423,10 @@ function wrapMember(internal: InstanceInternal, member: unknown): unknown {
   if (isStoreLike(member)) {
     const unit = member as { value: unknown; node: never };
 
-    return {
+    const facade: ModelFieldReadSource & { readonly value: unknown; readonly node: unknown } = {
       get value(): unknown {
         requireAlive(internal);
-        trackNode(unit.node);
+        trackModelFieldRead(facade, unit.node);
 
         return runInInstance(internal, () => unit.value);
       },
@@ -415,6 +443,8 @@ function wrapMember(internal: InstanceInternal, member: unknown): unknown {
         });
       },
     };
+
+    return facade;
   }
 
   if (typeof member !== "function") return member;
@@ -482,6 +512,9 @@ export function createInstanceFacade(internal: InstanceInternal): object {
 
   Object.defineProperty(target, modelInstanceBinding, {
     value: {
+      get scope() {
+        return internal.scope ?? internal.parentScope;
+      },
       subscribe(listener) {
         return internal.subscribeSelf?.(listener) ?? (() => {});
       },

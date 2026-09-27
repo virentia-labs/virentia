@@ -1,14 +1,17 @@
 import { node, run } from "../kernel";
 import type { Node } from "../kernel";
 import { describeNode, readInspectorNodeMeta, withInspectorMeta } from "../kernel/inspector";
-import { requireActiveScope, setActiveScope } from "../scope/internal";
+import { getActiveScope, requireActiveScope, setActiveScope } from "../scope/internal";
 import { unwrapMicroScope } from "../scope/micro";
+import { resolveStoreSid } from "../scope/snapshot";
+import type { Scope } from "../scope/types";
 import { registerCleanup } from "../graph/owner";
 
 export type EventPayload<T> = undefined extends T ? [payload?: T] : [payload: T];
 
 export interface Event<T = void> {
   readonly node: Node;
+  readonly sid?: string;
   map<Next>(fn: (value: T) => Next): Event<Next>;
   filter(fn: (value: T) => boolean): Event<T>;
   filterMap<Next>(fn: (value: T) => Next | undefined): Event<Next>;
@@ -21,22 +24,96 @@ export interface EventCallable<T = void> extends Event<T> {
 export interface EventDevtoolsOptions {
   name?: string;
   key?: boolean;
+  sid?: string;
 }
 
-export function event<T = void>(name?: string): EventCallable<T>;
-export function event<T = void>(devtools?: EventDevtoolsOptions): EventCallable<T>;
-export function event<T = void>(devtools?: string | EventDevtoolsOptions): EventCallable<T> {
-  return createEvent<T>(devtools) as EventCallable<T>;
+const boundScopes = new WeakMap<object, Scope>();
+
+/** @internal Scope attached to an event view without allocating another event node. */
+export function boundEventScopeOf(source: unknown): Scope | undefined {
+  if ((typeof source !== "object" || source === null) && typeof source !== "function") {
+    return undefined;
+  }
+
+  return boundScopes.get(source);
+}
+
+/**
+ * Bind an event to one scope while retaining its source node. Reactions on the
+ * returned view infer that scope; map/filter descendants inherit it as well.
+ */
+export function bindEventToScope<T>(source: EventCallable<T>, scope: Scope): EventCallable<T>;
+export function bindEventToScope<T>(source: Event<T>, scope: Scope): Event<T>;
+export function bindEventToScope<T>(source: Event<T>, scope: Scope): Event<T> {
+  const concreteScope = unwrapMicroScope(scope);
+  const previousScope = boundEventScopeOf(source);
+  if (previousScope && previousScope !== concreteScope) {
+    throw new TypeError("[core] Event is already bound to a different scope");
+  }
+  const matchesScope = (): boolean => {
+    const active = getActiveScope();
+    return active !== null && unwrapMicroScope(active) === concreteScope;
+  };
+  const view = Object.assign(
+    (...payload: EventPayload<T>) => {
+      const ambient = getActiveScope();
+
+      return run({ unit: source.node, payload: payload[0], scope: concreteScope }).finally(() =>
+        setActiveScope(ambient),
+      );
+    },
+    {
+      node: source.node,
+      sid: source.sid,
+      map<Next>(fn: (value: T) => Next): Event<Next> {
+        return bindEventToScope(source.filter(matchesScope).map(fn), concreteScope);
+      },
+      filter(fn: (value: T) => boolean): Event<T> {
+        return bindEventToScope(
+          source.filter((value) => matchesScope() && fn(value)),
+          concreteScope,
+        );
+      },
+      filterMap<Next>(fn: (value: T) => Next | undefined): Event<Next> {
+        return bindEventToScope(
+          source.filterMap((value) => (matchesScope() ? fn(value) : undefined)),
+          concreteScope,
+        );
+      },
+    },
+  );
+  boundScopes.set(view, concreteScope);
+
+  return view;
+}
+
+export function event<T = void>(name?: string, metadata?: EventDevtoolsOptions): EventCallable<T>;
+export function event<T = void>(
+  devtools?: EventDevtoolsOptions,
+  metadata?: EventDevtoolsOptions,
+): EventCallable<T>;
+export function event<T = void>(
+  devtools?: string | EventDevtoolsOptions,
+  metadata?: EventDevtoolsOptions,
+): EventCallable<T> {
+  return createEvent<T>(
+    typeof devtools === "string" ? { ...metadata, name: devtools } : { ...metadata, ...devtools },
+  ) as EventCallable<T>;
 }
 
 function createEvent<T>(devtools?: string | EventDevtoolsOptions): Event<T> {
   const options = normalizeDevtoolsOptions(devtools);
+  if (options.sid !== undefined && (typeof options.sid !== "string" || !options.sid.length)) {
+    throw new TypeError("Event SID must be a non-empty string");
+  }
+  const sid = resolveStoreSid(options.sid);
   const eventNode = node({
     meta: withInspectorMeta(undefined, {
       type: "event",
       name: options.name,
       key: options.key,
       callable: true,
+      sid,
     }),
   });
 
@@ -72,6 +149,7 @@ function createEvent<T>(devtools?: string | EventDevtoolsOptions): Event<T> {
     },
     {
       node: eventNode,
+      sid,
 
       map<Next>(fn: (value: T) => Next): Event<Next> {
         const mapped = createEvent<Next>(deriveName(eventNode, "map"));

@@ -6,6 +6,7 @@ import type { Scope } from "../scope";
 import { detachScopedDependent, reconcileScopedEdges } from "../kernel/scoped-edges";
 import { createMicroScope, readMicroDependencies, unwrapMicroScope } from "../scope/micro";
 import { registerCleanup } from "./owner";
+import { boundEventScopeOf } from "../units/event";
 import type { Effect } from "../units/effect";
 import type { Event, EventCallable } from "../units/event";
 import type { Reactive, ReactiveWritable, Store, StoreWritable } from "../units/store";
@@ -145,12 +146,18 @@ export function reaction(
     typeof input === "function" ? input : (input as { run: (...args: never[]) => unknown }).run;
   const name = typeof input === "object" ? input.name : undefined;
   const key = typeof input === "object" ? input.key : undefined;
-  const configuredScopes = typeof input === "object" && input.scope ? toArray(input.scope) : null;
-  // Per-scope behavior is opt-in through an explicit `scope:` — never inferred
-  // from the ambient scope at creation, which is a fragile global we must not
-  // depend on. With `scope:` the reaction fires only in those scopes and stores
-  // its dynamic edges per scope; without it the reaction is global (fires in any
-  // scope its source changed in, with a single dependency set).
+  const sourceScope = explicit
+    ? boundSourceScopeOf((input as ReactionConfig<any, UnitList>).on)
+    : undefined;
+  const configuredScopes =
+    typeof input === "object" && input.scope
+      ? toArray(input.scope)
+      : sourceScope
+        ? [sourceScope]
+        : null;
+  // Per-scope behavior is opt-in through `scope:` or a scope-bound event view,
+  // never inferred from the ambient scope at reaction creation. An explicit
+  // scope overrides a bound source's scope; unbound sources stay global.
   const allowedScopes = configuredScopes ? new Set(configuredScopes) : null;
   const useGlobalEdges = !configuredScopes;
   const currentDependencies = new Set<Node>();
@@ -436,6 +443,21 @@ function detach(source: Node, next: Node): void {
 
 function toArray<T>(value: T | readonly T[]): readonly T[] {
   return Array.isArray(value) ? (value as readonly T[]) : [value as T];
+}
+
+function boundSourceScopeOf(sources: UnitList): Scope | undefined {
+  let scope: Scope | undefined;
+
+  for (const source of toArray(sources)) {
+    const bound = boundEventScopeOf(source);
+    if (!bound) continue;
+    if (scope && scope !== bound) {
+      throw new TypeError("[core] reaction sources are bound to different scopes");
+    }
+    scope = bound;
+  }
+
+  return scope;
 }
 
 function matchesScope(allowedScopes: ReadonlySet<Scope> | null, scope: Scope | null): boolean {

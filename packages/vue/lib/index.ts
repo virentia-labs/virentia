@@ -3,6 +3,7 @@ export type { DefinitionComponentConfig } from "./component";
 export { createModelCache } from "./model-cache";
 export type { ModelScreenOptions } from "./models";
 export { provideScope, ScopeProvider, useProvidedScope } from "./scope";
+export type { ScopeHydration } from "./scope";
 export { useModel } from "./use-model";
 export { useUnit } from "./use-unit";
 export { SHAPE } from "./utils";

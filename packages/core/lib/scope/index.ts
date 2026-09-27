@@ -7,8 +7,15 @@ import { seedScopeStoreValue } from "../units/store";
 import type { StoreWritable } from "../units/store";
 import { provideDependency } from "../units/dependency";
 import type { Dependency } from "../units/dependency";
+import { initializeSnapshot } from "./snapshot";
+import type { ScopeSnapshot } from "./snapshot";
+
+export { serialize } from "./snapshot";
+export type { JsonValue, ScopeSnapshot } from "./snapshot";
 
 export interface ScopeOptions {
+  /** Lazy writable SID values. Apply before reading derived stores; explicit values below take precedence. */
+  snapshot?: ScopeSnapshot;
   values?:
     | ReadonlyMap<StoreWritable<any>, unknown>
     | readonly (readonly [StoreWritable<any>, unknown])[];
@@ -24,6 +31,8 @@ export function scope(options: ScopeOptions = {}): Scope {
     handlers: new Map(),
     deps: new Map(),
   };
+
+  if (options.snapshot !== undefined) initializeSnapshot(nextScope, options.snapshot);
 
   if (options.values) {
     const values = options.values instanceof Map ? options.values.entries() : options.values;

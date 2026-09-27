@@ -1,0 +1,144 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  color: #203334;
+  background: #f4f3ed;
+  font-synthesis: none;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  padding: 64px 24px 24px;
+}
+main,
+footer {
+  width: min(840px, 100%);
+  margin: 0 auto;
+}
+header {
+  padding-bottom: 32px;
+}
+.eyebrow {
+  color: #52716c;
+  letter-spacing: 0.15em;
+  font-size: 12px;
+  font-weight: 700;
+}
+h1 {
+  font-size: clamp(42px, 8vw, 72px);
+  letter-spacing: -0.065em;
+  line-height: 1.04;
+  margin: 20px 0;
+  font-weight: 650;
+}
+.intro {
+  max-width: 540px;
+  font-size: 18px;
+  line-height: 1.6;
+}
+section {
+  background: #fffefa;
+  border: 1px solid #d8dfd5;
+  border-radius: 18px;
+  padding: 26px;
+  margin: 18px 0;
+}
+.section-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+h2 {
+  font-size: 17px;
+  font-weight: 650;
+  margin: 0;
+}
+.badge {
+  background: #eef3eb;
+  color: #496250;
+  padding: 7px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+}
+section > p,
+.field p {
+  font-size: 13px;
+  color: #66716b;
+  line-height: 1.65;
+}
+.counter {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  margin: 26px 0;
+}
+button {
+  width: 48px;
+  height: 48px;
+  border: 1px solid #c3d0c4;
+  border-radius: 12px;
+  background: #f4f7ef;
+  color: #21483a;
+  font-size: 26px;
+  cursor: pointer;
+}
+button:hover {
+  background: #e3ecdf;
+}
+button:focus-visible,
+input:focus-visible {
+  outline: 3px solid #91bba8;
+  outline-offset: 3px;
+}
+output {
+  font-size: 48px;
+  min-width: 68px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.05em;
+}
+.fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-top: 24px;
+}
+label {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+input {
+  width: 100%;
+  border: 1px solid #c3d0c4;
+  border-radius: 9px;
+  padding: 12px;
+  color: inherit;
+  background: #fff;
+  font: inherit;
+}
+code {
+  font-family: ui-monospace, monospace;
+  color: #254d42;
+}
+footer {
+  padding: 18px 4px;
+  color: #496d5a;
+  font-size: 12px;
+}
+@media (max-width: 540px) {
+  body {
+    padding: 36px 16px 20px;
+  }
+  section {
+    padding: 20px;
+  }
+  .fields {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}

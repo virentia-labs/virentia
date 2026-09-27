@@ -10,8 +10,17 @@ import {
   type Store,
   type StoreWritable,
 } from "@virentia/core";
-import { customRef, getCurrentScope as getCurrentVueScope, onScopeDispose, type Ref } from "vue";
-import { useProvidedScope } from "./scope";
+import {
+  customRef,
+  getCurrentInstance,
+  getCurrentScope as getCurrentVueScope,
+  inject,
+  onMounted,
+  onScopeDispose,
+  ssrContextKey,
+  type Ref,
+} from "vue";
+import { useOptionalHydration, useProvidedScope } from "./scope";
 import type { AnyStore, Bound, ShapeSource, UnitLike, UnitShape } from "./types";
 import { getShape, isStoreUnit, isUnitLike, readStore } from "./utils";
 
@@ -110,43 +119,83 @@ function bindStoreRef<T>(unit: AnyStore<T>, scope: Scope): Readonly<Ref<T>> {
   // subscription itself is installed later.
   let unsubscribe: (() => void) | null = null;
   let disposed = false;
-  let cached = readStore(unit, scope);
+  const hydration = useOptionalHydration(scope);
+  const instance = getCurrentInstance();
+  const serverRendering = instance && inject(ssrContextKey, null) !== null;
+  // Vue assigns vnode.el before setup only when claiming server markup. Async
+  // descendants may reach setup after app.mount returns; fresh client mounts
+  // have no existing element and must read the current live state.
+  let hydrating = Boolean(
+    hydration && (hydration.active || (instance && !instance.isMounted && instance.vnode.el)),
+  );
+  const readScope = () => (hydrating && hydration ? hydration.scope : scope);
+  let cached = readStore(unit, readScope());
+  let notify: (() => void) | undefined;
 
-  const state = customRef<T>((track, trigger) => ({
-    get() {
-      track();
+  const state = customRef<T>((track, trigger) => {
+    notify = trigger;
+    return {
+      get() {
+        track();
 
-      // Once the owning scope is disposed the subscription is gone, so freeze at
-      // the last observed value rather than reading a store that may since have
-      // moved on in another scope.
-      if (!disposed) {
-        if (!unsubscribe) {
-          unsubscribe = unit.subscribe((_value, nextScope) => {
-            if (nextScope !== scope) {
-              return;
-            }
+        // Once the owning scope is disposed the subscription is gone, so freeze at
+        // the last observed value rather than reading a store that may since have
+        // moved on in another scope.
+        if (!disposed) {
+          if (!unsubscribe && !serverRendering) {
+            unsubscribe = unit.subscribe((_value, nextScope) => {
+              if (nextScope !== scope || hydrating) {
+                return;
+              }
 
-            cached = readStore(unit, scope);
-            trigger();
-          });
+              cached = readStore(unit, scope);
+              trigger();
+            });
+          }
+
+          // Live read after hydration: reflects writes that landed before the
+          // subscription or outside any tracking context, e.g. an event handler.
+          cached = readStore(unit, readScope());
         }
 
-        // Live read: reflects writes that landed before the subscription (or
-        // outside any tracking context, e.g. an event handler).
-        cached = readStore(unit, scope);
-      }
+        return cached;
+      },
+      set() {
+        // A bound store ref is read-only; writes go through the unit itself.
+      },
+    };
+  });
 
-      return cached;
-    },
-    set() {
-      // A bound store ref is read-only; writes go through the unit itself.
-    },
-  }));
+  // A sibling root may have written before this ref subscribed. Reconcile at
+  // hydration completion even when no live subscription observed that write.
+  const finishHydration = () => {
+    if (disposed) return;
+    hydrating = false;
+    const value = readStore(unit, scope);
+    if (!Object.is(cached, value)) {
+      cached = value;
+      notify?.();
+    }
+  };
+  const stopHydration =
+    hydrating && hydration!.active
+      ? hydration!.onEnd(() => {
+          // Async setup/Suspense can outlive app.mount. Its first render must still
+          // match the server; reconcile when that component actually mounts.
+          if (!instance || instance.isMounted) finishHydration();
+        })
+      : undefined;
+  if (hydrating && instance) {
+    onMounted(() => {
+      if (!hydration!.active) finishHydration();
+    }, instance);
+  }
 
   if (getCurrentVueScope()) {
     onScopeDispose(() => {
       disposed = true;
       unsubscribe?.();
+      stopHydration?.();
     });
   }
 

@@ -19,8 +19,15 @@ import {
 } from "../kernel/inspector";
 import { getScopedObservers, reconcileScopedEdges } from "../kernel/scoped-edges";
 import { unwrapMicroScope } from "../scope/micro";
-import { requireActiveScope, setActiveScope } from "../scope/internal";
+import { getActiveScope, requireActiveScope, setActiveScope } from "../scope/internal";
 import type { Scope } from "../scope";
+import {
+  copyScopeSnapshotState,
+  materializeSnapshotStore,
+  resolveStoreSid,
+  trackStoreDeclaration,
+  type SnapshotStore,
+} from "../scope/snapshot";
 import { collectNodes, trackNode } from "../graph/deps";
 import { registerCleanup } from "../graph/owner";
 
@@ -29,6 +36,8 @@ const committedStoreUpdate = Symbol("virentia.committedStoreUpdate");
 const storeReaders = new WeakMap<object, () => unknown>();
 const storeScopeWriters = new WeakMap<object, (scope: Scope, value: unknown) => void>();
 const storeInitials = new WeakMap<object, unknown>();
+const computedStates = new WeakSet<object>();
+const readSnapshotScopes = new WeakSet<Scope>();
 
 // A `store` is always accessed through `.value`, regardless of whether it holds
 // a primitive or an object. For direct field access on object state use `reactive`.
@@ -46,6 +55,9 @@ export type StoreSubscriber<T> = (value: T, scope: Scope) => void;
 export interface StoreDevtoolsOptions {
   name?: string;
   key?: boolean;
+  sid?: string;
+  /** @internal Preserve an explicit second argument when a compiler adds metadata. */
+  hasSkipToken?: boolean;
 }
 
 export type Store<T> = StoreView<T> & StoreApi<T>;
@@ -63,6 +75,7 @@ export type ReactiveWritable<T> = ReactiveWrite<T> &
 export interface StoreApi<T> {
   readonly node: Node;
   readonly writable: boolean;
+  readonly sid?: string;
   subscribe(fn: StoreSubscriber<T>): () => void;
   map<Next>(fn: (value: T) => Next, skipToken?: Next): Store<Next>;
   filter(fn: (value: T) => boolean): Store<T>;
@@ -78,6 +91,7 @@ interface StoreOptions<T> {
   hasSkipToken: boolean;
   name?: string;
   key?: boolean;
+  sid?: string;
 }
 
 interface ComputedOptions<T> extends Omit<StoreOptions<T>, "writable" | "mode"> {
@@ -114,9 +128,12 @@ export function store<T>(
     writable: true,
     mode: "ref",
     skipToken,
-    hasSkipToken: arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined),
+    hasSkipToken:
+      devtools?.hasSkipToken ??
+      (arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined)),
     name: devtools?.name,
     key: devtools?.key,
+    sid: devtools?.sid,
   }) as StoreWritable<T>;
 }
 
@@ -156,6 +173,28 @@ export function seedScopeStoreValue<T>(scope: Scope, store: StoreWritable<T>, va
   writer(scope, value);
 }
 
+/**
+ * Capture an in-memory read view for a renderer's initial hydration pass.
+ * Store values retain their identity, while maps, lazy SID restoration and
+ * computed caches are independent. Use the original scope for events/writes.
+ */
+export function captureScopeSnapshot(scope: Scope): Scope {
+  scope = unwrapMicroScope(scope);
+  const snapshot: Scope = {
+    values: new Map(),
+    handlers: new Map(scope.handlers),
+    deps: new Map(scope.deps),
+  };
+  for (const [id, value] of scope.values) {
+    if (isObject(value) && computedStates.has(value)) continue;
+    const pending = readTransactionStore(scope, id);
+    snapshot.values.set(id, isPendingStoreValue(pending) ? pending : value);
+  }
+  copyScopeSnapshotState(scope, snapshot);
+  readSnapshotScopes.add(snapshot);
+  return snapshot;
+}
+
 export function readonlyStore<T>(
   initial: T,
   skipToken?: T,
@@ -165,9 +204,12 @@ export function readonlyStore<T>(
     writable: false,
     mode: "ref",
     skipToken,
-    hasSkipToken: arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined),
+    hasSkipToken:
+      devtools?.hasSkipToken ??
+      (arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined)),
     name: devtools?.name,
     key: devtools?.key,
+    sid: devtools?.sid,
   });
 }
 
@@ -180,9 +222,12 @@ export function reactive<T extends object>(
     writable: true,
     mode: "reactive",
     skipToken,
-    hasSkipToken: arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined),
+    hasSkipToken:
+      devtools?.hasSkipToken ??
+      (arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined)),
     name: devtools?.name,
     key: devtools?.key,
+    sid: devtools?.sid,
   }) as unknown as ReactiveWritable<T>;
 }
 
@@ -195,9 +240,12 @@ export function readonlyReactive<T extends object>(
     writable: false,
     mode: "reactive",
     skipToken,
-    hasSkipToken: arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined),
+    hasSkipToken:
+      devtools?.hasSkipToken ??
+      (arguments.length > 1 && !(arguments.length === 3 && skipToken === undefined)),
     name: devtools?.name,
     key: devtools?.key,
+    sid: devtools?.sid,
   }) as unknown as Reactive<T>;
 }
 
@@ -212,6 +260,7 @@ export function computed<T>(fn: () => T, skipToken?: T, devtools?: StoreDevtools
 
 function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
   const id = Symbol("virentia.store");
+  const sid = resolveStoreSid(options.sid);
   const subscribers = new Set<StoreSubscriber<T>>();
   const storeNode = node({
     meta: withInspectorMeta(undefined, {
@@ -220,6 +269,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
       key: options.key,
       callable: true,
       writable: options.writable,
+      sid,
     }),
     run: (ctx) => {
       if (!ctx.scope) {
@@ -237,10 +287,10 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
 
       if (options.hasSkipToken && Object.is(next, options.skipToken)) {
         ctx.stop();
-        return readState(ctx.scope, id, initial);
+        return readState(ctx.scope, id, initial, snapshotStore);
       }
 
-      const previous = readCommittedState(scope, id, initial);
+      const previous = readCommittedState(scope, id, initial, snapshotStore);
 
       if (Object.is(previous, next)) {
         ctx.stop();
@@ -252,12 +302,16 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
       return next;
     },
   });
+  const snapshotStore: SnapshotStore | undefined =
+    options.writable && sid !== undefined ? { sid, id, identity: storeNode } : undefined;
 
   const api: StoreApi<T> = {
     node: storeNode,
     writable: options.writable,
 
     subscribe(fn: StoreSubscriber<T>): () => void {
+      const scope = unwrapMicroScope(getActiveScope());
+      if (scope && snapshotStore) readCommittedState(scope, id, initial, snapshotStore);
       subscribers.add(fn);
 
       const unsubscribe = () => {
@@ -280,6 +334,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
               requireActiveScope(() => `read ${describeNode(storeNode)}`),
               id,
               initial,
+              snapshotStore,
             ),
           ),
         {
@@ -298,6 +353,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
             requireActiveScope(() => `read ${describeNode(storeNode)}`),
             id,
             initial,
+            snapshotStore,
           );
 
           return fn(value) ? value : (defaultSkipToken as T);
@@ -321,6 +377,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
               requireActiveScope(() => `read ${describeNode(storeNode)}`),
               id,
               initial,
+              snapshotStore,
             ),
           ),
         {
@@ -333,6 +390,10 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
     },
   };
 
+  if (sid !== undefined || options.mode === "ref") {
+    Object.defineProperty(api, "sid", { configurable: true, get: () => sid });
+  }
+
   const proxy = new Proxy(
     api,
     createStoreProxyHandlers(options, () => readStateForProxy(), writeProperty, deleteKeyProperty),
@@ -343,14 +404,19 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
       requireActiveScope(() => `read ${describeNode(storeNode)}`),
       id,
       initial,
+      snapshotStore,
     ),
   );
   storeInitials.set(proxy as object, initial);
   if (options.writable) {
     storeScopeWriters.set(proxy as object, (scope, value) => {
+      scope = unwrapMicroScope(scope);
+      if (snapshotStore) materializeSnapshotStore(scope, snapshotStore);
       scope.values.set(id, value);
     });
   }
+
+  trackStoreDeclaration({ id, sid, identity: storeNode });
 
   return proxy as Store<T>;
 
@@ -361,6 +427,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
       requireActiveScope(() => `read ${describeNode(storeNode)}`),
       id,
       initial,
+      snapshotStore,
     );
   }
 
@@ -371,7 +438,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
     // provided (useUnit does) — a micro-scope there would make them drop the
     // notification even though the value committed into their scope.
     const scope = unwrapMicroScope(requireActiveScope(() => `update ${describeNode(storeNode)}`));
-    const state = readState(scope, id, initial);
+    const state = readState(scope, id, initial, snapshotStore);
 
     // In "ref" mode the proxy `set` trap guarantees `property === "value"`, so the
     // whole value is replaced. In "reactive" mode a single field is updated.
@@ -403,7 +470,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
   function deleteKeyProperty(property: PropertyKey): boolean {
     // Same as writeProperty: writes are keyed and notified by the real scope.
     const scope = unwrapMicroScope(requireActiveScope(() => `update ${describeNode(storeNode)}`));
-    const state = readState(scope, id, initial);
+    const state = readState(scope, id, initial, snapshotStore);
 
     // Deleting an absent key (or from a non-object state) is a no-op success.
     if (!isObject(state) || !(property in (state as object))) {
@@ -434,7 +501,7 @@ function createStore<T>(initial: T, options: StoreOptions<T>): Store<T> {
       };
     }
 
-    const previous = readCommittedState(scope, id, initial);
+    const previous = readCommittedState(scope, id, initial, snapshotStore);
 
     if (Object.is(previous, next)) {
       return {
@@ -730,6 +797,9 @@ function createComputed<T>(
   }
 
   function reconcileDynamicDependencies(scope: Scope, collected: ReadonlySet<Node>): void {
+    // Initial hydration reads must not attach observers to their temporary
+    // state or change the globally observed dependency graph.
+    if (readSnapshotScopes.has(scope)) return;
     const dynamic = new Set<Node>();
 
     for (const dependency of collected) {
@@ -999,7 +1069,7 @@ function append(source: Node, next: Node): void {
 
 function readComputedState<T>(scope: Scope, id: symbol): ComputedState<T> {
   if (!scope.values.has(id)) {
-    scope.values.set(id, {
+    const state: ComputedState<T> = {
       computing: false,
       dirty: true,
       initialized: false,
@@ -1007,13 +1077,15 @@ function readComputedState<T>(scope: Scope, id: symbol): ComputedState<T> {
       pendingCompare: false,
       pendingHadValue: false,
       materializedEpoch: -1,
-    } satisfies ComputedState<T>);
+    };
+    computedStates.add(state);
+    scope.values.set(id, state);
   }
 
   return scope.values.get(id) as ComputedState<T>;
 }
 
-function readState<T>(scope: Scope, id: symbol, initial: T): T {
+function readState<T>(scope: Scope, id: symbol, initial: T, snapshotStore?: SnapshotStore): T {
   // Pending writes are staged under the real scope (see writeProperty), while a
   // read inside a reaction body arrives here with the run's micro-scope — unwrap
   // so a read-after-write within one transaction resolves to the same key.
@@ -1024,10 +1096,16 @@ function readState<T>(scope: Scope, id: symbol, initial: T): T {
     return pending as T;
   }
 
-  return readCommittedState(realScope, id, initial);
+  return readCommittedState(realScope, id, initial, snapshotStore);
 }
 
-function readCommittedState<T>(scope: Scope, id: symbol, initial: T): T {
+function readCommittedState<T>(
+  scope: Scope,
+  id: symbol,
+  initial: T,
+  snapshotStore?: SnapshotStore,
+): T {
+  if (snapshotStore) materializeSnapshotStore(scope, snapshotStore);
   if (!scope.values.has(id)) {
     scope.values.set(id, initial);
   }

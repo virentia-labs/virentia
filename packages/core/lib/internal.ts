@@ -7,7 +7,7 @@
 // shares core's transaction, scope, and graph state instead of getting its own
 // copy. Treat the surface as advanced and less stable than the main API.
 
-export { node, run, context, withContexts } from "./kernel";
+export { node, run, runDetached, context, withContexts } from "./kernel";
 export type * from "./kernel";
 
 // Dependency tracking: call `trackNode(node)` from a read so the read registers
@@ -19,17 +19,28 @@ export { collectNodes, isTracking, trackNode } from "./graph/deps";
 // required" error when none is active.
 export { getActiveScope, requireActiveScope, setActiveScope } from "./scope/internal";
 
+// Framework runtimes can provide a per-instance view of one shared event node.
+// Reactions on the view infer its bound scope unless they specify `scope:`.
+export { bindEventToScope } from "./units/event";
+
 // A reaction body runs with a per-run micro-scope installed as the ambient
 // scope (a tracking overlay sharing the real scope's maps by reference). A
 // custom store must unwrap it wherever scope IDENTITY matters — keying its own
 // per-scope state, staging transaction writes, and above all the scope handed
 // to subscribers, which scope-filtering consumers (useUnit) compare by `===`.
 export { isMicroScope, unwrapMicroScope } from "./scope/micro";
+// Exact synchronous SID namespace for repeated component/factory declarations.
+export {
+  releaseStoreDeclaration,
+  withSidScope,
+  withStoreDeclarationTracker,
+} from "./scope/snapshot";
+export type { StoreDeclaration } from "./scope/snapshot";
 
 // A plain store's declaration-time initial (what a fresh scope reads before any
 // write). Custom operators build reset-like behavior on it; computeds have no
 // stored initial — check with the predicate instead of catching.
-export { hasInitialValue, initialValueOf } from "./units/store";
+export { captureScopeSnapshot, hasInitialValue, initialValueOf } from "./units/store";
 
 // Optional entity-model bindings use this structural protocol. Keeping the
 // protocol here lets UI packages recognize models without importing

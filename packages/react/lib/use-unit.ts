@@ -8,8 +8,8 @@ import {
   type Store,
   type StoreWritable,
 } from "@virentia/core";
-import { useCallback, useRef, useSyncExternalStore } from "react";
-import { useProvidedScope } from "./scope";
+import { useCallback, useMemo, useRef, useSyncExternalStore } from "react";
+import { useHydrationScope, useProvidedScope } from "./scope";
 import { useTrackedTree, walkUnit } from "./tracked";
 import type { AnyStore, Bound, ShapeSource, UnitLike, UnitShape, UnitValue } from "./types";
 import { isStoreUnit, isUnitLike, readStore } from "./utils";
@@ -59,6 +59,7 @@ function useSingleUnit(unit: UnitLike, scope: Scope): unknown {
 }
 
 function useStoreUnit<T>(unit: AnyStore<T>, scope: Scope): T {
+  const readScope = useHydrationScope(scope) ?? scope;
   const snapshotRef = useRef(readStore(unit, scope));
 
   snapshotRef.current = readStore(unit, scope);
@@ -82,6 +83,10 @@ function useStoreUnit<T>(unit: AnyStore<T>, scope: Scope): T {
   );
 
   const getSnapshot = useCallback(() => snapshotRef.current, []);
+  // Reactive objects/arrays are unwrapped into fresh values by readStore. React
+  // must see one stable server snapshot for every read during hydration.
+  const serverSnapshot = useMemo(() => readStore(unit, readScope), [unit, readScope]);
+  const getServerSnapshot = useCallback(() => serverSnapshot, [serverSnapshot]);
 
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }

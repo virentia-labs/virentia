@@ -1,7 +1,15 @@
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
-  entry: ["lib/index.ts", "lib/devtools.ts", "lib/internal.ts", "lib/models.ts", "lib/utils.ts"],
+  entry: {
+    index: "lib/index.ts",
+    devtools: "lib/devtools.ts",
+    internal: "lib/internal.ts",
+    models: "lib/models.ts",
+    utils: "lib/utils.ts",
+    "compiler/index": "compiler/index.ts",
+    "compiler/vite": "compiler/vite.ts",
+  },
   outDir: "dist",
   format: ["esm", "cjs"],
   dts: true,

@@ -41,13 +41,14 @@ export type {
 } from "./fields";
 export { trait } from "./trait";
 export type { TraitConfig, TraitDef } from "./trait";
-export { isModelDefinition, isModelInstance } from "./definition";
+export { collectModelFieldReads, isModelDefinition, isModelInstance } from "./definition";
 export type {
   DescriptorPredicate,
   DescriptorSort,
   FieldDescriptor,
   ModelConfig,
   ModelDefinition,
+  ModelFieldReadSource,
   ModelKind,
 } from "./definition";
 export {

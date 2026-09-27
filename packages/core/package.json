@@ -27,6 +27,16 @@
       "import": "./dist/index.mjs",
       "require": "./dist/index.cjs"
     },
+    "./compiler": {
+      "types": "./dist/compiler/index.d.mts",
+      "import": "./dist/compiler/index.mjs",
+      "require": "./dist/compiler/index.cjs"
+    },
+    "./compiler/vite": {
+      "types": "./dist/compiler/vite.d.mts",
+      "import": "./dist/compiler/vite.mjs",
+      "require": "./dist/compiler/vite.cjs"
+    },
     "./devtools": {
       "types": "./dist/devtools.d.mts",
       "import": "./dist/devtools.mjs",
@@ -56,15 +66,23 @@
     "test": "vitest run && vitest typecheck --run --passWithNoTests",
     "test:watch": "vitest"
   },
+  "dependencies": {
+    "@babel/types": "7.29.0"
+  },
   "peerDependencies": {
+    "@babel/core": "^7.0.0",
     "@sinclair/typebox": "^0.34.52"
   },
   "peerDependenciesMeta": {
+    "@babel/core": {
+      "optional": true
+    },
     "@sinclair/typebox": {
       "optional": true
     }
   },
   "devDependencies": {
+    "@babel/core": "7.29.0",
     "@sinclair/typebox": "^0.34.52"
   }
 }
