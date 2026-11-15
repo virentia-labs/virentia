@@ -13,6 +13,18 @@ import {
 import { withSidScope, withTransaction } from "../../lib/internal";
 
 describe("scope snapshots", () => {
+  it("keeps logical native defaults in snapshots and distinguishes an explicit undefined", () => {
+    const count = store<number | undefined>(1, undefined, { sid: "lazy-default" });
+    const first = scope();
+    expect(scoped(first, () => count.value)).toBe(1);
+    expect(serialize(first)).toEqual({ "lazy-default": 1 });
+    const frozen = scope({ snapshot: serialize(first) });
+    scoped(first, () => { count.value = 3; });
+    expect(scoped(frozen, () => count.value)).toBe(1);
+    const explicit = scope({ values: [[count, undefined]] });
+    expect(scoped(explicit, () => count.value)).toBeUndefined();
+    expect(() => serialize(explicit)).toThrow(/unsupported undefined/);
+  });
   it("restores a module store lazily before a computed's first read", () => {
     const count = store(0, undefined, { sid: "count" });
     const doubled = computed(() => count.value * 2, undefined, { sid: "derived" });

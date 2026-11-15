@@ -23,6 +23,8 @@
 // (a get walks parent→child), so replacing an ancestor invalidates deep readers;
 // writes report the exact path, so a sibling edit does not.
 
+import { sequenceBinding, type SequenceBinding, type SequenceOperation } from "@virentia/core/internal";
+
 const ARRAY_MUTATORS = new Set([
   "push",
   "pop",
@@ -49,13 +51,15 @@ export interface DraftEnv {
   /** Nodes this scope already copied — mutate in place instead of copying again. */
   owned: WeakSet<object>;
   /** Report a write at `path` (the exact keypath that changed). */
-  onChange: (path: string) => void;
+  onChange: (path: string, kind?: "array") => void;
   /** Report a read of `path` (a keypath, or `""` for the root). No-op unless tracking. */
   onRead: (path: string) => void;
   /** Report a read of the whole value (`unwrap`) — a coarse dependency on any commit. */
   onReadAll: () => void;
   /** Whether a read should register as a dependency right now. */
   isTracking: () => boolean;
+  sequenceAt?: (path: string) => SequenceBinding;
+  onArrayChange?: (path: string, operations: readonly SequenceOperation<unknown>[]) => void;
 }
 
 class DraftState {
@@ -136,6 +140,8 @@ const handler: ProxyHandler<object> = {
   get(target, property) {
     const state = stateOf(target);
 
+    if (property === sequenceBinding && state.isArray) return state.env.sequenceAt?.(state.path);
+
     if (property === STATE) {
       // `unwrap` reaches the whole subtree — a coarse dependency on any commit.
       if (state.env.isTracking()) state.env.onReadAll();
@@ -151,10 +157,64 @@ const handler: ProxyHandler<object> = {
           (...a: unknown[]) => unknown
         >;
         state.children = null;
-        const result = array[property](...args.map(unwrap));
+        const values = array as unknown as unknown[];
+        const beforeLength = values.length;
+        const rawArgs = args.map(unwrap);
+        const normalize = (value: unknown, fallback: number): number => {
+          if (value === undefined) return fallback;
+          const number = Math.trunc(Number(value)) || 0;
+          return number < 0 ? Math.max(beforeLength + number, 0) : Math.min(number, beforeLength);
+        };
+        const operations: SequenceOperation<unknown>[] = [];
+        let result: unknown;
+        if (property === "sort") {
+          const compare = rawArgs[0] as ((a: unknown, b: unknown) => number) | undefined;
+          if (compare !== undefined && typeof compare !== "function") throw new TypeError("Array sort comparator must be a function");
+          const tagged = Array.from({ length: beforeLength }, (_, index) => ({
+            index, value: values[index], hole: !Object.hasOwn(values, index),
+          }));
+          tagged.sort((a, b) => {
+            if (a.hole || b.hole) return Number(a.hole) - Number(b.hole);
+            if (a.value === undefined || b.value === undefined)
+              return Number(a.value === undefined) - Number(b.value === undefined);
+            if (compare) return compare(a.value, b.value);
+            const left = String(a.value), right = String(b.value);
+            return left < right ? -1 : left > right ? 1 : 0;
+          });
+          tagged.forEach((entry, index) => {
+            if (entry.hole) delete values[index]; else values[index] = entry.value;
+          });
+          operations.push({ type: "reorder", order: tagged.map((entry) => entry.index) });
+          result = state.proxy;
+        } else {
+          result = array[property](...rawArgs);
+          switch (property) {
+            case "push": if (rawArgs.length) operations.push({ type: "insert", index: beforeLength, items: rawArgs }); break;
+            case "unshift": if (rawArgs.length) operations.push({ type: "insert", index: 0, items: rawArgs }); break;
+            case "pop": if (beforeLength) operations.push({ type: "remove", index: beforeLength - 1, count: 1 }); break;
+            case "shift": if (beforeLength) operations.push({ type: "remove", index: 0, count: 1 }); break;
+            case "splice": {
+              const index = normalize(rawArgs[0], 0);
+              const count = (result as unknown[]).length;
+              if (count) operations.push({ type: "remove", index, count });
+              if (rawArgs.length > 2) operations.push({ type: "insert", index, items: rawArgs.slice(2) });
+              break;
+            }
+            case "reverse": operations.push({ type: "reorder", order: Array.from({ length: beforeLength }, (_, index) => beforeLength - index - 1) }); result = state.proxy; break;
+            case "fill":
+            case "copyWithin": {
+              const from = normalize(property === "fill" ? rawArgs[1] : rawArgs[0], 0);
+              const to = property === "fill" ? normalize(rawArgs[2], beforeLength)
+                : Math.min(beforeLength, from + normalize(rawArgs[2], beforeLength) - normalize(rawArgs[1], 0));
+              for (let index = from; index < to; index++) operations.push({ type: "replace", index, item: values[index] });
+              result = state.proxy;
+            }
+          }
+        }
+        state.env.onArrayChange?.(state.path, operations);
         // A structural change to the array — reported at the array's own path, so
         // anyone who read through it (any index, `.length`, iteration) re-runs.
-        state.env.onChange(state.path);
+        state.env.onChange(state.path, "array");
         return result;
       };
     }
@@ -163,6 +223,9 @@ const handler: ProxyHandler<object> = {
     // the child's path too, so a reader of `a.b.c` is subscribed to `a`, `a.b`,
     // and `a.b.c` — replacing any of them re-runs it.
     if (typeof property === "string" && state.env.isTracking()) {
+      // Root arrays have no parent property read to track their structural path.
+      // Mutators notify that path, not every individual index or `length`.
+      if (state.isArray) state.env.onRead(state.path);
       state.env.onRead(state.path + SEP + property);
     }
 
@@ -173,6 +236,7 @@ const handler: ProxyHandler<object> = {
   set(target, property, value) {
     const state = stateOf(target);
     const writable = ensureWritable(state) as Record<PropertyKey, unknown>;
+    const beforeLength = state.isArray ? (writable as unknown as unknown[]).length : 0;
     const isNew = !(property in writable);
     // `arr.length = n` is structural (it adds/removes elements) but `"length" in
     // arr` is always true, so `isNew` misses it — detect it explicitly so
@@ -182,11 +246,24 @@ const handler: ProxyHandler<object> = {
     writable[property] = unwrap(value);
     state.children?.delete(property);
 
+    if (state.isArray) {
+      const array = writable as unknown as unknown[];
+      if (property === "length") {
+        if (array.length < beforeLength) state.env.onArrayChange?.(state.path, [{ type: "remove", index: array.length, count: beforeLength - array.length }]);
+        else if (array.length > beforeLength) state.env.onArrayChange?.(state.path, [{ type: "insert", index: beforeLength, items: Array.from(array.slice(beforeLength)) }]);
+      } else if (typeof property === "string" && /^(0|[1-9][0-9]*)$/.test(property)) {
+        const index = Number(property);
+        state.env.onArrayChange?.(state.path, index < beforeLength
+          ? [{ type: "replace", index, item: array[index] }]
+          : [{ type: "insert", index: beforeLength, items: Array.from(array.slice(beforeLength)) }]);
+      }
+    }
+
     if (typeof property === "string") {
       state.env.onChange(state.path + SEP + property);
       // A new key OR an array-length change alters the node's shape — invalidate
       // readers that enumerated it / read indices.
-      if (isNew || isArrayLengthChange) state.env.onChange(state.path);
+      if (isNew || isArrayLengthChange) state.env.onChange(state.path, state.isArray ? "array" : undefined);
     } else {
       state.env.onChange(state.path);
     }
@@ -200,9 +277,12 @@ const handler: ProxyHandler<object> = {
     delete writable[property];
     state.children?.delete(property);
 
+    if (state.isArray && existed && typeof property === "string" && /^(0|[1-9][0-9]*)$/.test(property))
+      state.env.onArrayChange?.(state.path, [{ type: "replace", index: Number(property), item: undefined }]);
+
     if (typeof property === "string") {
       state.env.onChange(state.path + SEP + property);
-      if (existed) state.env.onChange(state.path);
+      if (existed) state.env.onChange(state.path, state.isArray ? "array" : undefined);
     } else {
       state.env.onChange(state.path);
     }

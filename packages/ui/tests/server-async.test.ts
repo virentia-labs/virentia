@@ -2,7 +2,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { getCurrentScope, getOwner, scope, scoped, store } from "@virentia/core";
 import { createElement as h, foreignTree } from "../lib/runtime";
-import { renderToString, renderToStringAsync, renderToStaticMarkupAsync } from "../lib/server";
+import { renderToString as renderSync, renderToStringAsync as renderAsync, renderToStaticMarkupAsync as renderStatic } from "../lib/server";
+
+import type { Child, RenderOptions } from "../lib";
+const renderToString = (view: () => Child, options?: RenderOptions) => renderSync(view, options ?? { scope: scope() });
+const renderToStringAsync = (view: () => Child, options?: RenderOptions) => renderAsync(view, options ?? { scope: scope() });
+const renderToStaticMarkupAsync = (view: () => Child, options?: RenderOptions) => renderStatic(view, options ?? { scope: scope() });
 
 function deferred() {
   let resolve!: () => void;

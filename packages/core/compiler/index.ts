@@ -1,5 +1,5 @@
-import { posix } from "node:path";
 import type * as AST from "@babel/types";
+import { sidErrors, sourceIdentity, unitKindOf, unitPackages, type UnitKind } from "./identity";
 
 export interface CompilerOptions {
   /** Shared source root for server and client builds. Defaults to Babel's root. */
@@ -28,8 +28,6 @@ interface CompilerState {
   file: { opts: { filename?: string; root?: string; cwd?: string } };
   coreSid?: { sourceId?: string };
 }
-
-type UnitKind = "store" | "event";
 
 /** Add source-stable SIDs to Virentia store and event declarations. */
 export default function virentiaCore(api: BabelAPI) {
@@ -60,12 +58,7 @@ export default function virentiaCore(api: BabelAPI) {
     if (!binding || !t.isImportDeclaration(binding.path.parent)) return undefined;
     const declaration = binding.path.parent;
     if (declaration.importKind === "type") return undefined;
-    if (
-      declaration.source.value !== "@virentia/core" &&
-      declaration.source.value !== "@virentia/ui"
-    ) {
-      return undefined;
-    }
+    if (!unitPackages.has(declaration.source.value)) return undefined;
 
     const specifier = binding.path.node;
     if (namespace) {
@@ -76,11 +69,7 @@ export default function virentiaCore(api: BabelAPI) {
         ? specifier.imported.name
         : specifier.imported.value;
     }
-    return imported === "event"
-      ? "event"
-      : imported === "store" || imported === "reactive" || imported === "readonlyReactive"
-        ? "store"
-        : undefined;
+    return unitKindOf(imported);
   }
 
   function hasSid(options: AST.ObjectExpression): boolean {
@@ -103,17 +92,11 @@ export default function virentiaCore(api: BabelAPI) {
     const args = path.node.arguments;
     if (args.length === 0) return;
     if (args.some((arg) => t.isSpreadElement(arg)) || args.length > 3) {
-      throw path.buildCodeFrameError(
-        "[@virentia/core/compiler] Automatic store SIDs require explicit arguments (no argument spreads). " +
-          "Use store(initial, skipToken, { sid: ... }) or disable automatic SIDs with sid: false.",
-      );
+      throw path.buildCodeFrameError(sidErrors.storeSpread);
     }
     const options = args[2];
     if (options && !t.isObjectExpression(options)) {
-      throw path.buildCodeFrameError(
-        "[@virentia/core/compiler] Automatic store SIDs require an object literal for the third argument. " +
-          "Spread existing options into that object, or disable automatic SIDs with sid: false.",
-      );
+      throw path.buildCodeFrameError(sidErrors.storeOptions);
     }
     if (options) {
       addSid(options, generated);
@@ -136,10 +119,7 @@ export default function virentiaCore(api: BabelAPI) {
   function eventSid(path: Path<AST.CallExpression>, generated: AST.ObjectProperty): void {
     const args = path.node.arguments;
     if (args.some((arg) => t.isSpreadElement(arg)) || args.length > 2) {
-      throw path.buildCodeFrameError(
-        "[@virentia/core/compiler] Automatic event SIDs require explicit arguments (no argument spreads). " +
-          "Use event({ sid: ... }) or disable automatic SIDs with sid: false.",
-      );
+      throw path.buildCodeFrameError(sidErrors.eventSpread);
     }
     if (args.length === 0) {
       args.push(t.objectExpression([generated]));
@@ -154,9 +134,7 @@ export default function virentiaCore(api: BabelAPI) {
     // metadata argument preserves both cases and lets explicit options win.
     const metadata = args[1];
     if (metadata && !t.isObjectExpression(metadata)) {
-      throw path.buildCodeFrameError(
-        "[@virentia/core/compiler] Automatic event SIDs require an object literal for the second argument.",
-      );
+      throw path.buildCodeFrameError(sidErrors.eventMetadata);
     }
     if (metadata) addSid(metadata, generated);
     else args.push(t.objectExpression([generated]));
@@ -167,7 +145,7 @@ export default function virentiaCore(api: BabelAPI) {
     visitor: {
       Program: {
         enter(_path: Path<AST.Program>, state: CompilerState) {
-          state.coreSid = { sourceId: sourceIdentity(state) };
+          state.coreSid = { sourceId: sourceIdentityOf(state) };
         },
       },
       CallExpression(path: Path<AST.CallExpression>, state: CompilerState) {
@@ -188,31 +166,30 @@ export default function virentiaCore(api: BabelAPI) {
           t.stringLiteral(`${sourceId}:${location}`),
         );
         if (kind === "store") storeSid(path, generated);
-        else eventSid(path, generated);
+        else if (kind === "event") eventSid(path, generated);
+        else if (kind === "model") {
+          const config = path.node.arguments[0];
+          if (!t.isObjectExpression(config)) throw path.buildCodeFrameError(sidErrors.modelConfig);
+          addSid(config, generated);
+        } else {
+          const options = path.node.arguments[1];
+          if (options && !t.isObjectExpression(options))
+            throw path.buildCodeFrameError(sidErrors.mutableOptions);
+          if (options) addSid(options, generated);
+          else path.node.arguments.push(t.objectExpression([generated]));
+        }
       },
     },
   };
 }
 
-function sourceIdentity(state: CompilerState): string | undefined {
+function sourceIdentityOf(state: CompilerState): string | undefined {
   if (state.opts.sid === false || !state.file.opts.filename) return undefined;
-  const filename = portablePath(state.file.opts.filename);
-  let root = portablePath(
-    state.opts.root ?? state.file.opts.root ?? state.file.opts.cwd ?? process.cwd(),
+  const cwd = state.file.opts.cwd ?? process.cwd();
+  return sourceIdentity(
+    state.file.opts.filename,
+    state.opts.root ?? state.file.opts.root ?? cwd,
+    cwd,
+    state.opts.namespace,
   );
-  if (!posix.isAbsolute(root) && !/^[a-z]:\//i.test(root)) {
-    root = posix.resolve(portablePath(state.file.opts.cwd ?? process.cwd()), root);
-  }
-  const relative = posix.relative(root, filename);
-  return `v1:${encodeURIComponent(state.opts.namespace ?? "")}:${encodeURIComponent(relative)}`;
-}
-
-function portablePath(filename: string): string {
-  let normalized = filename.replace(/\\/g, "/");
-  // Babel on POSIX may prefix a simulated Windows filename with cwd.
-  const drive = /(?:^|\/)([a-z]:\/.*)$/i.exec(normalized);
-  if (drive) normalized = drive[1][0].toLowerCase() + drive[1].slice(1);
-  const unc = /(?:^|\/)(\\\\[^\\]+\\.*)$/.exec(filename);
-  if (unc) normalized = unc[1].replace(/\\/g, "/");
-  return posix.normalize(normalized);
 }

@@ -17,6 +17,8 @@ function createTestServer(root: string) {
     plugins: virentiaStart({ title: "Virentia <Start>" }),
     resolve: {
       alias: [
+        { find: "@virentia/ui/jsx-runtime", replacement: source("lib/jsx-runtime.ts") },
+        { find: "@virentia/ui/jsx-dev-runtime", replacement: source("lib/jsx-dev-runtime.ts") },
         { find: "@virentia/ui/start", replacement: source("start/index.ts") },
         { find: "@virentia/ui/react", replacement: source("lib/react-server.ts") },
         { find: "@virentia/ui/vue", replacement: source("lib/vue-server.ts") },
@@ -65,7 +67,7 @@ describe("start Vite convention", () => {
     }
   }, 20_000);
 
-  it("awaits mixed native, React and Vue SSR using the same request state", async () => {
+  it("isolates root-created model graphs in simultaneous SSR requests", async () => {
     const server = await createTestServer(resolve(uiRoot, "examples/start-mixed"));
     try {
       const entry = (await server.ssrLoadModule("virtual:virentia-start/server")) as {
@@ -79,9 +81,9 @@ describe("start Vite convention", () => {
         [first, 3],
         [second, 7],
       ] as const) {
-        expect(page.html).toContain(`React: ${count}`);
-        expect(page.html).toContain(`Vue: ${count}`);
-        expect(page.html).toContain("Virentia:");
+        expect(page.html).toContain("First");
+        expect(page.html).toContain("Second");
+        expect(page.html).toContain(`<!--ui:t-->${count}`);
         expect(JSON.parse(page.payload).data).toEqual({ count });
         expect(Object.values(JSON.parse(page.payload).snapshot)).toContain(count);
       }

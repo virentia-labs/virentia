@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { scope, scoped, store, reactive, serialize } from "@virentia/core";
 import { withSidScope } from "@virentia/core/internal";
-import compiler, { type CompilerOptions } from "../compiler/index";
+import compiler, { type CompilerOptions } from "@virentia/core/compiler";
 
 const babel = createRequire(import.meta.url)("@babel/core");
 

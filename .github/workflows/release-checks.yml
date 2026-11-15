@@ -1,0 +1,112 @@
+name: Release branch checks
+
+on:
+  push:
+    branches:
+      - release/static-model-*
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ecosystem:
+    name: All packages and EN/RU documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RAYON_NUM_THREADS: 2
+
+    steps:
+      - name: Checkout Core and UI
+        uses: actions/checkout@v4
+        with:
+          path: virentia
+          persist-credentials: false
+
+      - name: Checkout Forms
+        uses: actions/checkout@v4
+        with:
+          repository: virentia-labs/forms
+          ref: ${{ github.ref_name }}
+          path: forms
+          persist-credentials: false
+
+      - name: Checkout Storage
+        uses: actions/checkout@v4
+        with:
+          repository: virentia-labs/storage
+          ref: ${{ github.ref_name }}
+          path: storage
+          persist-credentials: false
+
+      - name: Checkout Net
+        uses: actions/checkout@v4
+        with:
+          repository: virentia-labs/net
+          ref: ${{ github.ref_name }}
+          path: net
+          persist-credentials: false
+
+      - name: Checkout Router
+        uses: actions/checkout@v4
+        with:
+          repository: virentia-labs/router
+          ref: ${{ github.ref_name }}
+          path: router
+          persist-credentials: false
+
+      - name: Checkout documentation
+        uses: actions/checkout@v4
+        with:
+          repository: virentia-labs/documentation
+          ref: ${{ github.ref_name }}
+          path: documentation
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.9
+          run_install: false
+          package_json_file: virentia/package.json
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            virentia/pnpm-lock.yaml
+            forms/pnpm-lock.yaml
+            storage/pnpm-lock.yaml
+            net/pnpm-lock.yaml
+            router/pnpm-lock.yaml
+            documentation/pnpm-lock.yaml
+
+      - name: Install pinned dependencies for every repository
+        run: |
+          for repository in virentia forms storage net router documentation; do
+            pnpm --dir "$repository" install --frozen-lockfile
+          done
+
+      - name: Build, runtime, type and interoperability checks for all 19 packages
+        working-directory: virentia
+        run: node scripts/check-ecosystem.mjs --phase all --out ../reports/ecosystem
+
+      - name: Check bundled public APIs and tree shaking
+        working-directory: virentia
+        run: node scripts/check-bundles.mjs --out ../reports/bundles
+
+      - name: Check EN/RU documentation and executable examples
+        working-directory: documentation
+        run: |
+          pnpm check:ui
+          pnpm check:packages
+
+      - name: Build documentation
+        working-directory: documentation
+        run: pnpm docs:build

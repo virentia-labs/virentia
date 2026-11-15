@@ -131,15 +131,8 @@ describe("effect bridging", () => {
     expect(ran).toEqual([10, 20]);
   });
 
-  // SUSPECTED BUG (high): two bridged-effect launches on the SAME fooled virentia
-  // effect in DIFFERENT effector scopes, started concurrently, should each run against
-  // their own paired scope. They do not: while scope-1's callAssociation holds v1 as the
-  // ambient virentia scope, scope-2's bridge scope-node resolves and trips the cross-scope
-  // contamination guard, so the second launch deterministically FAILS. The scopeQueue
-  // FIFO pairing does not isolate concurrent cross-scope launches. `it.fails` pins this:
-  // it will start failing (alerting maintainers) once the bug is fixed.
-  it.fails(
-    "[BUG] concurrent cross-scope bridged effect launches do not both succeed",
+  it(
+    "keeps concurrent cross-scope bridged effect launches independent",
     async () => {
       const ran: number[] = [];
       const under = effect(async (p: number): Promise<number> => {
@@ -153,7 +146,7 @@ describe("effect bridging", () => {
       const r2 = effectorAllSettled(fx as any, { scope: e2, params: 20 });
       const [s1, s2] = (await Promise.all([r1, r2])) as Array<{ status: string }>;
       expect(s1.status).toBe("done");
-      expect(s2.status).toBe("done"); // currently "fail" -> this assertion throws (bug present)
+      expect(s2.status).toBe("done");
       expect(ran.sort((a, b) => a - b)).toEqual([10, 20]);
     },
   );

@@ -1,40 +1,108 @@
-import { trackNode } from "../graph/deps";
-import { owner, withOwner } from "../graph/owner";
-import { setInspectorScopeAlias } from "../kernel/inspector";
+import { dynamicInstantiation, dynamicInitialization } from "./dynamic-runtime";
+export { isModelQuery, queryReactivity, subscribeInstance } from "./protocol";
+import { trackNode, isTracking } from "../graph/deps";
+import { owner, withOwner, withoutOwner, type Owner } from "../graph/owner";
+import { setInspectorScopeAlias, isInspectorEnabled, devDiagnostics } from "../kernel/inspector";
+import { activeTransactionDepth, beginUpdateEpoch, withTransaction } from "../kernel/transaction";
 import { requireActiveScope, runScopeTask } from "../scope/internal";
 import { unwrapMicroScope } from "../scope/micro";
 import type { Scope } from "../scope/types";
-import { seedScopeStoreValue, store } from "../units/store";
+import {
+  seedScopeStoreValue,
+  seedModelStoreValue,
+  snapshotStoreOf,
+  updateScopeStoreValue,
+  nativeStoreStateOf,
+  type NativeStoreState,
+  store,
+} from "../units/store";
 import type { StoreWritable } from "../units/store";
 import { Value } from "@sinclair/typebox/value";
+import { Kind, type TSchema } from "@sinclair/typebox";
+import { TypeSystemPolicy } from "@sinclair/typebox/system";
 import {
   createInstanceFacade,
   createInstanceScope,
   generateId,
   instanceInternalOf,
   instanceOfScope,
-  instantiateDynamic,
-  registerScopeInstance,
+  modelRuntimeOf,
+  readRelationStore,
   relationStoreFor,
   runInInstanceContext,
   runInstanceDisposers,
   setBroadcastResolver,
+  taskOwnerOf,
+  beforeDisposeInstance,
+  addDisposalParticipant,
+  removeDisposalParticipant,
+  adoptInstanceChild,
+  getInstanceData,
+  setInstanceData,
+  deleteInstanceData,
+  disposeInstanceForBinding,
+  instanceFacadePlanOf,
 } from "./definition";
 import type {
   DescriptorPredicate,
   DescriptorSort,
+  FieldRuntime,
   InstanceInternal,
   ModelDefinition,
+  InstanceFacadePlan,
+  RelationRuntime,
 } from "./definition";
+import { bulkRemoval } from "./bulk-removal";
 import { fieldIn } from "./fields";
 import { isUnionTargetLike, resolveInverseOwning, resolveRelationTarget } from "./relations";
 import type { RelationDef, UnionTargetLike } from "./relations";
 import type { AnyModel, AnyUnionTyped, TypedCollection, TypedUnionCollection } from "./types";
+import { sequenceBinding, type SequenceBinding, type SequenceOperation } from "../sequence";
+import {
+  modelDefaultCreator,
+  modelViewSnapshotOf,
+  type ModelBindingData,
+  type ModelDisposalTrace,
+  type ModelDisposalParticipant,
+} from "./bindings";
+import { reaction } from "../graph/reaction";
+import { withUnitDeclarationTracker } from "../graph/declaration";
+import { queueLater, whenScopeIdle } from "../scope/tasks";
+import { readRegistry, registryStore, type RegistryStore } from "./registry";
+import {
+  registerModelSnapshotScope,
+  releaseModelSnapshotScope,
+  registerModelSnapshotIdentity,
+  releaseModelSnapshotIdentity,
+  restoredModelIdentity,
+  withSidScope,
+  releaseModelSnapshotNamespace,
+  forgetPooledModelScope,
+  withStoreDeclarationTracker,
+  releaseStoreDeclaration,
+  deferModelSnapshots,
+  deferModelNamespace,
+  hasPendingSnapshot,
+  flushModelSnapshots,
+  type SnapshotStore,
+  type ModelScopeBinding,
+  type DeferredModelNamespace,
+} from "../scope/snapshot";
+import { retainShapes } from "../kernel/shapes";
+import { disposeScopeEdges } from "../kernel/scoped-edges";
 
-// §6: the collection is get-or-create per (scope, definition), the only creation
-// surface and the owner of instances. It is also an unfiltered Query (§8).
+// A model owns one registry store. Its value (instances, indexes and query
+// caches) is local to the application scope; no parallel per-scope map exists.
+const registries = new WeakMap<ModelDefinition, RegistryStore<Collection>>();
 
-const collectionsByScope = new WeakMap<Scope, Map<ModelDefinition, Collection>>();
+function registryOf(definition: ModelDefinition): RegistryStore<Collection> {
+  let registry = registries.get(definition);
+  if (!registry) {
+    registry = registryStore<Collection>();
+    registries.set(definition, registry);
+  }
+  return registry;
+}
 
 // Collections are never homed on an instance scope (§3.4): normalize up to the
 // nearest application scope through the instance's parent chain.
@@ -58,13 +126,14 @@ const detachedRoot = owner((_dispose, ownerRef) => ({ ownerRef })).ownerRef;
 // §3.4: the broadcast router asks for the live instances of a definition in a
 // normalized scope; the registry lives here, so it is injected into definition.ts.
 setBroadcastResolver((definition, scope) => {
-  const home = collectionsByScope.get(scope)?.get(definition);
+  const registry = registries.get(definition);
+  const home = registry && readRegistry(registry, scope);
 
-  if (!home) return [];
+  if (!home || home.scope !== scope) return [];
 
   const state = (home as unknown as { "~state": CollectionState })["~state"];
 
-  return [...state.instances.values()];
+  return [...state.rows.values()];
 });
 
 export interface AddOptions {
@@ -78,13 +147,14 @@ export interface Collection<Instance extends object = object> extends Query<Inst
   add(input: Record<string, unknown>, options?: AddOptions): Instance;
   add(input: readonly Record<string, unknown>[], options?: AddOptions): Instance[];
   get(id: string): Instance | null;
-  remove(id: string): void;
+  remove(id?: string): void | Promise<void>;
   where(predicate: DescriptorPredicate | ((instance: Instance) => boolean)): Query<Instance>;
   sort(by: DescriptorSort): Query<Instance>;
   take(count: number): Query<Instance>;
 }
 
 export interface Query<Instance extends object = object> extends Iterable<Instance> {
+  readonly [sequenceBinding]?: SequenceBinding<Instance>;
   /** binding seam (§10.1): marks query-shaped objects for useModel dispatch. */
   readonly "~query"?: true;
   /** binding seam: the scope the query's collection lives in. */
@@ -100,31 +170,76 @@ export interface Query<Instance extends object = object> extends Iterable<Instan
   take(count: number): Query<Instance>;
   select<T>(descriptor: { field: string }): T[];
   set(descriptor: { field: string }, value: unknown): void;
-  remove(id?: string): void;
+  remove(id?: string): void | Promise<void>;
   toArray(): Instance[];
 }
 
 export interface CollectionState {
-  definition: ModelDefinition;
+  model: ModelDefinition;
+  runtime: ModelDefinition;
+  facade?: InstanceFacadePlan;
+  snapshots: ReadonlyMap<string, SnapshotStore>;
+  /** The model SID or name; instances of an anonymous model have no snapshot identity. */
+  readonly type: string | undefined;
+  /**
+   * New instances skip snapshot registration until the root's first snapshot
+   * reader registers them all (`deferModelSnapshots`); undefined before the
+   * first instance decides.
+   */
+  snapshotDeferred: boolean | undefined;
+  /** The root's snapshot state while deferring. */
+  snapshot: object | undefined;
+  /**
+   * Deferred instances allocated but not yet in `instances` (a dynamic setup
+   * is running), in allocation order: a flush there must register them too.
+   */
+  allocating: InstanceInternal[] | undefined;
+  flushDeferredSnapshots(namespaces: DeferredModelNamespace[]): void;
   scope: Scope;
-  instances: Map<string, InstanceInternal>;
-  facades: Map<InstanceInternal, object>;
+  rows: Map<string, InstanceInternal>;
   /** oldId → newId, alive while the rebound instance is alive (§10.1). */
-  forwarding: Map<string, string>;
+  aliases: Map<string, string>;
   /** field → value → ids (eq hash indexes, §7.3). */
   indexes: Map<string, Map<unknown, Set<string>>>;
+  /**
+   * The eq indexes' buckets as a list, fixed at creation. An instance keeps its
+   * key in each at the same position (`InstanceInternal.indexKeys`), so a write
+   * moves it between buckets without a reverse lookup.
+   */
+  buckets: Map<unknown, Set<string>>[];
+  /** field → position in `buckets`. */
+  slots: Map<string, number>;
   /** field → ord index: id → key, sorted view rebuilt lazily on first query (§7.3). */
-  ordIndexes: Map<string, OrdIndex>;
-  order: string[];
+  ordered: Map<string, OrdIndex>;
+  /**
+   * Instances in insertion order (a rebind keeps the position). A removed one
+   * leaves an `undefined` hole that later compaction drops, so removing many
+   * instances stays linear.
+   */
+  order: (InstanceInternal | undefined)[];
+  /** Holes in `order`, and the index before which every slot is a hole. */
+  holes: number;
+  head: number;
+  next: number;
   /** relation → targetId → owner ids. Structural (§7.1): maintained eagerly. */
-  relationReverse: Map<string, Map<string, Set<string>>>;
+  reverse: Map<string, Map<string, Set<string>>>;
   /** membership/write epoch: reactive terminals read it, mutations bump it (§8). */
   version: StoreWritable<number>;
   /** interned query plans: shape → record with a single-slot (values, result) memo (§8). */
   plans: Map<string, PlanRecord>;
-  /** §3.5: recycled instance scopes (static kind) — Scope + Map reused, slot
-   * kept, generation bumped. Bounded, so churn-then-idle does not pin memory. */
-  freeScopes: { scope: Scope; slot: number; generation: number }[];
+  /** §3.5: recycled static slots and their scopes, if materialized. The slot
+   * stays, generation increases; bounded so churn-then-idle does not pin memory. */
+  pool: { scope: Scope | undefined; slot: number; generation: number }[];
+  /** What `validateAddInput` checks, resolved on first use. */
+  input: InputPlan | undefined;
+  /** Reservations include scopes waiting for unit tasks; the pool stays bounded
+   * before the recycling microtasks run, not only after they have drained. */
+  recycling: number;
+  changes: Set<CollectionListener>;
+  /** Changes held back while a bulk removal runs; delivered together after it. */
+  held?: CollectionChange[];
+  /** Native epoch state belongs to this already scope-local registry. */
+  readonly epoch: CollectionEpoch;
 }
 
 interface OrdIndex {
@@ -133,16 +248,39 @@ interface OrdIndex {
   sorted: { ids: string[]; keys: unknown[] } | null;
 }
 
+interface CollectionChange {
+  kind: "insert" | "remove" | "update";
+  row: InstanceInternal;
+  /** A rebind can resolve previously missing IDs; field writes cannot. */
+  oldId?: string;
+}
+
+type CollectionListener = ((change: CollectionChange) => void) & {
+  /** Optional: one bulk operation's changes at once, in order. */
+  batch?: (changes: readonly CollectionChange[]) => void;
+};
+
+interface CollectionEpoch {
+  value: number;
+  exposed: boolean;
+  unit: StoreWritable<number>;
+}
+
 interface PlanRecord {
-  version: number;
+  epoch: number;
   values: unknown[] | null;
-  internals: InstanceInternal[];
+  rows: InstanceInternal[];
   ids: string[];
   items: object[] | null;
 }
 
 // Every collection of a scope, for delete policies and rebind fk rewriting.
-const statesByScope = new WeakMap<Scope, Set<CollectionState>>();
+const registryStates = registryStore<{ scope: Scope; states: Set<CollectionState> }>();
+
+function statesOfScope(scope: Scope): Set<CollectionState> | undefined {
+  const registry = readRegistry(registryStates, scope);
+  return registry?.scope === scope ? registry.states : undefined;
+}
 // Models targeted by a `children` relation: creation goes through the parent (§5.1).
 const ownedModels = new WeakSet<ModelDefinition>();
 let creatingViaParent = 0;
@@ -167,11 +305,9 @@ export function collection<M extends AnyModel>(
 export function collection(definition: ModelDefinition, explicitScope?: Scope): Collection;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function collection(definition: ModelDefinition, explicitScope?: Scope): any {
-  const scope = normalizeHomeScope(
-    explicitScope ?? requireActiveScope(() => "create collection(Model)"),
-  );
+  const scope = normalizeHomeScope(explicitScope ?? requireActiveScope(modelScopeDescription));
 
-  if ((definition as { "~union"?: unknown })["~union"] === true) {
+  if ((modelRuntimeOf(definition) as { "~union"?: unknown })["~union"] === true) {
     if (!unionCollectionFactory) {
       throw new Error("[models] union support is not initialized — import from @virentia/core/models");
     }
@@ -179,110 +315,109 @@ export function collection(definition: ModelDefinition, explicitScope?: Scope): 
     return unionCollectionFactory(definition, scope);
   }
 
-  let byModel = collectionsByScope.get(scope);
+  return modelCollectionInScope(definition, scope);
+}
 
-  if (!byModel) {
-    byModel = new Map();
-    collectionsByScope.set(scope, byModel);
-  }
+const modelScopeDescription = () => "access model instances";
+/** Native definitions already know they are not a union. */
+export function modelCollection(definition: ModelDefinition, explicitScope?: Scope): Collection {
+  return modelCollectionInScope(
+    definition,
+    normalizeHomeScope(explicitScope ?? requireActiveScope(modelScopeDescription)),
+  );
+}
 
-  const existing = byModel.get(definition);
+function modelCollectionInScope(definition: ModelDefinition, scope: Scope): Collection {
+  const registry = registryOf(definition);
+  const existing = readRegistry(registry, scope);
 
-  if (existing) return existing;
+  if (existing?.scope === scope) return existing;
 
   const created = createCollection(definition, scope);
 
-  byModel.set(definition, created);
-
-  // `Model.create(props)` is sugar over the active scope's collection (§3.1).
-  (definition as unknown as Record<string, unknown>)["~createInCollection"] = (
-    props: unknown,
-  ) => {
-    const active = normalizeHomeScope(requireActiveScope(() => "Model.create(props)"));
-    const home = collectionsByScope.get(active)?.get(definition);
-
-    if (!home) {
-      throw new Error("[models] no collection for this model in the active scope — call collection(Model) first");
-    }
-
-    return (home as Collection).add(props as Record<string, unknown>);
-  };
+  seedScopeStoreValue(scope, registry.unit, created);
 
   return created;
 }
 
 function createCollection(definition: ModelDefinition, scope: Scope): Collection {
-  const state: CollectionState = {
-    definition,
-    scope,
-    instances: new Map(),
-    facades: new Map(),
-    forwarding: new Map(),
-    indexes: new Map(),
-    ordIndexes: new Map(),
-    order: [],
-    relationReverse: new Map(),
-    version: store<number>(0),
-    plans: new Map(),
-    freeScopes: [],
+  const epoch: CollectionEpoch = {
+    value: 0,
+    exposed: false,
+    unit: withUnitDeclarationTracker(null, () =>
+      withStoreDeclarationTracker(
+        () => {},
+        () => store<number>(0),
+      ),
+    ),
   };
+  const state = {
+    model: definition,
+    runtime: modelRuntimeOf(definition),
+    facade: instanceFacadePlanOf(modelRuntimeOf(definition)),
+    snapshots: snapshotFieldsOf(modelRuntimeOf(definition)),
+    type: snapshotType(modelRuntimeOf(definition)),
+    snapshotDeferred: undefined,
+    snapshot: undefined,
+    allocating: undefined,
+    flushDeferredSnapshots: flushDeferredInstanceSnapshots,
+    scope,
+    rows: new Map(),
+    aliases: new Map(),
+    indexes: new Map(),
+    buckets: [],
+    slots: new Map(),
+    ordered: new Map(),
+    order: [],
+    holes: 0,
+    head: 0,
+    next: 0,
+    reverse: new Map(),
+    plans: new Map(),
+    pool: [],
+    input: undefined,
+    recycling: 0,
+    changes: new Set(),
+    epoch,
+  } as unknown as CollectionState;
+  // An accessor in an object literal puts V8's entire registry into dictionary
+  // mode. Install one shared descriptor after its data fields instead: every
+  // instance reads this registry, not just queries that expose the epoch.
+  Object.defineProperty(state, "version", collectionVersionDescriptor());
 
   for (const name of definition.relations.keys()) {
-    state.relationReverse.set(name, new Map());
+    state.reverse.set(name, new Map());
   }
 
-  let scopeStates = statesByScope.get(scope);
+  let scopeStates = statesOfScope(scope);
 
   if (!scopeStates) {
     scopeStates = new Set();
-    statesByScope.set(scope, scopeStates);
+    seedScopeStoreValue(scope, registryStates.unit, { scope, states: scopeStates });
   }
 
   scopeStates.add(state);
 
   for (const [name, runtime] of definition.fields) {
-    if (runtime.def.indexed === "eq") state.indexes.set(name, new Map());
-    if (runtime.def.indexed === "ord") state.ordIndexes.set(name, { byId: new Map(), sorted: null });
+    if (runtime.def.indexed === "eq") {
+      const buckets = new Map<unknown, Set<string>>();
+      state.indexes.set(name, buckets);
+      state.slots.set(name, state.buckets.length);
+      state.buckets.push(buckets);
+    }
+    if (runtime.def.indexed === "ord")
+      state.ordered.set(name, { byId: new Map(), sorted: null });
   }
 
-  // §7.2: one subscription per FIELD maintains indexes and the query epoch for
-  // the whole collection — the kernel's (value, scope) callback names the
-  // instance. Relations subscribe too: their writes reshape query results.
-  if (definition.kind === "static") {
-    const subscribeStatic = (name: string, staticStore: StoreWritable<unknown>): void => {
-      withOwner(detachedRoot, () =>
-        staticStore.subscribe((value, writeScope) => {
-          const internal = instanceOfScope(writeScope);
-
-          if (internal && state.instances.get(internal.id) === internal) {
-            updateIndexes(state, name, internal.id, value);
-            bumpVersion(state);
-          }
-        }),
-      );
-    };
-
-    for (const [name, runtime] of definition.fields) {
-      subscribeStatic(name, runtime.staticStore as StoreWritable<unknown>);
-    }
-
-    for (const [name, runtime] of definition.relations) {
-      subscribeStatic(name, runtime.staticStore as StoreWritable<unknown>);
-    }
-  }
+  if (definition.kind === "static") subscribeStaticDefinition(definition);
 
   const facadeOf = (internal: InstanceInternal): object => {
-    let facade = state.facades.get(internal);
-
-    if (!facade) {
-      facade = createInstanceFacade(internal);
-      state.facades.set(internal, facade);
-    }
-
-    return facade;
+    return (internal.facade ??= createInstanceFacade(internal));
   };
 
-  const self: Collection = Object.assign(createQuery(state, facadeOf, []), {
+  const query = createQuery(state, facadeOf, []);
+  const removeAll = query.remove;
+  const self: Collection = Object.assign(query, {
     "~collection": true as const,
     "~state": state,
     model: definition,
@@ -296,23 +431,35 @@ function createCollection(definition: ModelDefinition, scope: Scope): Collection
         for (const entry of input) validateAddInput(state, entry, options);
 
         const created: object[] = [];
+        // One batch is one change for listeners: a query appends its new rows
+        // at once instead of one operation per instance.
+        const holding = state.changes.size > 0 && !state.held;
+        if (holding) state.held = [];
 
         try {
-          return input.map((entry) => {
+          // Built by push: a preallocated array is holey, and code iterating the
+          // returned facades (a removal over them, a map) slows down on it.
+          const facades: object[] = [];
+          for (let index = 0; index < input.length; index++) {
+            const entry = input[index];
             const suppliedId = typeof entry.id === "string" ? entry.id : undefined;
-            const isCreation = suppliedId === undefined || !state.instances.has(suppliedId);
-            const facade = addOne(state, facadeOf, entry, options);
+            const existing =
+              suppliedId === undefined ? undefined : (state.rows.get(suppliedId) ?? null);
+            const facade = addOne(state, facadeOf, entry, options, false, existing);
 
-            if (isCreation) created.push(facade);
+            if (!existing) created.push(facade);
 
-            return facade;
-          });
+            facades.push(facade);
+          }
+          return facades;
         } catch (error) {
           for (const facade of created) {
             (facade as { dispose(): void }).dispose();
           }
 
           throw error;
+        } finally {
+          if (holding) deliverHeldChanges(state);
         }
       }
 
@@ -327,25 +474,109 @@ function createCollection(definition: ModelDefinition, scope: Scope): Collection
       // rebind), returning null instead of throwing mid-read.
       readVersion(state);
 
-      const direct = state.instances.get(id);
+      const direct = state.rows.get(id);
 
       if (direct) return facadeOf(direct);
 
       // Forwarding is a fallback only — a direct id match always wins (§10.1).
-      const forwarded = state.forwarding.get(id);
-      const viaForwarding = forwarded ? state.instances.get(forwarded) : undefined;
+      const forwarded = state.aliases.get(id);
+      const viaForwarding = forwarded ? state.rows.get(forwarded) : undefined;
 
       return viaForwarding ? facadeOf(viaForwarding) : null;
     },
 
-    remove(id: string) {
-      const internal = state.instances.get(id);
+    remove(id?: string) {
+      if (id === undefined) return removeAll();
+      const internal = state.rows.get(id);
 
-      if (internal) disposeInstance(state, internal);
+      if (internal) return disposeInstance(state, internal);
     },
   }) as Collection;
 
+  Object.defineProperty(self, modelDefaultCreator, {
+    value(id: string, identityInput?: { id: string }) {
+      const definition = state.runtime;
+      if (
+        definition.kind !== "static" ||
+        definition["~singletonOf"] ||
+        state.indexes.size ||
+        state.ordered.size
+      )
+        return;
+      const input = identityInput ?? { id };
+      const fields = creationFieldsOf(definition),
+        seeds = fieldSeedsOf(definition);
+      for (let index = 0; index < fields.length; index++) {
+        const field = fields[index];
+        if (field.inputKey !== null && (field.inputKey in input || !field.def.defaultValue)) return;
+        if (!Object.is(field.def.defaultValue?.value, seeds[index].initial)) return;
+      }
+      return addOne(state, facadeOf, input, undefined, true);
+    },
+  });
   return self;
+}
+
+let collectionVersionProperty: PropertyDescriptor | undefined;
+// The initializer has no collection argument/frame: its cached accessors must
+// never retain the first application scope that asks for a registry.
+function collectionVersionDescriptor(): PropertyDescriptor {
+  return (collectionVersionProperty ??= {
+    configurable: true,
+    enumerable: true,
+    get(this: CollectionState) {
+      return exposeVersion(this, this.epoch);
+    },
+    set(this: CollectionState, unit: StoreWritable<number>) {
+      this.epoch.unit = unit;
+      this.epoch.exposed = true;
+    },
+  });
+}
+
+const subscribedStaticDefinitions = new WeakSet<ModelDefinition>();
+/** Route a shared unit to its own registry without visiting unrelated scopes. */
+function subscribeStaticDefinition(definition: ModelDefinition): void {
+  if (subscribedStaticDefinitions.has(definition)) return;
+  const subscriptions: (() => void)[] = [];
+  const subscribe = (name: string, unit: StoreWritable<unknown>): void => {
+    // Never capture a collection/application here: the shared definition must
+    // not keep abandoned application scopes alive. Values stay per-scope.
+    subscriptions.push(
+      runScopeTask(null, () =>
+        withoutOwner(() =>
+          unit.subscribe((value, writeScope) => {
+            let internal: InstanceInternal | undefined;
+            let current: CollectionState | undefined;
+            if (definition["~singletonOf"]) {
+              const home = unwrapMicroScope(writeScope);
+              const instances = readRegistry(registryOf(definition), home);
+              if (instances?.scope !== home) return;
+              current = stateOfCollection(instances);
+              internal = current.rows.values().next().value;
+            } else {
+              internal = instanceOfScope(writeScope);
+              current = internal?.registry;
+              if (current?.model !== definition) return;
+            }
+            if (internal?.listed) {
+              updateIndexes(current, name, internal, value);
+              bumpVersion(current);
+              emitCollectionChange(current, "update", internal);
+            }
+          }),
+        ),
+      ),
+    );
+  };
+  try {
+    for (const [name, runtime] of definition.fields) subscribe(name, runtime.staticStore!);
+    for (const [name, runtime] of definition.relations) subscribe(name, runtime.staticStore!);
+    subscribedStaticDefinitions.add(definition);
+  } catch (error) {
+    for (const unsubscribe of subscriptions) unsubscribe();
+    throw error;
+  }
 }
 
 // Value-typed keys (Date) normalize to a primitive so eq/index buckets work.
@@ -358,32 +589,102 @@ export function ordKeyOf(value: unknown): unknown {
 }
 
 function bumpVersion(state: CollectionState): void {
-  runScopeTask(state.scope, () => {
-    state.version.value = state.version.value + 1;
-  });
+  const epoch = state.epoch;
+  // The epoch is still authoritative for imperative/LINQ reads. Until a unit
+  // escapes or is tracked, publishing an unobserved bookkeeping store adds no
+  // information. Transactions and inspection always use the full native path.
+  if (!epoch.exposed && !activeTransactionDepth() && !isInspectorEnabled()) {
+    epoch.value++;
+    beginUpdateEpoch();
+    return;
+  }
+  updateScopeStoreValue(state.scope, exposeVersion(state, epoch), incrementVersion);
+}
+function exposeVersion(state: CollectionState, epoch: CollectionEpoch): StoreWritable<number> {
+  if (!epoch.exposed) {
+    seedScopeStoreValue(state.scope, epoch.unit, epoch.value);
+    epoch.exposed = true;
+  }
+  return epoch.unit;
+}
+function incrementVersion(value: number): number {
+  return value + 1;
+}
+
+function emitCollectionChange(
+  state: CollectionState,
+  kind: "insert" | "remove" | "update",
+  internal: InstanceInternal,
+): void {
+  if (!state.changes.size) return;
+  if (state.held) {
+    state.held.push({ kind, row: internal });
+    return;
+  }
+  for (const listener of [...state.changes]) listener({ kind, row: internal });
+}
+
+/** Run a bulk operation; its synchronous changes reach listeners together afterwards. */
+function holdCollectionChanges<T>(state: CollectionState, run: () => T): T {
+  if (state.held) return run();
+  state.held = [];
+  try {
+    return run();
+  } finally {
+    deliverHeldChanges(state);
+  }
+}
+/** Ends holding `state`'s changes: listeners receive what was held, together. */
+function deliverHeldChanges(state: CollectionState): void {
+  const changes = state.held!;
+  state.held = undefined;
+  if (changes.length)
+    for (const listener of [...state.changes]) {
+      if (!state.changes.has(listener)) continue;
+      if (listener.batch) listener.batch(changes);
+      else for (const change of changes) listener(change);
+    }
+}
+
+/** Identity metadata is needed only on rebind, not on the field-write hot path. */
+function emitRebindChange(
+  state: CollectionState,
+  internal: InstanceInternal,
+  previousId: string,
+): void {
+  if (!state.changes.size) return;
+  for (const listener of [...state.changes]) listener({ kind: "update", row: internal, oldId: previousId });
 }
 
 // Reactive epoch read: track in the CALLER's collector/micro-scope, read in the
 // collection's scope — the same split as field facades (§8).
 function readVersion(state: CollectionState): number {
-  trackNode((state.version as unknown as { node: never }).node);
+  const epoch = state.epoch;
+  if (!epoch.exposed && !isTracking()) return epoch.value;
+  const unit = exposeVersion(state, epoch);
+  trackNode(unit.node);
 
-  return runScopeTask(state.scope, () => state.version.value);
+  return runScopeTask(state.scope, () => unit.value);
 }
 
-function updateIndexes(state: CollectionState, field: string, id: string, value: unknown): void {
-  moveInIndex(state, field, id, value);
+function updateIndexes(
+  state: CollectionState,
+  field: string,
+  internal: InstanceInternal,
+  value: unknown,
+): void {
+  moveInIndex(state, field, internal, value);
 
-  const ord = state.ordIndexes.get(field);
+  const ord = state.ordered.get(field);
 
   if (ord) {
-    ord.byId.set(id, ordKeyOf(value));
+    ord.byId.set(internal.id, ordKeyOf(value));
     ord.sorted = null;
   }
 }
 
 function ordSorted(state: CollectionState, field: string): { ids: string[]; keys: unknown[] } {
-  const ord = state.ordIndexes.get(field)!;
+  const ord = state.ordered.get(field)!;
 
   if (!ord.sorted) {
     // §7.3: rebuilt lazily on the first query after a change — a thousand
@@ -441,14 +742,41 @@ function ordRange(state: CollectionState, predicate: DescriptorPredicate): strin
 
 const RANGE_OPS = new Set(["gt", "gte", "lt", "lte", "between"]);
 
-function moveInIndex(state: CollectionState, field: string, id: string, next: unknown): void {
-  const index = state.indexes.get(field);
+/** An instance's key in an eq index it has not entered yet. */
+const unindexed: unknown = Symbol("unindexed");
 
-  if (!index) return;
+function unindexedKeys(count: number): unknown[] {
+  const keys: unknown[] = [];
+  for (let position = 0; position < count; position++) keys.push(unindexed);
+  return keys;
+}
 
-  for (const bucket of index.values()) bucket.delete(id);
+function moveInIndex(
+  state: CollectionState,
+  field: string,
+  internal: InstanceInternal,
+  next: unknown,
+): void {
+  const position = state.slots.get(field);
 
+  if (position === undefined) return;
+  const index = state.buckets[position];
   const key = indexKeyOf(next);
+  let keys = internal.indexKeys;
+  if (!keys) keys = internal.indexKeys = unindexedKeys(state.buckets.length);
+  const previous = keys[position];
+  if (previous !== unindexed) {
+    // Map uses SameValueZero: both signed zeros and NaN name one bucket.
+    if (previous === key || Object.is(previous, key)) return;
+    // Buckets hold ids. No two live instances share one, so the old bucket
+    // holds this id; the check only guards against a stale key.
+    const old = index.get(previous);
+    if (old) {
+      old.delete(internal.id);
+      if (!old.size) index.delete(previous);
+    }
+  }
+  keys[position] = key;
   let bucket = index.get(key);
 
   if (!bucket) {
@@ -456,17 +784,29 @@ function moveInIndex(state: CollectionState, field: string, id: string, next: un
     index.set(key, bucket);
   }
 
-  bucket.add(id);
+  bucket.add(internal.id);
 }
 
-function dropFromIndexes(state: CollectionState, id: string): void {
-  for (const index of state.indexes.values()) {
-    for (const bucket of index.values()) bucket.delete(id);
+function dropFromIndexes(state: CollectionState, internal: InstanceInternal): void {
+  const keys = internal.indexKeys;
+  if (keys) {
+    internal.indexKeys = undefined;
+    const list = state.buckets;
+    for (let position = 0; position < keys.length; position++) {
+      const key = keys[position];
+      if (key === unindexed) continue;
+      const buckets = list[position];
+      const bucket = buckets.get(key);
+      if (!bucket) continue; // see moveInIndex
+      bucket.delete(internal.id);
+      if (!bucket.size) buckets.delete(key);
+    }
   }
 
-  for (const ord of state.ordIndexes.values()) {
-    if (ord.byId.delete(id)) ord.sorted = null;
-  }
+  if (state.ordered.size)
+    for (const ord of state.ordered.values()) {
+      if (ord.byId.delete(internal.id)) ord.sorted = null;
+    }
 }
 
 // §3.1: add is an upsert by id. Present keys are authoritative, absent keys
@@ -477,23 +817,30 @@ function addOne(
   facadeOf: (internal: InstanceInternal) => object,
   input: Record<string, unknown>,
   options?: AddOptions,
+  defaults = false,
+  // What a batch already found under the input's string id: null for none.
+  found?: InstanceInternal | null,
 ): object {
-  const { definition } = state;
-  const suppliedId = typeof input.id === "string" ? input.id : undefined;
-  const existing = suppliedId ? state.instances.get(suppliedId) : undefined;
-
-  if (!existing && creatingViaParent === 0 && ownedModels.has(definition)) {
-    throw new Error(
-      `[models] ${definition.name ?? "this model"} is owned as children — create it through the parent's relation (.add / .create), not directly (§5.1)`,
-    );
+  const definition = state.runtime;
+  const suppliedId =
+    typeof input.id === "string" ? input.id : definition.idFromProps?.call(state.model, input);
+  if (suppliedId === "") throw emptyIdError("add()");
+  const existing =
+    found !== undefined ? (found ?? undefined) : suppliedId ? state.rows.get(suppliedId) : undefined;
+  if (!existing && definition["~singletonOf"] && state.rows.size) {
+    throw new Error("[models] A static singleton can have only one instance per scope");
   }
 
-  if (suppliedId && state.forwarding.has(suppliedId)) {
+  if (!existing && creatingViaParent === 0 && ownedModels.has(state.model)) {
+    throw new Error(`[models] ${definition.name ?? "this model"} is owned as children — create it through the parent's relation (.add / .create), not directly (§5.1)`);
+  }
+
+  if (suppliedId && state.aliases.has(suppliedId)) {
     // add never consults forwarding — it matches real ids; an input reclaiming a
     // live forwarding key drops that entry with a warning (§10.1).
     // eslint-disable-next-line no-console
     console.warn(`[models] add(): id "${suppliedId}" was a forwarding alias; the alias is dropped`);
-    state.forwarding.delete(suppliedId);
+    state.aliases.delete(suppliedId);
   }
 
   if (existing) {
@@ -502,27 +849,41 @@ function addOne(
     return facadeOf(existing);
   }
 
-  return facadeOf(createOne(state, input, suppliedId));
+  return facadeOf(createOne(state, input, suppliedId, defaults));
 }
 
+const noMissingKeys: readonly string[] = [];
 function missingRequiredKeys(
   state: CollectionState,
   input: Record<string, unknown>,
   forCreate: boolean,
-): string[] {
-  const missing: string[] = [];
+): readonly string[] {
+  if (!forCreate) return noMissingKeys;
+  let missing: string[] | undefined;
 
-  for (const [name, runtime] of state.definition.fields) {
-    const key = boundKeyOf(name, runtime.def);
-
-    if (key === null) continue;
-
-    if (!(key in input) && !runtime.def.defaultValue && forCreate) {
-      missing.push(key);
+  for (const runtime of requiredCreationFieldsOf(state.runtime)) {
+    const key = runtime.inputKey!;
+    if (!(key in input)) {
+      (missing ??= []).push(key);
     }
   }
 
-  return missing;
+  return missing ?? noMissingKeys;
+}
+
+interface InputPlan {
+  /** Input keys a creation requires. */
+  readonly required: readonly string[];
+  /** Bound fields whose present input value is checked against their schema. */
+  readonly checked: readonly CreationField[];
+}
+function inputPlanOf(definition: ModelDefinition): InputPlan {
+  return {
+    required: requiredCreationFieldsOf(definition).map((runtime) => runtime.inputKey!),
+    checked: creationFieldsOf(definition).filter(
+      (runtime) => runtime.inputKey !== null && !runtime.def.binding.in,
+    ),
+  };
 }
 
 export function validateAddInput(
@@ -531,28 +892,37 @@ export function validateAddInput(
   options?: AddOptions,
 ): void {
   const suppliedId = typeof input.id === "string" ? input.id : undefined;
-  const exists = suppliedId !== undefined && state.instances.has(suppliedId);
-  const missing = missingRequiredKeys(state, input, !exists || Boolean(options?.replace));
+  if (suppliedId === "") throw emptyIdError("add()");
+  const plan = (state.input ??= inputPlanOf(state.runtime));
+  const required = plan.required;
+  for (let index = 0; index < required.length; index++) {
+    if (required[index] in input) continue;
+    const exists = suppliedId !== undefined && state.rows.has(suppliedId);
+    const missing = missingRequiredKeys(state, input, !exists || Boolean(options?.replace));
 
-  if (missing.length > 0) {
-    throw new Error(
-      `[models] add(): ${exists ? "replacing" : "creating"} ${state.definition.name ?? "model"} requires missing keys: ${missing.join(", ")}`,
-    );
+    if (missing.length > 0) {
+      throw new Error(`[models] add(): ${exists ? "replacing" : "creating"} ${state.model.name ?? "model"} requires missing keys: ${missing.join(", ")}`);
+    }
+    break;
   }
 
-  validateInputSchemas(state, input);
+  validateInputSchemas(state, input, plan.checked);
 }
 
 // §4.8: the wire input is checked against the TypeBox schema of each present
 // bound key — the schema describes the STRUCTURAL wire space. A user `.map`
 // takes over the whole conversion, wire shape included, so validation is the
 // user's too — their key is skipped.
-function validateInputSchemas(state: CollectionState, input: Record<string, unknown>): void {
-  for (const [name, runtime] of state.definition.fields) {
-    const key = boundKeyOf(name, runtime.def);
+function validateInputSchemas(
+  state: CollectionState,
+  input: Record<string, unknown>,
+  checked: readonly CreationField[],
+): void {
+  for (let index = 0; index < checked.length; index++) {
+    const runtime = checked[index];
+    const key = runtime.inputKey!;
 
-    if (key === null || !(key in input)) continue;
-    if (runtime.def.binding.in) continue;
+    if (!(key in input)) continue;
 
     const raw = input[key];
 
@@ -561,7 +931,9 @@ function validateInputSchemas(state: CollectionState, input: Record<string, unkn
     let ok = true;
 
     try {
-      ok = Value.Check(runtime.def.schema, raw);
+      ok = runtime.validate
+        ? runtime.validate(runtime.def.schema, raw)
+        : Value.Check(runtime.def.schema, raw);
     } catch {
       continue; // uninstantiated generic placeholders etc. — nothing to check
     }
@@ -569,9 +941,7 @@ function validateInputSchemas(state: CollectionState, input: Record<string, unkn
     if (!ok) {
       const [first] = [...Value.Errors(runtime.def.schema, raw)];
 
-      throw new Error(
-        `[models] add(): invalid "${key}" for ${state.definition.name ?? "model"}${first ? ` — ${first.message} at ${first.path || "value"}` : ""}`,
-      );
+      throw new Error(`[models] add(): invalid "${key}" for ${state.model.name ?? "model"}${first ? ` — ${first.message} at ${first.path || "value"}` : ""}`);
     }
   }
 }
@@ -586,263 +956,902 @@ function createOne(
   state: CollectionState,
   input: Record<string, unknown>,
   suppliedId: string | undefined,
+  defaults = false,
 ): InstanceInternal {
-  const { definition, scope } = state;
-  const missing: string[] = [];
-  const values = new Map<string, unknown>();
+  const definition = state.runtime;
+  let missing: string[] | undefined;
+  const fields = creationFieldsOf(definition);
+  // Sized up front: a light instance keeps this array as its field seed.
+  const values: unknown[] | undefined = defaults ? undefined : new Array(fields.length);
 
-  for (const [name, runtime] of definition.fields) {
-    const key = boundKeyOf(name, runtime.def);
+  if (!defaults)
+    for (let index = 0; index < fields.length; index++) {
+      const runtime = fields[index];
+      const key = runtime.inputKey;
 
-    if (key !== null && key in input) {
-      values.set(name, fieldIn(runtime.def, input[key]));
-    } else if (runtime.def.defaultValue) {
-      values.set(name, runtime.def.defaultValue.value);
-    } else if (key !== null) {
-      missing.push(key);
-    } else {
-      values.set(name, undefined);
+      if (key !== null && key in input) {
+        values![index] = fieldIn(runtime.def, input[key]);
+      } else if (runtime.def.defaultValue) {
+        values![index] = runtime.def.defaultValue.value;
+      } else if (key !== null) {
+        (missing ??= []).push(key);
+      } else {
+        values![index] = undefined;
+      }
     }
-  }
 
-  if (missing.length > 0) {
-    throw new Error(
-      `[models] add(): creating ${definition.name ?? "model"} requires missing keys: ${missing.join(", ")}`,
-    );
+  if (missing) {
+    throw new Error(`[models] add(): creating ${definition.name ?? "model"} requires missing keys: ${missing.join(", ")}`);
   }
 
   const internal = allocateInstance(state, suppliedId);
+  // The default constructor owns its identity-only input; public add() inputs
+  // still receive an independent snapshot.
+  internal.props = defaults ? input : { ...input };
 
-  if (definition.kind === "static") {
-    for (const [name, value] of values) {
-      const runtime = definition.fields.get(name)!;
-
-      seedScopeStoreValue(internal.scope!, runtime.staticStore!, value);
-      updateIndexes(state, name, internal.id, value);
-    }
-  } else {
-    const { stores, ownOwner, ownerRef } = instantiateDynamic(
-      definition,
-      scope,
-      values,
-      input,
-      internal,
-    );
-
-    internal.ownOwner = ownOwner;
-
-    for (const [name, value] of values) {
-      updateIndexes(state, name, internal.id, value);
-    }
-
-    // §7.2, dynamic branch: per-instance subscriptions keep indexes and the
-    // query epoch fresh; owned by the INSTANCE's owner, so dispose unsubscribes.
-    withOwner(ownerRef, () => {
-      const subscribeDynamic = (name: string): void => {
-        stores.get(name)!.subscribe((value, writeScope) => {
-          if (unwrapMicroScope(writeScope) === scope && internal.alive) {
-            updateIndexes(state, name, internal.id, value);
-            bumpVersion(state);
-          }
-        });
-      };
-
-      for (const name of definition.fields.keys()) subscribeDynamic(name);
-      for (const name of definition.relations.keys()) subscribeDynamic(name);
-    });
+  try {
+    initializeAllocatedInstance(state, internal, input, fields, values, defaults);
+    // One id names one live instance. The id was free at allocation; code a
+    // dynamic setup ran may have taken it since. A static instance runs none.
+    if (definition.kind !== "static" && state.rows.has(internal.id))
+      throw takenIdError(state, "add()", internal.id);
+  } catch (error) {
+    // Creation registered the instance at allocation and a failure left that
+    // registration behind: a deferred one is registered now, as it would be.
+    if (internal.snapshotDeferred) flushModelSnapshots(state.snapshot!);
+    settleAllocation(state, internal);
+    throw error;
   }
 
+  state.rows.set(internal.id, internal);
+  internal.listed = true;
+  state.order.push(internal);
+  settleAllocation(state, internal);
+
+  try {
+    if (definition.relations.size) applyRelationInput(state, internal, input, false);
+    if (definition.onCreate) initializeCreatedInstance(state, internal);
+    if (definition.kind === "dynamic") dynamicInitialization!(internal);
+  } catch (error) {
+    const report = (cleanupError: unknown) =>
+      console.error("[models] Failed to clean up a model after creation:", cleanupError);
+    try {
+      const pending = disposeInstance(state, internal);
+      if (pending) void pending.catch(report);
+    } catch (cleanupError) {
+      report(cleanupError);
+    }
+    throw error;
+  }
+  bumpVersion(state);
+  emitCollectionChange(state, "insert", internal);
+
+  return internal;
+}
+
+/** Seed a static instance's fields or run a dynamic setup, before listing it. */
+function initializeAllocatedInstance(
+  state: CollectionState,
+  internal: InstanceInternal,
+  input: Record<string, unknown>,
+  fields: readonly CreationField[],
+  values: unknown[] | undefined,
+  defaults: boolean,
+): void {
+  const definition = state.runtime;
+  const native = definition.kind === "static";
+  const singleton = Boolean(definition["~singletonOf"]);
+  if (native) {
+    const indexed = state.indexes.size > 0 || state.ordered.size > 0;
+    if (internal.fieldSeed === unseeded) {
+      // A light instance keeps its creation values until its scope exists.
+      const seed = (internal.fieldSeed =
+        values ?? fields.map((runtime) => runtime.def.defaultValue?.value));
+      if (indexed)
+        for (let index = 0; index < fields.length; index++) {
+          const name = fields[index].name;
+          if (state.indexes.has(name) || state.ordered.has(name))
+            updateIndexes(state, name, internal, seed[index]);
+        }
+    } else if (!defaults || internal.restoreSnapshot) {
+      const seeds = fieldSeedsOf(definition);
+      for (let index = 0; index < fields.length; index++) {
+        const runtime = fields[index],
+          name = runtime.name,
+          value = defaults ? runtime.def.defaultValue?.value : values![index];
+
+        if (!singleton) {
+          if (internal.restoreSnapshot)
+            seedModelStoreValue(internal.scope!, runtime.staticStore!, value);
+          else if (!Object.is(value, seeds[index].initial))
+            internal.scope!.values.set(seeds[index].id, value);
+        }
+        if (indexed && (state.indexes.has(name) || state.ordered.has(name)))
+          updateIndexes(
+            state,
+            name,
+            internal,
+            readInitialStaticField(internal, runtime.staticStore!),
+          );
+      }
+    }
+  } else initializeDynamicInstance(state, internal, input, fields, values!);
+
   // Fresh backing per instance — a shared [] default would alias across instances.
-  if (definition.kind === "static") {
+  if (native) {
     for (const [name, runtime] of definition.relations) {
-      seedScopeStoreValue(
-        internal.scope!,
+      seedModelStoreValue(
+        internal.scope ?? state.scope,
         runtime.staticStore!,
         runtime.def.cardinality === "many" ? [] : null,
       );
     }
   }
+}
 
-  state.instances.set(internal.id, internal);
-  state.order.push(internal.id);
+/** An allocated instance is listed or failed: it is no longer being created. */
+function settleAllocation(state: CollectionState, internal: InstanceInternal): void {
+  const allocating = state.allocating;
+  if (!allocating?.length) return;
+  const at = allocating.lastIndexOf(internal);
+  if (at >= 0) allocating.splice(at, 1);
+}
 
-  applyRelationInput(state, internal, input, false);
-  bumpVersion(state);
+// Keep optional initialization closures off the scalar static-model creation
+// frame. A plain instance needs neither a dynamic setup nor an onCreate scope.
+function readInitialStaticField(internal: InstanceInternal, unit: StoreWritable<unknown>): unknown {
+  return runInInstanceContext(internal, () => unit.value);
+}
 
-  return internal;
+function initializeDynamicInstance(
+  state: CollectionState,
+  internal: InstanceInternal,
+  input: Record<string, unknown>,
+  fields: readonly CreationField[],
+  values: unknown[],
+): void {
+  const { runtime: definition, scope } = state;
+  const prefix = internal.snapshotKey!;
+  const declarations = (internal.declarations =
+    [] as import("../scope/snapshot").StoreDeclaration[]);
+  const { stores, ownOwner, ownerRef } = withoutOwner(() =>
+    withSidScope(prefix, () =>
+      withStoreDeclarationTracker(
+        (declaration) => declarations.push(declaration),
+        () =>
+          withUnitDeclarationTracker(null, () =>
+            dynamicInstantiation!(
+              definition,
+              scope,
+              new Map(fields.map((field, index) => [field.name, values[index]])),
+              input,
+              internal,
+            ),
+          ),
+      ),
+    ),
+  );
+
+  internal.ownOwner = ownOwner;
+  internal.taskOwner = ownerRef;
+
+  for (const { name } of fields) {
+    if (state.indexes.has(name) || state.ordered.has(name))
+      updateIndexes(
+        state,
+        name,
+        internal,
+        runScopeTask(scope, () => stores.get(name)!.value),
+      );
+  }
+
+  // Dynamic subscriptions are owned by the instance, not its shared definition.
+  withOwner(ownerRef, () => {
+    const subscribeDynamic = (name: string): void => {
+      stores.get(name)!.subscribe((value, writeScope) => {
+        if (unwrapMicroScope(writeScope) === scope && internal.alive) {
+          updateIndexes(state, name, internal, value);
+          bumpVersion(state);
+          emitCollectionChange(state, "update", internal);
+        }
+      });
+    };
+    for (const name of definition.fields.keys()) subscribeDynamic(name);
+    for (const name of definition.relations.keys()) subscribeDynamic(name);
+  });
+}
+
+function initializeCreatedInstance(state: CollectionState, internal: InstanceInternal): void {
+  const definition = state.runtime;
+  const instance = createInstanceFacadeCached(state, internal);
+  const result = withOwner(taskOwnerOf(internal), () =>
+    runInInstanceContext(internal, () =>
+      withUnitDeclarationTracker(
+        (kind) => {
+          throw new Error(`[models] onCreate cannot declare a ${kind}; declare units in setup`);
+        },
+        () => (definition.onCreate as (self: object) => unknown)(instance),
+      ),
+    ),
+  );
+  if (result && typeof (result as PromiseLike<unknown>).then === "function") {
+    void Promise.resolve(result).catch(() => {});
+    throw new Error("[models] onCreate must be synchronous; start asynchronous work in an effect");
+  }
+}
+
+interface CreationField extends FieldRuntime {
+  readonly inputKey: string | null;
+  readonly validate?: (schema: TSchema, value: unknown) => boolean;
+}
+const creationFields = new WeakMap<ModelDefinition, readonly CreationField[]>();
+const requiredCreationFields = new WeakMap<ModelDefinition, readonly CreationField[]>();
+function requiredCreationFieldsOf(definition: ModelDefinition): readonly CreationField[] {
+  let fields = requiredCreationFields.get(definition);
+  if (!fields) {
+    fields = creationFieldsOf(definition).filter(
+      (field) => field.inputKey !== null && !field.def.defaultValue,
+    );
+    requiredCreationFields.set(definition, fields);
+  }
+  return fields;
+}
+const nativeFieldSeeds = new WeakMap<ModelDefinition, readonly NativeStoreState[]>();
+function fieldSeedsOf(definition: ModelDefinition): readonly NativeStoreState[] {
+  let seeds = nativeFieldSeeds.get(definition);
+  if (!seeds) {
+    seeds = creationFieldsOf(definition).map((field) => nativeStoreStateOf(field.staticStore!)!);
+    nativeFieldSeeds.set(definition, seeds);
+  }
+  return seeds;
+}
+const snapshotFields = new WeakMap<ModelDefinition, ReadonlyMap<string, SnapshotStore>>();
+function snapshotFieldsOf(definition: ModelDefinition): ReadonlyMap<string, SnapshotStore> {
+  let fields = snapshotFields.get(definition);
+  if (!fields) {
+    fields = new Map(
+      Array.from(definition.fields.values()).flatMap((field) => {
+        const snapshot = field.staticStore && snapshotStoreOf(field.staticStore);
+        return snapshot ? [[snapshot.sid, snapshot] as const] : [];
+      }),
+    );
+    snapshotFields.set(definition, fields);
+  }
+  return fields;
+}
+function creationFieldsOf(definition: ModelDefinition): readonly CreationField[] {
+  let fields = creationFields.get(definition);
+  if (!fields)
+    creationFields.set(
+      definition,
+      (fields = Array.from(definition.fields.values(), (runtime) => ({
+        ...runtime,
+        inputKey: boundKeyOf(runtime.name, runtime.def),
+        validate: simpleValidator(runtime.def.schema),
+      }))),
+    );
+  return fields;
+}
+
+const isStringInput = (schema: TSchema, value: unknown): boolean =>
+  schema[Kind] === "String" &&
+  schema.minLength === undefined &&
+  schema.maxLength === undefined &&
+  schema.pattern === undefined &&
+  schema.format === undefined
+    ? typeof value === "string"
+    : Value.Check(schema, value);
+const isBooleanInput = (schema: TSchema, value: unknown): boolean =>
+  schema[Kind] === "Boolean" ? typeof value === "boolean" : Value.Check(schema, value);
+const isNumberInput = (schema: TSchema, value: unknown): boolean =>
+  schema[Kind] === "Number" &&
+  schema.minimum === undefined &&
+  schema.maximum === undefined &&
+  schema.exclusiveMinimum === undefined &&
+  schema.exclusiveMaximum === undefined &&
+  schema.multipleOf === undefined
+    ? TypeSystemPolicy.IsNumberLike(value)
+    : Value.Check(schema, value);
+function simpleValidator(
+  schema: TSchema,
+): ((schema: TSchema, value: unknown) => boolean) | undefined {
+  // Declarations are resolved once. Keep constrained/compound schemas on the
+  // full TypeBox path and retain its live numeric policy for primitive fields.
+  switch (schema[Kind]) {
+    case "Boolean":
+      return isBooleanInput;
+    case "Number":
+      if (
+        schema.minimum === undefined &&
+        schema.maximum === undefined &&
+        schema.exclusiveMinimum === undefined &&
+        schema.exclusiveMaximum === undefined &&
+        schema.multipleOf === undefined
+      )
+        return isNumberInput;
+      return undefined;
+    case "String":
+      if (
+        schema.minLength === undefined &&
+        schema.maxLength === undefined &&
+        schema.pattern === undefined &&
+        schema.format === undefined
+      )
+        return isStringInput;
+      return undefined;
+    default:
+      return undefined;
+  }
 }
 
 let slotCounter = 0;
 
 const FREE_LIST_LIMIT = 1024;
 
-function allocateInstance(state: CollectionState, suppliedId: string | undefined): InstanceInternal {
-  const { definition, scope } = state;
+function snapshotType(definition: ModelDefinition): string | undefined {
+  return definition.sid ?? definition.name;
+}
+
+function snapshotPrefix(definition: ModelDefinition, id: string): string {
+  let prefix = snapshotPrefixes.get(definition);
+  if (!prefix)
+    snapshotPrefixes.set(
+      definition,
+      (prefix = `instance:${encodeURIComponent(snapshotType(definition) ?? "anonymous")}:`),
+    );
+  return prefix + encodeURIComponent(id);
+}
+const snapshotPrefixes = new WeakMap<ModelDefinition, string>();
+
+// Per-instance state is data. The lifetime/query/ownership machinery is shared
+// instead of allocating a set of capturing functions for every model handle.
+const instanceProtocol = {
+  getData(this: InstanceInternal, key: symbol): ModelBindingData | undefined {
+    return getInstanceData(this, key);
+  },
+  setData(this: InstanceInternal, data: ModelBindingData): void {
+    setInstanceData(this, data);
+  },
+  deleteData(this: InstanceInternal, key: symbol): void {
+    deleteInstanceData(this, key);
+  },
+  disposeWithTrace(this: InstanceInternal, trace: ModelDisposalTrace): void | Promise<void> {
+    return disposeInstanceForBinding(this, trace);
+  },
+  onAliveRead(this: InstanceInternal): void {
+    readVersion(this.registry!);
+  },
+  onBeforeRebind(this: InstanceInternal, newId: string): void {
+    const state = this.registry!;
+    if (typeof newId !== "string" || newId === "") throw emptyIdError("rebind()");
+    const holder = state.rows.get(newId);
+    if (holder !== undefined && holder !== this && holder.alive)
+      throw takenIdError(state, "rebind()", newId);
+    // A rebind moves an identity in the manifest; registering everything
+    // first lets it move exactly as it would have after eager registration.
+    if (this.snapshotDeferred) flushModelSnapshots(state.snapshot!);
+  },
+  onWrite(this: InstanceInternal, name: string, value: unknown): void {
+    moveInIndex(this.registry!, name, this, value);
+  },
+  onRebind(this: InstanceInternal, oldId: string, newId: string): void {
+    const internal = this,
+      state = this.registry!,
+      scope = state.scope;
+    if (!internal.alive) return;
+    NativeInstance.preserveSnapshotKey(internal, oldId);
+    const type = state.type;
+    // A deferred identity registers later under its current id.
+    if (type && !internal.snapshotDeferred) {
+      releaseModelSnapshotIdentity(scope, type, oldId);
+      registerModelSnapshotIdentity(scope, type, newId, false, internal.snapshotKey);
+    }
+    unlistId(state, oldId);
+    listInstance(state, internal);
+    state.aliases.set(oldId, newId);
+    for (const [aliasId, target] of state.aliases)
+      if (target === oldId) state.aliases.set(aliasId, newId);
+    const keys = internal.indexKeys;
+    if (keys)
+      for (let position = 0; position < keys.length; position++) {
+        const key = keys[position];
+        if (key === unindexed) continue;
+        const bucket = state.buckets[position].get(key);
+        if (bucket?.delete(oldId)) bucket.add(newId);
+      }
+    for (const ord of state.ordered.values()) {
+      if (!ord.byId.has(oldId)) continue;
+      ord.byId.set(newId, ord.byId.get(oldId));
+      ord.byId.delete(oldId);
+      ord.sorted = null;
+    }
+    rewriteRelationIds(state, oldId, newId);
+    bumpVersion(state);
+    internal.notifySelf?.();
+    emitRebindChange(state, internal, oldId);
+  },
+  onDispose(
+    this: InstanceInternal,
+    instance: InstanceInternal,
+    trace?: ModelDisposalTrace,
+  ): void | Promise<void> {
+    return disposeInstance(this.registry!, instance, trace);
+  },
+  createOwned(
+    this: InstanceInternal,
+    target: ModelDefinition,
+    props: Record<string, unknown>,
+  ): object {
+    if (this.disposal) throw new Error("[models] Cannot create children of a disposing model");
+    creatingViaParent++;
+    try {
+      const child = collection(target, this.parentScope).add(props);
+      const internal = instanceInternalOf(child)!;
+      if (internal.owningInstance && internal.owningInstance !== this)
+        throw new Error("[models] Instance already has an owning parent");
+      internal.owningInstance = this;
+      (this.ownedInstances ??= new Set()).add(internal);
+      return child;
+    } finally {
+      creatingViaParent--;
+    }
+  },
+  relationView(this: InstanceInternal, name: string): object {
+    let view = this.relationCache?.get(name);
+    if (!view) {
+      view = buildRelationView(this.registry!, this, name);
+      (this.relationCache ??= new Map()).set(name, view);
+    }
+    return view;
+  },
+  notifySelf(this: InstanceInternal): void {
+    if (this.selfListeners) for (const listener of [...this.selfListeners]) listener();
+  },
+  subscribeSelf(this: InstanceInternal, listener: () => void): () => void {
+    if (!this.selfListeners?.size) attachSelf(this);
+    (this.selfListeners ??= new Set()).add(listener);
+    return () => {
+      this.selfListeners!.delete(listener);
+      if (!this.selfListeners!.size) this.detachSelf?.();
+    };
+  },
+  serializeRelations(this: InstanceInternal, out: Record<string, unknown>): void {
+    serializeRelationsOf(this.registry!, this, out);
+  },
+};
+
+function attachSelf(internal: InstanceInternal): void {
+  const definition = internal.definition,
+    scope = internal.parentScope;
+  const unsubs: Array<() => void> = [];
+  const relevant = (writeScope: Scope): boolean =>
+    definition["~singletonOf"]
+      ? unwrapMicroScope(writeScope) === scope
+      : definition.kind === "static"
+        ? instanceOfScope(writeScope) === internal
+        : unwrapMicroScope(writeScope) === scope && internal.alive;
+  withOwner(detachedRoot, () => {
+    const subscribe = (unit: StoreWritable<unknown>): void => {
+      unsubs.push(
+        unit.subscribe((_value, writeScope) => {
+          if (relevant(writeScope)) internal.notifySelf!();
+        }),
+      );
+    };
+    if (definition.kind === "static") {
+      for (const runtime of definition.fields.values())
+        subscribe(runtime.staticStore as StoreWritable<unknown>);
+      for (const runtime of definition.relations.values())
+        subscribe(runtime.staticStore as StoreWritable<unknown>);
+    } else for (const unit of internal.ownStores?.values() ?? []) subscribe(unit);
+  });
+  internal.detachSelf = () => {
+    for (const unsubscribe of unsubs) unsubscribe();
+    internal.detachSelf = null;
+  };
+}
+
+let instanceSequence = 0;
+
+class NativeInstance {
+  #scope?: Scope;
+  #snapshotStores?: ReadonlyMap<string, SnapshotStore>;
+  #snapshotKey?: string;
+  get snapshotKey(): string {
+    return (this.#snapshotKey ??= snapshotPrefix(this.runtimeDefinition, this.id));
+  }
+  set snapshotKey(key: string) {
+    this.#snapshotKey = key;
+  }
+  facade?: object;
+  /** The target of `facade`. */
+  facadeTarget?: object;
+  get definition(): ModelDefinition {
+    return this.registry.model;
+  }
+  get runtimeDefinition(): ModelDefinition {
+    return this.registry.runtime;
+  }
+  get parentScope(): Scope {
+    return this.registry.scope;
+  }
+  get scope(): Scope | undefined {
+    if (this.#scope) return this.#scope;
+    if (this.fieldSeed !== undefined) return this.materializeScope(true);
+    const definition = this.runtimeDefinition;
+    if (definition.kind !== "static" || definition["~singletonOf"]) return undefined;
+    const scope = (this.#scope = createInstanceScope(this.parentScope, definition.locals!));
+    registerModelSnapshotScope(
+      scope,
+      this.parentScope,
+      "",
+      definition.locals!,
+      this.registry.snapshots,
+      this as unknown as ModelScopeBinding,
+    );
+    if (!this.alive) releaseModelSnapshotScope(scope);
+    return scope;
+  }
+  static peekScope(internal: InstanceInternal): Scope | undefined {
+    return (internal as unknown as NativeInstance).#scope;
+  }
+  /**
+   * A light instance's scope, on first use: its fields move from the seed into
+   * the scope, which then binds to the root as allocation would have. A flush
+   * of deferred snapshots registers the namespace itself (`register` false).
+   */
+  materializeScope(register: boolean): Scope {
+    const definition = this.runtimeDefinition;
+    const scope = (this.#scope = createInstanceScope(this.parentScope, definition.locals!));
+    const seed = this.fieldSeed!;
+    this.fieldSeed = undefined;
+    if (seed !== unseeded) {
+      const seeds = fieldSeedsOf(definition);
+      for (let index = 0; index < seeds.length; index++)
+        if (!Object.is(seed[index], seeds[index].initial)) scope.values.set(seeds[index].id, seed[index]);
+    }
+    const binding = this as unknown as ModelScopeBinding;
+    if (this.snapshotDeferred) deferModelNamespace(this.registry.snapshot!, scope, binding);
+    else if (register)
+      registerModelSnapshotScope(
+        scope,
+        this.parentScope,
+        this.registry.snapshots.size ? this.snapshotKey : "",
+        definition.locals!,
+        this.registry.snapshots,
+        binding,
+      );
+    if (!this.alive) releaseModelSnapshotScope(scope);
+    return scope;
+  }
+  static preserveSnapshotKey(internal: InstanceInternal, originalId: string): void {
+    const instance = internal as unknown as NativeInstance;
+    instance.#snapshotKey ??= snapshotPrefix(instance.runtimeDefinition, originalId);
+  }
+  insertionOrder: number;
+  alive = true;
+  fieldSeed: unknown[] | undefined = undefined;
+  // Slots an instance fills during its life (creation input, member handles,
+  // renderer data, disposal). Declared up front, every instance keeps one
+  // hidden class instead of a chain of property additions in varying order.
+  props: Record<string, unknown> | undefined = undefined;
+  facadeHandles: unknown = undefined;
+  firstFacadeHandle: string | undefined = undefined;
+  bindingData: ModelBindingData | Map<symbol, ModelBindingData> | undefined = undefined;
+  beforeDisposers: InstanceInternal["beforeDisposers"] = undefined;
+  taskOwner: Owner | undefined = undefined;
+  disposal: DisposalCompletion | undefined = undefined;
+  finalizing: boolean | undefined = undefined;
+  restoreSnapshot: boolean | undefined = undefined;
+  registered: boolean | undefined = undefined;
+  snapshotDeferred: boolean | undefined = undefined;
+  listed: boolean | undefined = undefined;
+  indexKeys: unknown[] | undefined = undefined;
+  // Every child row gets an owner, and every row a component creates gets a
+  // cleanup: declared, so those rows keep the class they were created with.
+  // Relation views, self listeners, owned children and dispose sites
+  // (development only) stay lazy: few instances get them, and every instance
+  // would pay for the slots.
+  owningInstance: InstanceInternal | undefined = undefined;
+  disposers: Set<() => void> | undefined = undefined;
+  /** Creation rank across collections: deferred namespaces register in this order. */
+  readonly snapshotSequence = ++instanceSequence;
+  private snapshotReleased: boolean | undefined = undefined;
+  private cachedKey: string | undefined = undefined;
+  get key(): string {
+    return (this.cachedKey ??= `s${this.slot}g${this.generation}`);
+  }
+  get root(): Scope {
+    return this.parentScope;
+  }
+  get homeScope(): Scope {
+    return this.parentScope;
+  }
+  get identity(): string {
+    return this.snapshotKey ?? this.key;
+  }
+  beforeDispose(callback: () => void | PromiseLike<unknown>): () => void {
+    return beforeDisposeInstance(this as unknown as InstanceInternal, callback);
+  }
+  addDisposalParticipant(participant: ModelDisposalParticipant): void {
+    addDisposalParticipant(this as unknown as InstanceInternal, participant);
+  }
+  removeDisposalParticipant(participant: ModelDisposalParticipant): void {
+    removeDisposalParticipant(this as unknown as InstanceInternal, participant);
+  }
+  adopt(child: object): void {
+    adoptInstanceChild(this as unknown as InstanceInternal, child);
+  }
+  subscribe(listener: () => void): () => void {
+    return (this as unknown as InstanceInternal).subscribeSelf!(listener);
+  }
+  get instance(): object {
+    return this;
+  }
+  get active(): boolean {
+    return this.alive && !this.snapshotReleased;
+  }
+  set active(active: boolean) {
+    this.snapshotReleased = !active;
+  }
+  get prefix(): string {
+    return this.snapshotKey;
+  }
+  get head(): string {
+    const slash = this.snapshotKey.indexOf("/");
+    return slash < 0 ? this.snapshotKey : this.snapshotKey.slice(0, slash);
+  }
+  get owns(): ReadonlySet<unknown> {
+    return this.runtimeDefinition.locals!;
+  }
+  get stores(): ReadonlyMap<string, SnapshotStore> {
+    return this.#snapshotStores ?? this.registry.snapshots;
+  }
+  set stores(stores: ReadonlyMap<string, SnapshotStore>) {
+    this.#snapshotStores = stores;
+  }
+  get shared(): boolean {
+    return this.#snapshotStores === undefined;
+  }
+  set shared(_shared: boolean) {
+    /* stores assignment already selects a private map. */
+  }
+  get automatic(): boolean {
+    return this.temporaryId;
+  }
+  set automatic(automatic: boolean) {
+    this.temporaryId = automatic;
+  }
+  registerSnapshotNamespace(): void {
+    const scope = this.#scope;
+    if (
+      scope &&
+      registerModelSnapshotScope(
+        scope,
+        this.parentScope,
+        this.snapshotKey,
+        this.runtimeDefinition.locals!,
+        this.registry.snapshots,
+        this as unknown as ModelScopeBinding,
+      )
+    )
+      this.restoreSnapshot = true;
+  }
+  constructor(
+    readonly registry: CollectionState,
+    scope: Scope | undefined,
+    public id: string,
+    readonly slot: number,
+    readonly generation: number,
+    public temporaryId: boolean,
+  ) {
+    this.#scope = scope;
+    this.insertionOrder = registry.next++;
+  }
+}
+// Instances die with their collection's rows: keep their hidden class (see
+// kernel/shapes.ts).
+retainShapes(
+  "core/models/collection",
+  new NativeInstance({ next: 0 } as CollectionState, undefined, "", 0, 0, false),
+);
+Object.assign(NativeInstance.prototype, instanceProtocol);
+
+function allocateInstance(
+  state: CollectionState,
+  suppliedId: string | undefined,
+): InstanceInternal {
+  const { runtime: definition, scope } = state;
 
   let instanceScope: Scope | undefined;
   let slot: number;
   let generation = 1;
+  let light = false;
 
-  if (definition.kind === "static") {
-    const recycled = state.freeScopes.pop();
+  if (definition.kind === "static" && !definition["~singletonOf"]) {
+    const recycled = state.pool.pop();
 
     if (recycled) {
       // §3.5: reuse Scope + Map (`clear()` instead of a new one). Values are
       // cleared at REUSE time — a straggler reaction from the previous
       // occupant's last tick saw stale-but-isolated values, never these.
-      recycled.scope.values.clear();
+      recycled.scope?.values.clear();
       instanceScope = recycled.scope;
       slot = recycled.slot;
       generation = recycled.generation + 1;
     } else {
       slotCounter += 1;
       slot = slotCounter;
-      instanceScope = createInstanceScope(scope, definition.locals!);
+    }
+    // Empty static definitions have no local state to seed. Their scope is
+    // needed only if a member actually enters the instance context. A light
+    // instance creates it on first use (see `lightInstances`).
+    if (!instanceScope && definition.locals!.size) {
+      light = lightInstances(state);
+      if (!light) instanceScope = createInstanceScope(scope, definition.locals!);
     }
   } else {
     slotCounter += 1;
     slot = slotCounter;
   }
 
-  const internal: InstanceInternal = {
-    definition,
-    parentScope: scope,
-    scope: instanceScope,
-    id: suppliedId ?? generateId(),
-    key: `s${slot}g${generation}`,
+  const type = state.type;
+  if (type !== undefined && state.snapshotDeferred === undefined) {
+    state.snapshot = deferModelSnapshots(
+      scope,
+      state,
+      type,
+      // Static instances with SID fields own a namespace (`instance:<type>:<id>`).
+      definition.kind === "static" && !definition["~singletonOf"] && state.snapshots.size
+        ? snapshotPrefix(definition, "")
+        : undefined,
+    );
+    state.snapshotDeferred ??= false;
+  }
+  if (state.snapshotDeferred) {
+    // No snapshot reader has run in this root (so nothing restores either):
+    // the instance registers only when one does.
+    const internal = new NativeInstance(
+      state,
+      instanceScope,
+      suppliedId ?? freshId(state),
+      slot,
+      generation,
+      suppliedId === undefined,
+    ) as InstanceInternal;
+    if (light) internal.fieldSeed = unseeded;
+    if (
+      deferModelNamespace(
+        state.snapshot!,
+        instanceScope,
+        internal as unknown as ModelScopeBinding,
+      )
+    ) {
+      internal.snapshotDeferred = true;
+      (state.allocating ??= []).push(internal);
+    } else {
+      // The root registers instances as they are created: this one needs its scope now.
+      if (light) instanceScope = (internal as unknown as NativeInstance).materializeScope(false);
+      registerInstanceSnapshot(state, internal, instanceScope, suppliedId === undefined);
+    }
+    return internal;
+  }
+  const restored = type ? restoredModelIdentity(scope, type, suppliedId) : undefined;
+  const internal = new NativeInstance(
+    state,
+    instanceScope,
+    suppliedId ?? restored?.id ?? freshId(state),
     slot,
     generation,
-    alive: true,
-    temporaryId: suppliedId === undefined,
+    suppliedId === undefined,
+  ) as InstanceInternal;
 
-    // §3.5: `alive` reads are reactive at the price of one epoch dependency —
-    // dispose bumps the collection version, so watchers degrade without a try.
-    onAliveRead: () => {
-      readVersion(state);
-    },
-
-    onWrite: (name, value) => moveInIndex(state, name, internal.id, value),
-
-    onRebind: (oldId, newId) => {
-      if (!internal.alive) return;
-
-      state.instances.delete(oldId);
-      state.instances.set(newId, internal);
-      state.forwarding.set(oldId, newId);
-
-      // Older aliases stay flat: tmp→A after rebind(A→B) becomes tmp→B, so
-      // get() never needs a chain walk and dispose sweeps the whole set (§10.1).
-      for (const [aliasId, target] of state.forwarding) {
-        if (target === oldId) state.forwarding.set(aliasId, newId);
-      }
-
-      const at = state.order.indexOf(oldId);
-
-      if (at >= 0) state.order[at] = newId;
-
-      for (const index of state.indexes.values()) {
-        for (const bucket of index.values()) {
-          if (bucket.delete(oldId)) bucket.add(newId);
-        }
-      }
-
-      for (const ord of state.ordIndexes.values()) {
-        if (ord.byId.has(oldId)) {
-          ord.byId.set(newId, ord.byId.get(oldId));
-          ord.byId.delete(oldId);
-          ord.sorted = null;
-        }
-      }
-
-      rewriteRelationIds(state, oldId, newId);
-      bumpVersion(state);
-      internal.notifySelf?.();
-    },
-
-    onDispose: (instance) => disposeInstance(state, instance),
-  };
-
-  const viewCache = new Map<string, object>();
-
-  internal.relationView = (name: string) => {
-    let view = viewCache.get(name);
-
-    if (!view) {
-      view = buildRelationView(state, internal, name);
-      viewCache.set(name, view);
-    }
-
-    return view;
-  };
-
-  // Binding seam (§10.1): one per-instance change feed — own field/relation
-  // writes plus dispose/rebind. Store subscriptions attach on first listener
-  // and detach with the last, so idle instances cost nothing.
-  const selfListeners = new Set<() => void>();
-  let detachSelf: (() => void) | null = null;
-
-  const notifySelf = (): void => {
-    for (const listener of [...selfListeners]) listener();
-  };
-
-  const attachSelf = (): void => {
-    const unsubs: Array<() => void> = [];
-    const relevant = (writeScope: Scope): boolean =>
-      definition.kind === "static"
-        ? instanceOfScope(writeScope) === internal
-        : unwrapMicroScope(writeScope) === scope && internal.alive;
-
-    withOwner(detachedRoot, () => {
-      const subscribeStore = (unit: StoreWritable<unknown>): void => {
-        unsubs.push(
-          unit.subscribe((_value, writeScope) => {
-            if (relevant(writeScope)) notifySelf();
-          }),
-        );
-      };
-
-      if (definition.kind === "static") {
-        for (const runtime of definition.fields.values()) {
-          subscribeStore(runtime.staticStore as StoreWritable<unknown>);
-        }
-
-        for (const runtime of definition.relations.values()) {
-          subscribeStore(runtime.staticStore as StoreWritable<unknown>);
-        }
-      } else {
-        for (const unit of internal.ownStores?.values() ?? []) {
-          subscribeStore(unit);
-        }
-      }
-    });
-
-    detachSelf = () => {
-      for (const unsubscribe of unsubs) unsubscribe();
-
-      detachSelf = null;
-    };
-  };
-
-  internal.notifySelf = notifySelf;
-  internal.subscribeSelf = (listener) => {
-    if (selfListeners.size === 0) attachSelf();
-
-    selfListeners.add(listener);
-
-    return () => {
-      selfListeners.delete(listener);
-
-      if (selfListeners.size === 0) detachSelf?.();
-    };
-  };
-
-  internal.serializeRelations = (out) => serializeRelationsOf(state, internal, out);
-
-  if (internal.scope) {
-    registerScopeInstance(internal.scope, internal);
+  if (restored?.key !== undefined) internal.snapshotKey = restored.key;
+  if (light) {
+    internal.fieldSeed = unseeded;
+    // Without a snapshot type or SID fields its scope only binds to the root,
+    // which `materializeScope` does later; otherwise it registers now.
+    if (type !== undefined || state.snapshots.size)
+      instanceScope = (internal as unknown as NativeInstance).materializeScope(false);
   }
+  registerInstanceSnapshot(state, internal, instanceScope, suppliedId === undefined);
 
   return internal;
+}
+
+/** A field seed placeholder: the instance is light, and its values are not seeded yet. */
+const unseeded: unknown[] = [];
+
+/**
+ * Instances of a static model without relations start light: their fields stay
+ * in a seed array and their scope is created on first use. A root that is
+ * restoring a snapshot needs every scope now, to restore into it.
+ */
+function lightInstances(state: CollectionState): boolean {
+  return state.runtime.relations.size === 0 && !hasPendingSnapshot(state.scope);
+}
+
+function registerInstanceSnapshot(
+  state: CollectionState,
+  internal: InstanceInternal,
+  instanceScope: Scope | undefined,
+  automatic: boolean,
+): void {
+  if (
+    instanceScope &&
+    registerModelSnapshotScope(
+      instanceScope,
+      state.scope,
+      state.snapshots.size ? internal.snapshotKey! : "",
+      state.runtime.locals!,
+      state.snapshots,
+      internal as unknown as ModelScopeBinding,
+    )
+  )
+    internal.restoreSnapshot = true;
+  if (state.type)
+    registerModelSnapshotIdentity(
+      state.scope,
+      state.type,
+      internal.id,
+      automatic,
+      internal.snapshotKey,
+      instanceScope,
+    );
+}
+
+/** The root's first snapshot reader: register live deferred instances as creation would have. */
+function flushDeferredInstanceSnapshots(
+  this: CollectionState,
+  namespaces: DeferredModelNamespace[],
+): void {
+  // Creation registered identities as instances were allocated. Deferred
+  // instances have not been rebound (a rebind registers everything first), so
+  // allocation order is that order — including instances whose dynamic setup
+  // is still running, and inner instances it listed first.
+  const deferred: InstanceInternal[] = [];
+  for (const internal of this.rows.values())
+    if (internal.snapshotDeferred) deferred.push(internal);
+  if (this.allocating)
+    for (const internal of this.allocating) if (internal.snapshotDeferred) deferred.push(internal);
+  deferred.sort(byAllocation);
+  for (const internal of deferred) {
+    internal.snapshotDeferred = false;
+    if (!internal.alive) continue;
+    const materializing = internal.fieldSeed !== undefined;
+    const instanceScope = materializing
+      ? (internal as unknown as NativeInstance).materializeScope(false)
+      : NativeInstance.peekScope(internal);
+    // SID namespaces are registered below for models with declared SID fields.
+    // A newly materialized scope without those fields still needs its instance
+    // binding: reactions/self and SID stores returned from setup depend on it.
+    if (materializing && instanceScope && !this.snapshots.size)
+      registerModelSnapshotScope(
+        instanceScope,
+        this.scope,
+        "",
+        this.runtime.locals!,
+        this.snapshots,
+        internal as unknown as ModelScopeBinding,
+      );
+    registerModelSnapshotIdentity(
+      this.scope,
+      this.type!,
+      internal.id,
+      internal.temporaryId,
+      internal.snapshotKey,
+      instanceScope,
+    );
+    if (instanceScope && this.snapshots.size)
+      namespaces.push(internal as unknown as DeferredModelNamespace);
+  }
+}
+
+function byAllocation(left: InstanceInternal, right: InstanceInternal): number {
+  return (
+    (left as unknown as NativeInstance).snapshotSequence -
+    (right as unknown as NativeInstance).snapshotSequence
+  );
 }
 
 function mergeInstance(
@@ -851,12 +1860,13 @@ function mergeInstance(
   input: Record<string, unknown>,
   options?: AddOptions,
 ): void {
+  internal.props = { ...internal.props, ...input };
   const facade = createInstanceFacadeCached(state, internal);
 
   const writes: Array<[name: string, value: unknown]> = [];
   const missing: string[] = [];
 
-  for (const [name, runtime] of state.definition.fields) {
+  for (const [name, runtime] of state.model.fields) {
     const key = boundKeyOf(name, runtime.def);
 
     if (key === null) continue;
@@ -878,9 +1888,7 @@ function mergeInstance(
   }
 
   if (missing.length > 0) {
-    throw new Error(
-      `[models] add(): replacing ${state.definition.name ?? "model"} requires missing keys: ${missing.join(", ")}`,
-    );
+    throw new Error(`[models] add(): replacing ${state.model.name ?? "model"} requires missing keys: ${missing.join(", ")}`);
   }
 
   for (const [name, value] of writes) {
@@ -893,17 +1901,264 @@ function mergeInstance(
 }
 
 function createInstanceFacadeCached(state: CollectionState, internal: InstanceInternal): object {
-  let facade = state.facades.get(internal);
-
-  if (!facade) {
-    facade = createInstanceFacade(internal);
-    state.facades.set(internal, facade);
-  }
-
-  return facade;
+  return (internal.facade ??= createInstanceFacade(internal));
 }
 
-function disposeInstance(state: CollectionState, internal: InstanceInternal): void {
+interface RelationLists {
+  readonly size: number;
+  readonly children: readonly RelationRuntime[];
+  readonly refs: readonly RelationRuntime[];
+}
+const relationLists = new WeakMap<ModelDefinition, RelationLists>();
+/** Disposal visits only the relation kinds it acts on, without the public definition proxy. */
+function relationListsOf(state: CollectionState): RelationLists {
+  const relations = state.runtime.relations;
+  let lists = relationLists.get(state.runtime);
+  if (!lists || lists.size !== relations.size) {
+    const children: RelationRuntime[] = [];
+    const refs: RelationRuntime[] = [];
+    for (const runtime of relations.values()) {
+      if (runtime.def.relation === "children") children.push(runtime);
+      else if (runtime.def.relation === "refs") refs.push(runtime);
+    }
+    relationLists.set(state.runtime, (lists = { size: relations.size, children, refs }));
+  }
+  return lists;
+}
+
+// `listed` mirrors `instances.get(internal.id) === internal` through every map
+// change, so a field write checks membership without a lookup. Creation and
+// rebind reject an id a live instance holds, so nothing is displaced here; the
+// branch below only keeps `listed` exact should an entry ever be replaced.
+function listInstance(state: CollectionState, internal: InstanceInternal): void {
+  const displaced = state.rows.get(internal.id);
+  if (displaced !== undefined) {
+    // The map is about to forget a live instance: while it still defers, the
+    // root registers first, when every deferred instance can still be found.
+    if (displaced.snapshotDeferred) flushModelSnapshots(state.snapshot!);
+    displaced.listed = false;
+  }
+  state.rows.set(internal.id, internal);
+  internal.listed = true;
+}
+/** A generated id no live instance or forwarding alias of this collection holds. */
+function freshId(state: CollectionState): string {
+  let id = generateId();
+  while (state.rows.has(id) || (state.aliases.size && state.aliases.has(id)))
+    id = generateId();
+  return id;
+}
+function takenIdError(state: CollectionState, operation: string, id: string): Error {
+  return new Error(`[models] ${operation}: id "${id}" is already taken by a live ${state.model.name ?? "model"} instance`);
+}
+function emptyIdError(operation: string): Error {
+  return new Error(`[models] ${operation}: an id must be a non-empty string`);
+}
+function unlistId(state: CollectionState, id: string): void {
+  const listed = state.rows.get(id);
+  if (listed === undefined) return;
+  listed.listed = false;
+  state.rows.delete(id);
+}
+function unlistInstance(state: CollectionState, internal: InstanceInternal): void {
+  if (!internal.listed) return unlistId(state, internal.id);
+  internal.listed = false;
+  state.rows.delete(internal.id);
+}
+
+/** Remove one instance from the insertion order; front and back removals are O(1). */
+function dropFromOrder(state: CollectionState, internal: InstanceInternal): void {
+  const order = state.order;
+  if (order[order.length - 1] === internal) {
+    order.pop();
+    while (order.length && order[order.length - 1] === undefined) {
+      order.pop();
+      state.holes--;
+    }
+    if (state.head > order.length) state.head = order.length;
+    return;
+  }
+  let at = state.head;
+  while (at < order.length && order[at] === undefined) at++;
+  state.head = at;
+  if (order[at] !== internal) at = order.indexOf(internal, at);
+  if (at < 0) return;
+  order[at] = undefined;
+  state.holes++;
+  if (state.holes > 32 && state.holes * 2 > order.length) {
+    let live = 0;
+    for (const entry of order) if (entry !== undefined) order[live++] = entry;
+    order.length = live;
+    state.holes = 0;
+    state.head = 0;
+  }
+}
+
+function disposalTree(
+  state: CollectionState,
+  internal: InstanceInternal,
+): Array<{ state: CollectionState; internal: InstanceInternal }> {
+  // Most scalar/static instances have no ownership edges. Keep the same tree
+  // contract without allocating a visitor closure and cycle Set for a leaf.
+  if (!relationListsOf(state).children.length && !internal.ownedInstances?.size)
+    return [{ state, internal }];
+  const result: Array<{ state: CollectionState; internal: InstanceInternal }> = [];
+  const seen = new Set<InstanceInternal>();
+  const visit = (currentState: CollectionState, current: InstanceInternal) => {
+    if (!current.alive || seen.has(current)) return;
+    seen.add(current);
+    result.push({ state: currentState, internal: current });
+    for (const runtime of relationListsOf(currentState).children) {
+      const name = runtime.name;
+      const value = relRead(current, name);
+      const entries = Array.isArray(value) ? value : value == null ? [] : [value];
+      for (const entry of entries) {
+        const child = resolveRelationEntry(currentState, runtime.def, entry as RelationEntry);
+        const target = child && instanceInternalOf(child);
+        if (target)
+          visit(stateOfCollection(collection(target.definition, target.parentScope)), target);
+      }
+    }
+    for (const child of current.ownedInstances ?? [])
+      visit(stateOfCollection(collection(child.definition, child.parentScope)), child);
+  };
+  visit(state, internal);
+  return result;
+}
+
+/** A synchronous disposal needs no promise unless a reentrant caller awaits it. */
+class DisposalCompletion {
+  trace: ModelDisposalTrace | undefined = undefined;
+  #promise?: Promise<void>;
+  #resolve?: () => void;
+  #reject?: (error: unknown) => void;
+  #settled = false;
+  #error?: AggregateError;
+  promise(): Promise<void> {
+    if (!this.#promise) {
+      this.#promise = new Promise<void>((resolve, reject) => {
+        if (this.#settled) {
+          if (this.#error) reject(this.#error);
+          else resolve();
+        } else {
+          this.#resolve = resolve;
+          this.#reject = reject;
+        }
+      });
+      // Keep rejection observable to callers without leaking an unhandled
+      // rejection when disposal is launched by an external renderer.
+      void this.#promise.catch(ignoreDisposalRejection);
+    }
+    return this.#promise;
+  }
+  settle(error?: AggregateError): void {
+    this.#settled = true;
+    this.#error = error;
+    if (error) this.#reject?.(error);
+    else this.#resolve?.();
+    this.#resolve = undefined;
+    this.#reject = undefined;
+  }
+}
+function ignoreDisposalRejection(): void {}
+/** A finished leaf disposal without a trace: rows removed together share it. */
+const settledLeafDisposal = new DisposalCompletion();
+settledLeafDisposal.settle();
+
+function disposeInstance(
+  state: CollectionState,
+  internal: InstanceInternal,
+  trace?: ModelDisposalTrace,
+): void | Promise<void> {
+  if (!internal.alive) return;
+  if (internal.finalizing) {
+    disposeNow(state, internal);
+    return;
+  }
+  if (internal.disposal) return internal.disposal.promise();
+  // A leaf with no before-dispose callbacks runs no user code before its own
+  // removal: there is nothing to await and no other entry to (re)validate.
+  if (
+    internal.beforeDisposers === undefined &&
+    !relationListsOf(state).children.length &&
+    !internal.ownedInstances?.size
+  ) {
+    applyDeletePolicies(state, internal, true);
+    const completion = new DisposalCompletion();
+    completion.trace = trace;
+    internal.disposal = completion;
+    internal.finalizing = true;
+    try {
+      disposeNow(state, internal);
+    } catch (error) {
+      internal.disposal = undefined;
+      internal.finalizing = false;
+      completion.settle(new AggregateError([error], "[models] Disposal failed"));
+      return completion.promise();
+    }
+    completion.settle();
+    return;
+  }
+  const tree = disposalTree(state, internal);
+  // Validate the entire cascade before any lifecycle callback or ref mutation.
+  for (const entry of tree) applyDeletePolicies(entry.state, entry.internal, true);
+  const completion = new DisposalCompletion();
+  for (const entry of tree) entry.internal.disposal = completion;
+  const pending: Promise<unknown>[] = [];
+  const errors: unknown[] = [];
+  for (const entry of tree) {
+    let callbacks = entry.internal.beforeDisposers;
+    // Materialize only when disposing; callbacks registered during this live
+    // iteration retain the same Set semantics as multi-observer lifecycles.
+    if (callbacks && !(callbacks instanceof Set))
+      callbacks = entry.internal.beforeDisposers = new Set([callbacks]);
+    for (const callback of callbacks ?? []) {
+      try {
+        const result = typeof callback === "function" ? callback() : callback.beforeDispose();
+        if (result && typeof result.then === "function") pending.push(Promise.resolve(result));
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+  }
+  const finish = () => {
+    try {
+      // Revalidate after awaited user code; a newly added restrict link cannot
+      // silently turn a pending deletion into a partial cascade.
+      for (const entry of tree) applyDeletePolicies(entry.state, entry.internal, true);
+      for (const entry of tree) entry.internal.finalizing = true;
+      // Child nullification can write stores while the cascade is in progress.
+      // The dying tree must stop reacting before any child becomes inaccessible;
+      // keep its values intact for cleanup callbacks, but drop scoped observers.
+      for (const entry of tree) {
+        const scope = NativeInstance.peekScope(entry.internal);
+        if (scope && scope !== entry.internal.parentScope) disposeScopeEdges(scope);
+      }
+      disposeNow(state, internal);
+    } catch (error) {
+      errors.push(error);
+      for (const entry of tree) {
+        entry.internal.disposal = undefined;
+        entry.internal.finalizing = false;
+      }
+    }
+    completion.settle(
+      errors.length ? new AggregateError(errors, "[models] Disposal failed") : undefined,
+    );
+  };
+  if (!pending.length) {
+    completion.trace = trace;
+    finish();
+    return errors.length ? completion.promise() : undefined;
+  }
+  void Promise.allSettled(pending).then((results) => {
+    for (const result of results) if (result.status === "rejected") errors.push(result.reason);
+    finish();
+  });
+  return completion.promise();
+}
+
+function disposeNow(state: CollectionState, internal: InstanceInternal): void {
   if (!internal.alive) return;
 
   // restrict must abort BEFORE any state is torn down (§5.1)
@@ -911,9 +2166,8 @@ function disposeInstance(state: CollectionState, internal: InstanceInternal): vo
   cascadeChildren(state, internal);
 
   // this instance's own outgoing refs release their reverse entries
-  for (const [name, runtime] of state.definition.relations) {
-    if (runtime.def.relation !== "refs") continue;
-
+  for (const runtime of relationListsOf(state).refs) {
+    const name = runtime.name;
     const current = relRead(internal, name);
 
     if (Array.isArray(current)) {
@@ -929,32 +2183,225 @@ function disposeInstance(state: CollectionState, internal: InstanceInternal): vo
   // the instance is still alive, so a cleanup may read its fields.
   runInstanceDisposers(internal);
 
-  internal.disposedSite = new Error("dispose site");
-  internal.alive = false;
-  internal.ownOwner?.dispose();
-  state.instances.delete(internal.id);
-  state.facades.delete(internal);
-  dropFromIndexes(state, internal.id);
-
-  const at = state.order.indexOf(internal.id);
-
-  if (at >= 0) state.order.splice(at, 1);
-
-  for (const [oldId, newId] of state.forwarding) {
-    if (newId === internal.id) state.forwarding.delete(oldId);
+  const trace = internal.disposal?.trace;
+  if (trace?.stack !== undefined) internal.disposedSite = trace;
+  else if (devDiagnostics) {
+    const site = (internal.disposedSite = new Error("dispose site"));
+    if (trace) {
+      try {
+        const stack = site.stack;
+        if (typeof stack === "string") {
+          trace.stack = stack;
+          internal.disposedSite = trace;
+        }
+      } catch {
+        /* Custom stack formatters must not change disposal semantics. */
+      }
+    }
   }
+  internal.alive = false;
+  internal.taskOwner?.dispose();
+  if (internal.definition.kind === "dynamic") {
+    for (const declaration of internal.declarations ?? [])
+      releaseStoreDeclaration(internal.parentScope, declaration);
+    releaseModelSnapshotNamespace(internal.parentScope, internal.snapshotKey!);
+  }
+  const instanceScope = NativeInstance.peekScope(internal);
+  if (instanceScope) releaseModelSnapshotScope(instanceScope);
+  if (internal.snapshotDeferred) internal.snapshotDeferred = false;
+  else if (state.type)
+    releaseModelSnapshotIdentity(internal.parentScope, state.type, internal.id);
+  internal.owningInstance?.ownedInstances?.delete(internal);
+  if (internal.beforeDisposers instanceof Set) internal.beforeDisposers.clear();
+  internal.beforeDisposers = undefined;
+  internal.ownOwner?.dispose();
+  if (state.runtime["~singletonOf"]) {
+    for (const id of state.model.locals ?? []) state.scope.values.delete(id as symbol);
+  }
+  // Direct child.dispose() is the same ownership operation as relation.remove.
+  // Remove its owning link too, so relation streams never retain a dead row.
+  for (const ownerState of statesOfScope(state.scope) ?? []) {
+    for (const runtime of relationListsOf(ownerState).children) {
+      const name = runtime.name;
+      if (!relationTargetsModel(runtime.def, state.model)) continue;
+      const bucket = reverseOf(ownerState, name).get(internal.id);
+      for (const ownerId of [...(bucket ?? [])]) {
+        const parent = ownerState.rows.get(ownerId);
+        if (!parent?.alive) continue;
+        const probe = { model: state.model, id: internal.id };
+        if (runtime.def.cardinality === "many") {
+          if (droppedLinks && !relationIsUnion(runtime.def))
+            dropLinkLater(droppedLinks, ownerState, parent, name, internal.id);
+          else removeFromMany(ownerState, parent, name, probe);
+        } else {
+          const entry = relRead(parent, name) as RelationEntry | null;
+          if (entry && entryMatchesLoose(entry, probe))
+            setOneRelation(ownerState, parent, name, runtime.def, null);
+        }
+      }
+    }
+  }
+  unlistInstance(state, internal);
+  internal.facade = undefined;
+  if (internal.bindingData !== undefined) {
+    if (internal.bindingData instanceof Map) internal.bindingData.clear();
+    internal.bindingData = undefined;
+  }
+  dropFromIndexes(state, internal);
+
+  dropFromOrder(state, internal);
+
+  if (state.aliases.size)
+    for (const [oldId, newId] of state.aliases) {
+      if (newId === internal.id) state.aliases.delete(oldId);
+    }
 
   bumpVersion(state);
   internal.notifySelf?.();
+  emitCollectionChange(state, "remove", internal);
+  if (state.runtime.kind === "static" && !state.runtime["~singletonOf"])
+    recycleInstanceScope(state, internal, instanceScope);
+}
 
-  // §3.5: the scope joins the free list a microtask LATER — a same-tick create
-  // must not reuse a scope whose pending reactions may still drain this tick.
-  if (internal.scope) {
-    const record = { scope: internal.scope, slot: internal.slot, generation: internal.generation };
+// §3.5: the scope joins the free list a microtask LATER — a same-tick create
+// must not reuse a scope whose pending reactions may still drain this tick.
+function recycleInstanceScope(
+  state: CollectionState,
+  internal: InstanceInternal,
+  instanceScope: Scope | undefined,
+): void {
+  if (state.pool.length + state.recycling >= FREE_LIST_LIMIT) return;
+  state.recycling++;
+  const record = { scope: instanceScope, slot: internal.slot, generation: internal.generation };
+  const recycle = () => {
+    state.recycling--;
+    if (state.pool.length >= FREE_LIST_LIMIT) return;
+    // Idle: nothing of the previous occupant runs in it any more (a parked
+    // continuation would have kept it busy). Drop what it still references, so
+    // a pooled scope does not pin the removed instance and its state until a
+    // new instance reuses it.
+    if (instanceScope) {
+      instanceScope.values.clear();
+      forgetPooledModelScope(instanceScope);
+      disposeScopeEdges(instanceScope);
+    }
+    state.pool.push(record);
+  };
+  if (instanceScope) whenScopeIdle(instanceScope, recycle);
+  else queueLater(recycle);
+}
 
-    queueMicrotask(() => {
-      if (state.freeScopes.length < FREE_LIST_LIMIT) state.freeScopes.push(record);
-    });
+/**
+ * Rows whose removal runs no user code and touches no other row: a static
+ * model no relation in the scope can reach, without lifecycle callbacks,
+ * owned work, ownership links or listeners. Nothing can observe the
+ * collection between their removals, so its bookkeeping updates once.
+ */
+function removableAsLeaves(
+  state: CollectionState,
+  internals: readonly InstanceInternal[],
+): boolean {
+  const definition = state.runtime;
+  if (definition.kind !== "static" || definition["~singletonOf"] || definition.relations.size)
+    return false;
+  // Every live order entry is listed (no two live instances share an id); a
+  // mismatch would mean stale bookkeeping, which the one-by-one path tolerates.
+  if (state.order.length - state.holes !== state.rows.size) return false;
+  for (const other of statesOfScope(state.scope) ?? []) {
+    const lists = relationListsOf(other);
+    for (const runtime of lists.refs) {
+      // As delete policies do: a refs target is resolved only once a row
+      // links to one of the dying ids.
+      const reverse = reverseOf(other, runtime.name);
+      if (!reverse.size || !internals.some((internal) => reverse.get(internal.id)?.size)) continue;
+      if (mayTarget(runtime.def, state.model)) return false;
+    }
+    for (const runtime of lists.children)
+      if (mayTarget(runtime.def, state.model)) return false;
+  }
+  for (const internal of internals) {
+    if (
+      !internal.alive ||
+      internal.disposal ||
+      internal.finalizing ||
+      internal.beforeDisposers !== undefined ||
+      internal.disposers?.size ||
+      internal.taskOwner ||
+      internal.ownOwner ||
+      internal.ownedInstances?.size ||
+      internal.owningInstance ||
+      internal.selfListeners?.size
+    )
+      return false;
+  }
+  return true;
+}
+
+/** A target that fails to resolve may be anything: removal takes the one-by-one path. */
+function mayTarget(def: RelationDef, model: ModelDefinition): boolean {
+  try {
+    return relationTargetsModel(def, model);
+  } catch {
+    return true;
+  }
+}
+
+/** `disposeNow` for a batch of leaves (see `removableAsLeaves`). */
+function removeLeaves(state: CollectionState, internals: readonly InstanceInternal[]): void {
+  // Clearing is exact only when these are every live row: every listed one,
+  // and nothing else left in the order.
+  let all =
+    internals.length === state.rows.size &&
+    internals.length === state.order.length - state.holes;
+  if (all) for (const internal of internals) all &&= internal.listed === true;
+  for (const internal of internals) {
+    internal.disposal = settledLeafDisposal;
+    internal.finalizing = true;
+    if (devDiagnostics) internal.disposedSite = new Error("dispose site");
+    internal.alive = false;
+    const instanceScope = NativeInstance.peekScope(internal);
+    if (instanceScope) releaseModelSnapshotScope(instanceScope);
+    if (internal.snapshotDeferred) internal.snapshotDeferred = false;
+    else if (state.type)
+      releaseModelSnapshotIdentity(internal.parentScope, state.type, internal.id);
+    internal.facade = undefined;
+    if (internal.bindingData !== undefined) {
+      if (internal.bindingData instanceof Map) internal.bindingData.clear();
+      internal.bindingData = undefined;
+    }
+    if (all) {
+      internal.listed = false;
+      continue;
+    }
+    unlistInstance(state, internal);
+    dropFromIndexes(state, internal);
+    dropFromOrder(state, internal);
+  }
+  if (all) {
+    // Every row leaves: the same end state as removing them one by one.
+    state.rows.clear();
+    for (const internal of internals) internal.indexKeys = undefined;
+    for (const buckets of state.buckets) buckets.clear();
+    for (const ord of state.ordered.values())
+      if (ord.byId.size) {
+        ord.byId.clear();
+        ord.sorted = null;
+      }
+    state.order.length = 0;
+    state.holes = 0;
+    state.head = 0;
+    // Forwarding entries die with their target, and every target is leaving.
+    state.aliases.clear();
+  } else if (state.aliases.size) {
+    const removed = new Set<string>();
+    for (const internal of internals) removed.add(internal.id);
+    for (const [oldId, newId] of state.aliases)
+      if (removed.has(newId)) state.aliases.delete(oldId);
+  }
+  for (const internal of internals) {
+    bumpVersion(state);
+    emitCollectionChange(state, "remove", internal);
+    recycleInstanceScope(state, internal, NativeInstance.peekScope(internal));
   }
 }
 
@@ -973,8 +2420,8 @@ type QueryFilter =
 
 interface QueryPlan {
   filters: QueryFilter[];
-  sortBy?: DescriptorSort;
-  takeCount?: number;
+  sort?: DescriptorSort;
+  take?: number;
 }
 
 const scanIds = new WeakMap<object, number>();
@@ -1008,10 +2455,10 @@ function planShapeOf(plan: QueryPlan): { shape: string; values: unknown[] } {
     }
   }
 
-  if (plan.sortBy) parts.push(`o:${plan.sortBy.field}:${plan.sortBy.direction}`);
-  if (plan.takeCount !== undefined) {
+  if (plan.sort) parts.push(`o:${plan.sort.field}:${plan.sort.direction}`);
+  if (plan.take !== undefined) {
     parts.push("t");
-    values.push(plan.takeCount);
+    values.push(plan.take);
   }
 
   return { shape: parts.join("|"), values };
@@ -1037,19 +2484,55 @@ export function idsEqual(a: string[], b: string[]): boolean {
   return true;
 }
 
+/**
+ * The insertion order as the instances its ids name now (optionally those in
+ * an eq bucket). A listed instance is the one its id names; the map lookup for
+ * an unlisted entry only guards against stale bookkeeping.
+ */
+function resolveOrder(state: CollectionState, bucket?: Set<string>): InstanceInternal[] {
+  const internals: InstanceInternal[] = [];
+  for (const entry of state.order) {
+    if (entry === undefined || (bucket && !bucket.has(entry.id))) continue;
+    const internal = entry.listed ? entry : state.rows.get(entry.id);
+    if (internal !== undefined) internals.push(internal);
+  }
+  return internals;
+}
+
+/** `idsEqual(ids, internals.map(id))` without building the array. */
+function namesIds(internals: readonly InstanceInternal[], ids: readonly string[]): boolean {
+  if (internals.length !== ids.length) return false;
+  for (let index = 0; index < ids.length; index += 1) {
+    if (internals[index].id !== ids[index]) return false;
+  }
+  return true;
+}
+
+function sameInternals(a: readonly InstanceInternal[], b: readonly InstanceInternal[]): boolean {
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) return false;
+  }
+
+  return a.length === b.length;
+}
+
 function computeInternals(
   state: CollectionState,
   facadeOf: (internal: InstanceInternal) => object,
   plan: QueryPlan,
+  sortKeys?: Map<InstanceInternal, unknown>,
 ): InstanceInternal[] {
   const descriptors = plan.filters.filter(
-    (filter): filter is Extract<QueryFilter, { kind: "descriptor" }> => filter.kind === "descriptor",
+    (filter): filter is Extract<QueryFilter, { kind: "descriptor" }> =>
+      filter.kind === "descriptor",
   );
 
   // Candidate source: the eq hash first (assumed most selective), then an ord
   // range, then the full membership in insertion order (§7.3).
   let consumed: QueryFilter | null = null;
-  let ids: string[] = state.order;
+  let internals: InstanceInternal[] | undefined;
+  let ids: readonly string[] | undefined;
+  let restoreInsertionOrder = false;
 
   const eqFilter = descriptors.find(
     (filter) => filter.predicate.op === "eq" && state.indexes.has(filter.predicate.field),
@@ -1060,11 +2543,15 @@ function computeInternals(
       .get(eqFilter.predicate.field)!
       .get(indexKeyOf(eqFilter.predicate.value));
 
-    ids = bucket ? state.order.filter((id) => bucket.has(id)) : [];
+    if (bucket && bucket.size < state.rows.size / 8) {
+      ids = [...bucket];
+      restoreInsertionOrder = true;
+    } else internals = bucket ? resolveOrder(state, bucket) : [];
     consumed = eqFilter;
   } else {
     const rangeFilter = descriptors.find(
-      (filter) => RANGE_OPS.has(filter.predicate.op) && state.ordIndexes.has(filter.predicate.field),
+      (filter) =>
+        RANGE_OPS.has(filter.predicate.op) && state.ordered.has(filter.predicate.field),
     );
 
     if (rangeFilter) {
@@ -1073,9 +2560,14 @@ function computeInternals(
     }
   }
 
-  let internals = ids
-    .map((id) => state.instances.get(id))
-    .filter((internal): internal is InstanceInternal => internal !== undefined);
+  if (ids) {
+    internals = [];
+    for (const id of ids) {
+      const internal = state.rows.get(id);
+      if (internal !== undefined) internals.push(internal);
+    }
+    if (restoreInsertionOrder) internals.sort((a, b) => a.insertionOrder - b.insertionOrder);
+  } else internals ??= resolveOrder(state);
 
   for (const filter of plan.filters) {
     if (filter === consumed) continue;
@@ -1086,23 +2578,214 @@ function computeInternals(
         : internals.filter((internal) => matches(facadeOf(internal), filter.predicate));
   }
 
-  if (plan.sortBy) {
-    const { field, direction } = plan.sortBy;
-
-    internals = [...internals].sort((a, b) => {
-      const left = ordKeyOf(readField(facadeOf(a), field));
-      const right = ordKeyOf(readField(facadeOf(b), field));
+  if (plan.sort) {
+    const { field, direction } = plan.sort;
+    // Read each reactive key once. A comparator can revisit a row O(log n)
+    // times; repeating scoped facade reads there dominates sorting itself.
+    const keys = sortKeys ?? new Map<InstanceInternal, unknown>();
+    for (const item of internals) keys.set(item, ordKeyOf(readField(facadeOf(item), field)));
+    internals.sort((a, b) => {
+      const left = keys.get(a);
+      const right = keys.get(b);
       const compared = left === right ? 0 : (left as never) < (right as never) ? -1 : 1;
 
       return direction === "asc" ? compared : -compared;
     });
   }
 
-  if (plan.takeCount !== undefined) {
-    internals = internals.slice(0, plan.takeCount);
+  if (plan.take !== undefined) {
+    internals = internals.slice(0, plan.take);
   }
 
   return internals;
+}
+
+/** An incremental data query: edits name the affected entity, never two lists to match. */
+function querySequence(
+  state: CollectionState,
+  facadeOf: (internal: InstanceInternal) => object,
+  plan: QueryPlan,
+): SequenceBinding<object> {
+  return {
+    scope: state.scope,
+    snapshot: () =>
+      runScopeTask(state.scope, () => computeInternals(state, facadeOf, plan).map(facadeOf)),
+    subscribe(listener) {
+      const limit = plan.take === undefined ? Infinity : Math.max(0, plan.take);
+      // Field changes identify their entity. Keep its current sort key rather
+      // than re-reading both reactive facades at every binary-search step.
+      const sortKeys = plan.sort ? new Map<InstanceInternal, unknown>() : undefined;
+      const ordered = runScopeTask(state.scope, () =>
+        computeInternals(state, facadeOf, { ...plan, take: undefined }, sortKeys),
+      );
+      // A new instance is no member yet: knowing that costs no scan of `ordered`,
+      // which made a bulk creation quadratic.
+      const members = new Set(ordered);
+      const qualifies = (internal: InstanceInternal): boolean =>
+        internal.alive &&
+        plan.filters.every((filter) =>
+          filter.kind === "scan"
+            ? filter.predicate(facadeOf(internal))
+            : matches(facadeOf(internal), filter.predicate),
+        );
+      const compare = (left: InstanceInternal, right: InstanceInternal): number => {
+        if (plan.sort) {
+          const a = sortKeys!.get(left);
+          const b = sortKeys!.get(right);
+          const value = a === b ? 0 : (a as never) < (b as never) ? -1 : 1;
+          if (value) return plan.sort.direction === "asc" ? value : -value;
+        }
+        return left.insertionOrder - right.insertionOrder;
+      };
+      const update = (internal: InstanceInternal, removed = false, match?: boolean): void => {
+        const from = members.has(internal) ? ordered.indexOf(internal) : -1;
+        const include = !removed && (match ?? qualifies(internal));
+        if (sortKeys) {
+          if (include)
+            sortKeys.set(internal, ordKeyOf(readField(facadeOf(internal), plan.sort!.field)));
+          else sortKeys.delete(internal);
+        }
+        if (from < 0 && !include) return;
+        // Most field edits do not change membership or rank. Check neighbours
+        // before moving an existing row through the ordered array.
+        if (
+          include &&
+          from >= 0 &&
+          (from === 0 || compare(ordered[from - 1], internal) <= 0) &&
+          (from === ordered.length - 1 || compare(internal, ordered[from + 1]) <= 0)
+        )
+          return;
+        const operations: SequenceOperation<object>[] = [];
+        if (!include) {
+          ordered.splice(from, 1);
+          members.delete(internal);
+          if (from < limit) {
+            operations.push({ type: "remove", index: from, count: 1 });
+            if (ordered.length >= limit)
+              operations.push({
+                type: "insert",
+                index: limit - 1,
+                items: [facadeOf(ordered[limit - 1])],
+              });
+          }
+        } else {
+          if (from >= 0) ordered.splice(from, 1);
+          else members.add(internal);
+          let to = ordered.length;
+          // Creation appends: only an earlier row needs the search.
+          if (to && compare(ordered[to - 1], internal) > 0) {
+            let start = 0;
+            let end = to;
+            while (start < end) {
+              const middle = (start + end) >>> 1;
+              if (compare(ordered[middle], internal) <= 0) start = middle + 1;
+              else end = middle;
+            }
+            to = start;
+          }
+          if (to === ordered.length) ordered.push(internal);
+          else ordered.splice(to, 0, internal);
+          if (from < 0) {
+            if (to < limit) {
+              operations.push({ type: "insert", index: to, items: [facadeOf(internal)] });
+              if (ordered.length > limit)
+                operations.push({ type: "remove", index: limit, count: 1 });
+            }
+          } else if (from !== to) {
+            if (from < limit && to < limit) operations.push({ type: "move", from, to, count: 1 });
+            else if (from < limit) {
+              operations.push({ type: "remove", index: from, count: 1 });
+              if (ordered.length >= limit)
+                operations.push({
+                  type: "insert",
+                  index: limit - 1,
+                  items: [facadeOf(ordered[limit - 1])],
+                });
+            } else if (to < limit) {
+              operations.push({ type: "insert", index: to, items: [facadeOf(internal)] });
+              if (ordered.length > limit)
+                operations.push({ type: "remove", index: limit, count: 1 });
+            }
+          }
+        }
+        if (operations.length) listener(operations);
+      };
+      const onChange: CollectionListener = (change) => {
+        runScopeTask(state.scope, () => update(change.row, change.kind === "remove"));
+      };
+      // Unsorted, an instance created later ranks after every member: new rows
+      // of a bulk creation go to the end, in creation order.
+      const appendCreated = (changes: readonly CollectionChange[]): void => {
+        const index = ordered.length;
+        const items: object[] = [];
+        for (const { row: internal } of changes) {
+          if (members.has(internal) || !qualifies(internal)) continue;
+          members.add(internal);
+          ordered.push(internal);
+          items.push(facadeOf(internal));
+        }
+        if (items.length) listener([{ type: "insert", index, items }]);
+      };
+      // A bulk creation appends its new rows as one operation; a bulk removal
+      // edits the ordered rows in one pass and reports each run of adjacent
+      // removed rows as one operation.
+      onChange.batch = (changes) => {
+        if (
+          !sortKeys &&
+          limit === Infinity &&
+          changes.every((change) => change.kind === "insert")
+        ) {
+          runScopeTask(state.scope, () => appendCreated(changes));
+          return;
+        }
+        if (limit !== Infinity || changes.some((change) => change.kind !== "remove")) {
+          for (const change of changes) onChange(change);
+          return;
+        }
+        const removed = new Set<InstanceInternal>();
+        for (const change of changes) removed.add(change.row);
+        const operations: SequenceOperation<object>[] = [];
+        let kept = 0;
+        for (let index = 0; index < ordered.length; ) {
+          if (!removed.has(ordered[index])) {
+            ordered[kept++] = ordered[index++];
+            continue;
+          }
+          const start = index;
+          while (index < ordered.length && removed.has(ordered[index])) {
+            sortKeys?.delete(ordered[index]);
+            members.delete(ordered[index]);
+            index++;
+          }
+          operations.push({ type: "remove", index: kept, count: index - start });
+        }
+        ordered.length = kept;
+        if (operations.length) listener(operations);
+      };
+      state.changes.add(onChange);
+      // Functional predicates may read application units. Track those reads;
+      // entity writes already arrive through the collection's precise feed.
+      let initializing = true;
+      const watch = plan.filters.some((filter) => filter.kind === "scan")
+        ? reaction({
+            scope: state.scope,
+            run() {
+              for (const internal of state.rows.values()) {
+                const match = qualifies(internal);
+                if (!initializing) update(internal, false, match);
+              }
+              initializing = false;
+            },
+          })
+        : undefined;
+      return () => {
+        state.changes.delete(onChange);
+        watch?.stop();
+        sortKeys?.clear();
+        members.clear();
+      };
+    },
+  };
 }
 
 function createQuery(
@@ -1112,7 +2795,7 @@ function createQuery(
   sortBy?: DescriptorSort,
   takeCount?: number,
 ): Query {
-  const plan: QueryPlan = { filters, sortBy, takeCount };
+  const plan: QueryPlan = { filters, sort: sortBy, take: takeCount };
   const { shape, values } = planShapeOf(plan);
 
   // Interned by shape; the single-slot memo keys on (values, epoch). Stable
@@ -1122,26 +2805,38 @@ function createQuery(
     const version = readVersion(state);
     let record = state.plans.get(shape);
 
-    if (record && record.version === version && valuesEqual(record.values, values)) {
+    if (record && record.epoch === version && valuesEqual(record.values, values)) {
       return record;
     }
 
     const internals = computeInternals(state, facadeOf, plan);
-    const ids = internals.map((internal) => internal.id);
 
-    if (record && valuesEqual(record.values, values) && idsEqual(record.ids, ids)) {
-      record.version = version;
+    if (record && valuesEqual(record.values, values) && namesIds(internals, record.ids)) {
+      record.epoch = version;
+      // The same ids can name new instances (removed, then created again); the
+      // memo keeps its id array but must not hand out disposed internals.
+      if (!sameInternals(record.rows, internals)) {
+        record.rows = internals;
+        record.items = null;
+      }
 
       return record;
     }
 
-    record = { version, values: [...values], internals, ids, items: null };
+    record = {
+      epoch: version,
+      values: [...values],
+      rows: internals,
+      ids: internals.map((internal) => internal.id),
+      items: null,
+    };
     state.plans.set(shape, record);
 
     return record;
   };
 
   const query: Query = {
+    [sequenceBinding]: querySequence(state, facadeOf, plan),
     "~query": true as const,
     "~scope": state.scope,
     "~versions": () => [state.version],
@@ -1150,7 +2845,7 @@ function createQuery(
       const record = resolve();
 
       if (!record.items) {
-        record.items = record.internals.map(facadeOf);
+        record.items = record.rows.map(facadeOf);
       }
 
       return record.items;
@@ -1161,52 +2856,71 @@ function createQuery(
     },
 
     get count() {
-      return resolve().internals.length;
+      return resolve().rows.length;
     },
 
     get first() {
-      const [head] = resolve().internals;
+      const [head] = resolve().rows;
 
       return head ? facadeOf(head) : null;
     },
 
     where(predicate) {
-      if (typeof predicate !== "function") assertOwnDescriptor(state, predicate.model, predicate.field);
+      if (typeof predicate !== "function")
+        assertOwnDescriptor(state, predicate.model, predicate.field);
 
       const filter: QueryFilter =
         typeof predicate === "function"
           ? { kind: "scan", predicate }
           : { kind: "descriptor", predicate };
 
-      return createQuery(state, facadeOf, [...plan.filters, filter], plan.sortBy, plan.takeCount);
+      return createQuery(state, facadeOf, [...plan.filters, filter], plan.sort, plan.take);
     },
 
     sort(by) {
       assertOwnDescriptor(state, by.model, by.field);
 
-      return createQuery(state, facadeOf, plan.filters, by, plan.takeCount);
+      return createQuery(state, facadeOf, plan.filters, by, plan.take);
     },
 
     take(count) {
-      return createQuery(state, facadeOf, plan.filters, plan.sortBy, count);
+      return createQuery(state, facadeOf, plan.filters, plan.sort, count);
     },
 
     select(descriptor) {
-      return resolve().internals.map((internal) =>
+      return resolve().rows.map((internal) =>
         readField(facadeOf(internal), descriptor.field),
       ) as never;
     },
 
     set(descriptor, value) {
-      for (const internal of resolve().internals) {
+      for (const internal of resolve().rows) {
         (facadeOf(internal) as Record<string, { value: unknown }>)[descriptor.field].value = value;
       }
     },
 
     remove() {
-      for (const internal of [...resolve().internals]) {
-        disposeInstance(state, internal);
-      }
+      const pending: Promise<void>[] = [];
+      bulkRemoval(() =>
+        holdCollectionChanges(state, () =>
+          // One removal is one update: the collection version, and any store a
+          // disposal writes, commits once after the last row instead of per row.
+          withTransaction(() => {
+            const internals = [...resolve().rows];
+            if (internals.length > 1 && removableAsLeaves(state, internals)) {
+              removeLeaves(state, internals);
+              return;
+            }
+            withDroppedLinks(() => {
+              for (const internal of internals) {
+                const result = disposeInstance(state, internal);
+                if (result) pending.push(result);
+              }
+            });
+          }),
+        ),
+      );
+      if (pending.length) return Promise.all(pending).then(() => {});
     },
 
     toArray() {
@@ -1226,13 +2940,10 @@ function assertOwnDescriptor(
   model: ModelDefinition | undefined,
   field: string,
 ): void {
-  if (model !== undefined && model !== state.definition) {
-    throw new Error(
-      `[models] descriptor "${field}" belongs to a different model than this collection (§8) — descriptors are taken from the model being queried`,
-    );
+  if (model !== undefined && model !== state.model) {
+    throw new Error(`[models] descriptor "${field}" belongs to a different model than this collection (§8) — descriptors are taken from the model being queried`);
   }
 }
-
 
 // ---------------------------------------------------------------------------
 // Relations runtime (§5): views on instances, cascade, delete policies, wire.
@@ -1265,14 +2976,63 @@ function entryMatchesLoose(stored: RelationEntry, probe: RelationEntry): boolean
   return stored.id === probe.id && stored.model === probe.model;
 }
 
-function relRead(internal: InstanceInternal, name: string): unknown {
-  return runInInstanceContext(internal, () => relationStoreFor(internal, name).value);
+type RelationEntryIndex = Map<string, true | ModelDefinition | Set<ModelDefinition>>;
+
+/** Bare IDs match any variant; concrete union entries match only their model. */
+function indexRelationEntries(entries: readonly RelationEntry[]): RelationEntryIndex {
+  const index: RelationEntryIndex = new Map();
+  for (const entry of entries) {
+    if (typeof entry === "string") {
+      index.set(entry, true);
+      continue;
+    }
+    const previous = index.get(entry.id);
+    if (previous === undefined) index.set(entry.id, entry.model);
+    else if (previous instanceof Set) previous.add(entry.model);
+    else if (previous !== true && previous !== entry.model)
+      index.set(entry.id, new Set([previous, entry.model]));
+  }
+  return index;
 }
 
-function relWrite(internal: InstanceInternal, name: string, value: unknown): void {
+function indexedRelationEntry(index: RelationEntryIndex, entry: RelationEntry): boolean {
+  if (typeof entry === "string") return index.has(entry);
+  const match = index.get(entry.id);
+  return (
+    match === true || match === entry.model || (match instanceof Set && match.has(entry.model))
+  );
+}
+
+function relRead(internal: InstanceInternal, name: string): unknown {
+  return readRelationStore(internal, name);
+}
+
+const relationListeners = new WeakMap<
+  InstanceInternal,
+  Map<string, Set<(operations: readonly SequenceOperation<object>[]) => void>>
+>();
+
+function emitRelation(
+  internal: InstanceInternal,
+  name: string,
+  operations: readonly SequenceOperation<object>[],
+): void {
+  for (const listener of relationListeners.get(internal)?.get(name) ?? []) listener(operations);
+}
+
+function relWrite(
+  internal: InstanceInternal,
+  name: string,
+  value: unknown,
+  operations?: readonly SequenceOperation<object>[],
+): void {
   runInInstanceContext(internal, () => {
     relationStoreFor(internal, name).value = value;
   });
+  if (relationListeners.get(internal)?.get(name)?.size) {
+    const view = internal.relationView!(name) as { items?: object[] };
+    emitRelation(internal, name, operations ?? [{ type: "reset", items: view.items ?? [] }]);
+  }
 }
 
 function idOf(target: unknown): string | null {
@@ -1319,30 +3079,39 @@ function targetCollectionOf(state: CollectionState, def: RelationDef): Collectio
  * unresolved form. An INSTANCE names its variant, so union targets store the
  * precise pair (and validate membership); resolving the target here is fine —
  * an instance write is navigation. */
-function toWriteEntry(state: CollectionState, def: RelationDef, next: unknown): RelationEntry | null {
+function toWriteEntry(
+  state: CollectionState,
+  def: RelationDef,
+  next: unknown,
+): RelationEntry | null {
   if (next === null || next === undefined) return null;
-  if (typeof next === "string") return next;
+  if (typeof next === "string") {
+    const target = resolveRelationEntry(state, def, next);
+    if (target && instanceInternalOf(target)?.disposal)
+      throw new Error("[models] Cannot link a model while it is being disposed");
+    return next;
+  }
 
   const internal = instanceInternalOf(next as object);
 
   if (!internal) return idOf(next);
+  if (internal.disposal) throw new Error("[models] Cannot link a model while it is being disposed");
+  if (!internal.alive) throw new Error("[models] Cannot link a disposed model");
+  if (internal.parentScope !== state.scope)
+    throw new Error("[models] Relation target belongs to a different scope");
   if (!relationIsUnion(def)) return internal.id;
 
   const target = resolveRelationTarget(def) as UnionTargetLike;
 
   if (!target.variants.includes(internal.definition)) {
-    throw new Error(
-      "[models] the instance's model is not a variant of this relation's union target (§5.2)",
-    );
+    throw new Error("[models] the instance's model is not a variant of this relation's union target (§5.2)");
   }
 
   return { model: internal.definition, id: internal.id };
 }
 
 function ambiguousUnionId(id: string): Error {
-  return new Error(
-    `[models] id "${id}" exists in more than one variant of the union target — an id-only reference cannot disambiguate; write the relation with an instance (§5.2)`,
-  );
+  return new Error(`[models] id "${id}" exists in more than one variant of the union target — an id-only reference cannot disambiguate; write the relation with an instance (§5.2)`);
 }
 
 /** Resolve a stored entry to a live instance facade (or null). Resolution is
@@ -1377,12 +3146,12 @@ function resolveRelationEntry(
   return found;
 }
 
-export function stateOfCollection(target: Collection): CollectionState {
+export function stateOfCollection(target: object): CollectionState {
   return (target as unknown as { "~state": CollectionState })["~state"];
 }
 
 function reverseOf(state: CollectionState, name: string): Map<string, Set<string>> {
-  return state.relationReverse.get(name)!;
+  return state.reverse.get(name)!;
 }
 
 function reverseAdd(state: CollectionState, name: string, targetId: string, ownerId: string): void {
@@ -1396,7 +3165,12 @@ function reverseAdd(state: CollectionState, name: string, targetId: string, owne
   bucket.add(ownerId);
 }
 
-function reverseDrop(state: CollectionState, name: string, targetId: string, ownerId: string): void {
+function reverseDrop(
+  state: CollectionState,
+  name: string,
+  targetId: string,
+  ownerId: string,
+): void {
   const bucket = reverseOf(state, name).get(targetId);
 
   if (bucket) {
@@ -1406,19 +3180,29 @@ function reverseDrop(state: CollectionState, name: string, targetId: string, own
   }
 }
 
-function assertUnique(state: CollectionState, name: string, def: RelationDef, targetId: string, ownerId: string): void {
+function assertUnique(
+  state: CollectionState,
+  name: string,
+  def: RelationDef,
+  targetId: string,
+  ownerId: string,
+): void {
   if (!def.isUnique) return;
 
   const bucket = reverseOf(state, name).get(targetId);
 
   if (bucket && (bucket.size > 1 || (bucket.size === 1 && !bucket.has(ownerId)))) {
-    throw new Error(
-      `[models] unique constraint: relation "${name}" already links target "${targetId}" to another instance (§5.3)`,
-    );
+    throw new Error(`[models] unique constraint: relation "${name}" already links target "${targetId}" to another instance (§5.3)`);
   }
 }
 
-function setOneRelation(state: CollectionState, internal: InstanceInternal, name: string, def: RelationDef, next: RelationEntry | null): void {
+function setOneRelation(
+  state: CollectionState,
+  internal: InstanceInternal,
+  name: string,
+  def: RelationDef,
+  next: RelationEntry | null,
+): void {
   const previous = (relRead(internal, name) as RelationEntry | null) ?? null;
 
   if (entriesSame(previous, next)) return;
@@ -1439,7 +3223,13 @@ function manyIds(internal: InstanceInternal, name: string): string[] {
   return manyEntries(internal, name).map(entryIdOf);
 }
 
-function addToMany(state: CollectionState, internal: InstanceInternal, name: string, entry: RelationEntry, at?: number): void {
+function addToMany(
+  state: CollectionState,
+  internal: InstanceInternal,
+  name: string,
+  entry: RelationEntry,
+  at?: number,
+): void {
   const entries = manyEntries(internal, name);
   const existingAt = entries.findIndex((current) => entryMatchesLoose(current, entry));
 
@@ -1460,12 +3250,74 @@ function addToMany(state: CollectionState, internal: InstanceInternal, name: str
   const next = [...entries];
 
   next.splice(at === undefined ? next.length : at, 0, entry);
-  relWrite(internal, name, next);
+  const position = at === undefined ? entries.length : at;
+  const item = resolveRelationEntry(state, state.model.relations.get(name)!.def, entry);
+  relWrite(internal, name, next, [{ type: "insert", index: position, items: [item as object] }]);
   reverseAdd(state, name, entryIdOf(entry), internal.id);
 }
 
 /** Removes the first entry matching the probe; returns the REMOVED entry. */
-function removeFromMany(state: CollectionState, internal: InstanceInternal, name: string, probe: RelationEntry): RelationEntry | null {
+/**
+ * Owning links of children a bulk removal disposes, by parent and relation:
+ * each relation drops them in one write when the removal ends, instead of a
+ * copy of its entries per child.
+ */
+type DroppedLinks = Map<InstanceInternal, Map<string, Set<string>>>;
+let droppedLinks: DroppedLinks | undefined;
+
+function dropLinkLater(
+  links: DroppedLinks,
+  state: CollectionState,
+  parent: InstanceInternal,
+  name: string,
+  id: string,
+): void {
+  reverseDrop(state, name, id, parent.id);
+  let byName = links.get(parent);
+  if (!byName) links.set(parent, (byName = new Map()));
+  let ids = byName.get(name);
+  if (!ids) byName.set(name, (ids = new Set()));
+  ids.add(id);
+}
+
+/** Runs a removal of several instances, dropping their owning links together. */
+function withDroppedLinks(remove: () => void): void {
+  if (droppedLinks) {
+    remove();
+    return;
+  }
+  const links: DroppedLinks = (droppedLinks = new Map());
+  try {
+    remove();
+  } finally {
+    droppedLinks = undefined;
+    for (const [parent, byName] of links) {
+      if (!parent.alive) continue;
+      for (const [name, ids] of byName) {
+        const entries = manyEntries(parent, name);
+        const kept: RelationEntry[] = [];
+        const operations: SequenceOperation<object>[] = [];
+        for (let index = 0; index < entries.length; ) {
+          if (!ids.has(entryIdOf(entries[index]))) {
+            kept.push(entries[index++]);
+            continue;
+          }
+          const start = index;
+          while (index < entries.length && ids.has(entryIdOf(entries[index]))) index++;
+          operations.push({ type: "remove", index: kept.length, count: index - start });
+        }
+        if (operations.length) relWrite(parent, name, kept, operations);
+      }
+    }
+  }
+}
+
+function removeFromMany(
+  state: CollectionState,
+  internal: InstanceInternal,
+  name: string,
+  probe: RelationEntry,
+): RelationEntry | null {
   const entries = manyEntries(internal, name);
   const at = entries.findIndex((current) => entryMatchesLoose(current, probe));
 
@@ -1473,7 +3325,12 @@ function removeFromMany(state: CollectionState, internal: InstanceInternal, name
 
   const removed = entries[at];
 
-  relWrite(internal, name, entries.filter((_, index) => index !== at));
+  relWrite(
+    internal,
+    name,
+    entries.filter((_, index) => index !== at),
+    [{ type: "remove", index: at, count: 1 }],
+  );
   reverseDrop(state, name, entryIdOf(removed), internal.id);
 
   return removed;
@@ -1502,19 +3359,129 @@ function removeChildEntry(state: CollectionState, def: RelationDef, entry: Relat
   targetCollectionOf(state, def).remove(entryIdOf(entry));
 }
 
-function buildRelationView(state: CollectionState, internal: InstanceInternal, name: string): object {
-  const inverseRuntime = state.definition.inverses.get(name);
+function buildRelationView(
+  state: CollectionState,
+  internal: InstanceInternal,
+  name: string,
+): object {
+  const inverseRuntime = state.model.inverses.get(name);
 
   if (inverseRuntime) return buildInverseView(state, internal, inverseRuntime.def);
 
-  const runtime = state.definition.relations.get(name)!;
+  const runtime = state.model.relations.get(name)!;
   const def = runtime.def;
   const target = () => targetCollectionOf(state, def);
-  const oneEntry = (): RelationEntry | null => (relRead(internal, name) as RelationEntry | null) ?? null;
+  const oneEntry = (): RelationEntry | null =>
+    (relRead(internal, name) as RelationEntry | null) ?? null;
   const resolvedItems = (): object[] =>
     manyEntries(internal, name)
       .map((entry) => resolveRelationEntry(state, def, entry))
       .filter((instance): instance is object => instance !== null);
+  const edits: SequenceBinding<object> = {
+    scope: state.scope,
+    snapshot: resolvedItems,
+    subscribe(listener) {
+      // Keep wire positions, including unresolved refs. The UI sees only the
+      // resolved subsequence; indices are translated from each source edit,
+      // never by matching two rendered lists.
+      let entries = [...manyEntries(internal, name)];
+      let present = entries.map((entry) => resolveRelationEntry(state, def, entry));
+      // Without an unresolved entry, a wire position is its rendered position.
+      const visibleBefore = (index: number) =>
+        present.includes(null) ? present.slice(0, index).filter(Boolean).length : index;
+      const receive = (operations: readonly SequenceOperation<object>[]) => {
+        const nextEntries = manyEntries(internal, name);
+        const output: SequenceOperation<object>[] = [];
+        for (const operation of operations) {
+          if (operation.type === "insert") {
+            const index = visibleBefore(operation.index);
+            const addedEntries = nextEntries.slice(
+              operation.index,
+              operation.index + operation.items.length,
+            );
+            const added = addedEntries.map((entry) => resolveRelationEntry(state, def, entry));
+            entries.splice(operation.index, 0, ...addedEntries);
+            present.splice(operation.index, 0, ...added);
+            const items = added.filter((value): value is object => value !== null);
+            if (items.length) output.push({ type: "insert", index, items });
+          } else if (operation.type === "remove") {
+            const index = visibleBefore(operation.index);
+            const removed = present.splice(operation.index, operation.count);
+            entries.splice(operation.index, operation.count);
+            const count = removed.filter(Boolean).length;
+            if (count) output.push({ type: "remove", index, count });
+          } else if (operation.type === "move") {
+            const from = visibleBefore(operation.from);
+            const movedEntries = entries.splice(operation.from, operation.count);
+            const moved = present.splice(operation.from, operation.count);
+            const to = visibleBefore(operation.to);
+            entries.splice(operation.to, 0, ...movedEntries);
+            present.splice(operation.to, 0, ...moved);
+            const count = moved.filter(Boolean).length;
+            if (count && from !== to) output.push({ type: "move", from, to, count });
+          } else {
+            entries = [...nextEntries];
+            present = entries.map((entry) => resolveRelationEntry(state, def, entry));
+            output.push({
+              type: "reset",
+              items: present.filter((value): value is object => value !== null),
+            });
+          }
+        }
+        if (output.length) listener(output);
+      };
+      let byName = relationListeners.get(internal);
+      if (!byName) relationListeners.set(internal, (byName = new Map()));
+      let listeners = byName.get(name);
+      if (!listeners) byName.set(name, (listeners = new Set()));
+      listeners.add(receive);
+      const targetDefinition = resolveRelationTarget(def);
+      const variants = isUnionTargetLike(targetDefinition)
+        ? targetDefinition.variants
+        : [targetDefinition];
+      const targetStates = variants.map((variant) =>
+        stateOfCollection(collection(variant, state.scope)),
+      );
+      const onTarget: CollectionListener = (change: CollectionChange) => {
+        // Row bindings already observe their fields. A value-only write
+        // cannot change relation membership or resolve a missing reference.
+        if (change.kind === "update" && change.oldId === undefined) return;
+        entries = [...manyEntries(internal, name)];
+        const probe = { model: change.row.definition, id: change.row.id };
+        for (let index = 0; index < entries.length; index++) {
+          if (!entryMatchesLoose(entries[index], probe)) continue;
+          const previous = present[index];
+          const current = resolveRelationEntry(state, def, entries[index]);
+          if (previous === current) continue;
+          const at = visibleBefore(index);
+          present[index] = current;
+          if (previous) listener([{ type: "remove", index: at, count: 1 }]);
+          if (current) listener([{ type: "insert", index: at, items: [current] }]);
+        }
+      };
+      // A bulk creation or removal of targets: one pass over the entries, not one per target.
+      onTarget.batch = (changes) => {
+        if (changes.every((change) => change.kind === "update" && change.oldId === undefined))
+          return;
+        entries = [...manyEntries(internal, name)];
+        for (let index = 0; index < entries.length; index++) {
+          const previous = present[index];
+          const current = resolveRelationEntry(state, def, entries[index]);
+          if (previous === current) continue;
+          const at = visibleBefore(index);
+          present[index] = current;
+          if (previous) listener([{ type: "remove", index: at, count: 1 }]);
+          if (current) listener([{ type: "insert", index: at, items: [current] }]);
+        }
+      };
+      for (const targetState of targetStates) targetState.changes.add(onTarget);
+      return () => {
+        listeners!.delete(receive);
+        if (!listeners!.size) byName!.delete(name);
+        for (const targetState of targetStates) targetState.changes.delete(onTarget);
+      };
+    },
+  };
 
   if (def.relation === "refs" && def.cardinality === "one") {
     return {
@@ -1530,6 +3497,7 @@ function buildRelationView(state: CollectionState, internal: InstanceInternal, n
 
   if (def.relation === "refs" && def.cardinality === "many") {
     return {
+      [sequenceBinding]: edits,
       add: (targetRef: unknown) => {
         const entry = toWriteEntry(state, def, targetRef);
 
@@ -1558,6 +3526,7 @@ function buildRelationView(state: CollectionState, internal: InstanceInternal, n
 
   if (def.relation === "children" && def.cardinality === "many") {
     return {
+      [sequenceBinding]: edits,
       add: (input: Record<string, unknown> | readonly Record<string, unknown>[]) =>
         addChildren(state, internal, name, def, input),
 
@@ -1566,9 +3535,18 @@ function buildRelationView(state: CollectionState, internal: InstanceInternal, n
 
         if (probe === null) return;
 
-        const removed = removeFromMany(state, internal, name, probe);
-
-        if (removed !== null) removeChildEntry(state, def, removed);
+        const entries = manyEntries(internal, name);
+        const entry = entries.find((entry) => entryMatchesLoose(entry, probe));
+        if (!entry) return;
+        const child = resolveRelationEntry(state, def, entry) as {
+          dispose(): void | Promise<void>;
+        } | null;
+        const result = child?.dispose();
+        const unlink = () => {
+          if (internal.alive) removeFromMany(state, internal, name, probe);
+        };
+        if (result) return result.then(unlink);
+        unlink();
       },
 
       move: (childRef: unknown, index: number) => {
@@ -1581,11 +3559,10 @@ function buildRelationView(state: CollectionState, internal: InstanceInternal, n
 
         if (at < 0) return;
 
-        const [moved] = entries.splice(at, 1);
         const next = [...entries];
-
+        const [moved] = next.splice(at, 1);
         next.splice(index, 0, moved);
-        relWrite(internal, name, next);
+        relWrite(internal, name, next, [{ type: "move", from: at, to: index, count: 1 }]);
       },
 
       get ids(): string[] {
@@ -1603,13 +3580,21 @@ function buildRelationView(state: CollectionState, internal: InstanceInternal, n
   }
 
   // children.one (§5.1): { value, create, clear }
-  const clearOne = (): void => {
+  const clearOne = (): void | Promise<void> => {
     const current = oneEntry();
 
     if (current !== null) {
-      relWrite(internal, name, null);
-      reverseDrop(state, name, entryIdOf(current), internal.id);
-      removeChildEntry(state, def, current);
+      const child = resolveRelationEntry(state, def, current) as {
+        dispose(): void | Promise<void>;
+      } | null;
+      const result = child?.dispose();
+      const unlink = () => {
+        if (!internal.alive || oneEntry() !== current) return;
+        relWrite(internal, name, null);
+        reverseDrop(state, name, entryIdOf(current), internal.id);
+      };
+      if (result) return result.then(unlink);
+      unlink();
     }
   };
 
@@ -1622,9 +3607,7 @@ function buildRelationView(state: CollectionState, internal: InstanceInternal, n
       const current = oneEntry();
 
       if (current !== null && resolveRelationEntry(state, def, current) !== null) {
-        throw new Error(
-          `[models] children.one "${name}" already has a live child — clear() it explicitly (§5.1)`,
-        );
+        throw new Error(`[models] children.one "${name}" already has a live child — clear() it explicitly (§5.1)`);
       }
 
       const child = createChild(state, internal, name, target(), input);
@@ -1645,6 +3628,8 @@ function createChild(
   target: Collection,
   input: Record<string, unknown>,
 ): object {
+  if (!parent.alive || parent.disposal)
+    throw new Error("[models] Cannot create a child of a disposing model");
   creatingViaParent += 1;
 
   try {
@@ -1672,13 +3657,59 @@ function addChildren(
     const entries = manyEntries(parent, name);
 
     if (!entries.some((current) => entryMatchesLoose(current, entry))) {
-      relWrite(parent, name, [...entries, entry]);
+      relWrite(
+        parent,
+        name,
+        [...entries, entry],
+        [{ type: "insert", index: entries.length, items: [child] }],
+      );
     }
 
     return child;
   };
 
-  return Array.isArray(input) ? input.map(one) : one(input as Record<string, unknown>);
+  if (!Array.isArray(input)) return one(input as Record<string, unknown>);
+  // Union variants may share an id: their entries are matched one by one.
+  if (relationIsUnion(def)) return input.map(one);
+  return addChildBatch(state, parent, name, def, target, input);
+}
+
+/**
+ * `add` of several children: created by one batch of the target (atomic, and
+ * one change for its listeners), recorded in the relation with one write.
+ */
+function addChildBatch(
+  state: CollectionState,
+  parent: InstanceInternal,
+  name: string,
+  def: RelationDef,
+  target: Collection,
+  inputs: readonly Record<string, unknown>[],
+): object[] {
+  if (!parent.alive || parent.disposal)
+    throw new Error("[models] Cannot create a child of a disposing model");
+  let children: object[];
+  creatingViaParent += 1;
+  try {
+    children = target.add(inputs) as object[];
+  } finally {
+    creatingViaParent -= 1;
+  }
+  const entries = manyEntries(parent, name);
+  const known = new Set(entries.map(entryIdOf));
+  const added: RelationEntry[] = [];
+  const items: object[] = [];
+  for (const child of children) {
+    const id = (child as { id: string }).id;
+    reverseAdd(state, name, id, parent.id);
+    if (known.has(id)) continue;
+    known.add(id);
+    added.push(childEntryOf(def, child));
+    items.push(child);
+  }
+  if (added.length)
+    relWrite(parent, name, [...entries, ...added], [{ type: "insert", index: entries.length, items }]);
+  return children;
 }
 
 function buildInverseView(
@@ -1690,13 +3721,12 @@ function buildInverseView(
   const owningRelation = owning.model.relations.get(owning.field);
 
   if (!owningRelation) {
-    throw new Error(
-      `[models] inverse() points at "${owning.field}", which is not a relation of the owning model (§5.3)`,
-    );
+    throw new Error(`[models] inverse() points at "${owning.field}", which is not a relation of the owning model (§5.3)`);
   }
 
   const owningDef = owningRelation.def;
-  const owningCollection = () => collection(owning.model as ModelDefinition, state.scope) as Collection;
+  const owningCollection = () =>
+    collection(owning.model as ModelDefinition, state.scope) as Collection;
   const ownerIds = (): string[] => {
     const owningState = stateOfCollection(owningCollection());
     const bucket = reverseOf(owningState, owning.field).get(internal.id);
@@ -1710,7 +3740,7 @@ function buildInverseView(
     const filtered: string[] = [];
 
     for (const ownerId of bucket) {
-      const ownerInternal = owningState.instances.get(ownerId);
+      const ownerInternal = owningState.rows.get(ownerId);
 
       if (!ownerInternal) continue;
 
@@ -1800,8 +3830,12 @@ function buildInverseView(
   };
 }
 
-function serializeRelationsOf(state: CollectionState, internal: InstanceInternal, out: Record<string, unknown>): void {
-  for (const [name, runtime] of state.definition.relations) {
+function serializeRelationsOf(
+  state: CollectionState,
+  internal: InstanceInternal,
+  out: Record<string, unknown>,
+): void {
+  for (const [name, runtime] of state.model.relations) {
     const def = runtime.def;
     const key = def.wireKey ?? name;
 
@@ -1824,14 +3858,23 @@ function serializeRelationsOf(state: CollectionState, internal: InstanceInternal
       out[key] = manyEntries(internal, name)
         .map((entry) => resolveRelationEntry(state, def, entry))
         .filter((child): child is object => child !== null)
-        .map((child) => (child as { json(): unknown }).json());
+        .map(childJson);
     } else {
-      const child = resolveRelationEntry(state, def, (relRead(internal, name) as RelationEntry | null) ?? null);
+      const child = resolveRelationEntry(
+        state,
+        def,
+        (relRead(internal, name) as RelationEntry | null) ?? null,
+      );
 
-      out[key] = child === null ? null : (child as { json(): unknown }).json();
+      out[key] = child === null ? null : childJson(child);
     }
   }
   // inverse views never serialize (§5.3)
+}
+
+/** A child's `json()`: a native instance serializes without binding the method onto it. */
+function childJson(child: object): unknown {
+  return modelViewSnapshotOf(child) ?? (child as { json(): unknown }).json();
 }
 
 function applyRelationInput(
@@ -1840,7 +3883,7 @@ function applyRelationInput(
   input: Record<string, unknown>,
   replace: boolean,
 ): void {
-  for (const [name, runtime] of state.definition.relations) {
+  for (const [name, runtime] of state.model.relations) {
     const def = runtime.def;
     const key = def.wireKey ?? name;
     const present = key in input;
@@ -1854,7 +3897,13 @@ function applyRelationInput(
 
       // a wire id stores as-is — for a union target it is the unresolved form,
       // and the target thunk is NOT run here (§5.4 laziness)
-      setOneRelation(state, internal, name, def, raw === null || raw === undefined ? null : idOf(raw));
+      setOneRelation(
+        state,
+        internal,
+        name,
+        def,
+        raw === null || raw === undefined ? null : idOf(raw),
+      );
       continue;
     }
 
@@ -1914,8 +3963,17 @@ function applyRelationInput(
         nextEntries.push(entry);
       }
 
+      // Small lists need no index. Large snapshots must not perform a full
+      // linear search for every existing child (quadratic even with no edits).
+      const retained =
+        current.length > 16 && nextEntries.length > 16
+          ? indexRelationEntries(nextEntries)
+          : undefined;
       for (const entry of current) {
-        if (!nextEntries.some((next) => entryMatchesLoose(entry, next))) {
+        const keep = retained
+          ? indexedRelationEntry(retained, entry)
+          : nextEntries.some((next) => entryMatchesLoose(entry, next));
+        if (!keep) {
           reverseDrop(state, name, entryIdOf(entry), internal.id);
           removeChildEntry(state, def, entry);
         }
@@ -1937,7 +3995,11 @@ function applyRelationInput(
     const currentEntry = (relRead(internal, name) as RelationEntry | null) ?? null;
     const suppliedId = typeof json.id === "string" ? json.id : undefined;
 
-    if (suppliedId !== undefined && currentEntry !== null && entryIdOf(currentEntry) === suppliedId) {
+    if (
+      suppliedId !== undefined &&
+      currentEntry !== null &&
+      entryIdOf(currentEntry) === suppliedId
+    ) {
       const target = targetCollectionOf(state, def);
 
       creatingViaParent += 1;
@@ -1957,25 +4019,28 @@ function applyRelationInput(
 // Delete policies (§5.1): before a target instance dies, every refs relation in
 // the scope pointing at it applies its policy — restrict aborts, nullify clears,
 // orphan leaves the id to resolve as null.
-function applyDeletePolicies(state: CollectionState, dying: InstanceInternal): void {
-  const scopeStates = statesByScope.get(state.scope);
+function applyDeletePolicies(
+  state: CollectionState,
+  dying: InstanceInternal,
+  validateOnly = false,
+): void {
+  const scopeStates = statesOfScope(state.scope);
 
   if (!scopeStates) return;
 
-  const probe: RelationEntry = { model: state.definition, id: dying.id };
+  let probe: RelationEntry | undefined;
 
   for (const other of scopeStates) {
-    for (const [name, runtime] of other.definition.relations) {
+    for (const runtime of relationListsOf(other).refs) {
+      const name = runtime.name;
       const def = runtime.def;
-
-      if (def.relation !== "refs") continue;
 
       // Links are created by WRITES, not navigation — the reverse bucket is the
       // truth; the target resolves here (cheap, and all modules exist by now).
       const bucket = reverseOf(other, name).get(dying.id);
 
       if (!bucket || bucket.size === 0) continue;
-      if (!relationTargetsModel(def, state.definition)) continue;
+      if (!relationTargetsModel(def, state.model)) continue;
 
       // Union targets key reverse buckets by id alone — narrow to owners whose
       // STORED entry references the dying variant; a same-id instance of
@@ -1984,7 +4049,7 @@ function applyDeletePolicies(state: CollectionState, dying: InstanceInternal): v
       const referencing: InstanceInternal[] = [];
 
       for (const ownerId of [...bucket]) {
-        const owner = other.instances.get(ownerId);
+        const owner = other.rows.get(ownerId);
 
         if (!owner) continue;
 
@@ -1995,10 +4060,15 @@ function applyDeletePolicies(state: CollectionState, dying: InstanceInternal): v
 
         const current = relRead(owner, name);
         const matches = Array.isArray(current)
-          ? (current as RelationEntry[]).some((entry) => entryMatchesLoose(entry, probe))
+          ? (current as RelationEntry[]).some((entry) =>
+              entryMatchesLoose(entry, (probe ??= { model: state.model, id: dying.id })),
+            )
           : current !== null &&
             current !== undefined &&
-            entryMatchesLoose(current as RelationEntry, probe);
+            entryMatchesLoose(
+              current as RelationEntry,
+              (probe ??= { model: state.model, id: dying.id }),
+            );
 
         if (matches) referencing.push(owner);
       }
@@ -2008,17 +4078,20 @@ function applyDeletePolicies(state: CollectionState, dying: InstanceInternal): v
       const policy = def.onDelete ?? "nullify";
 
       if (policy === "restrict") {
-        throw new Error(
-          `[models] restrict: instance "${dying.id}" is still referenced through relation "${name}" (§5.1)`,
-        );
+        throw new Error(`[models] restrict: instance "${dying.id}" is still referenced through relation "${name}" (§5.1)`);
       }
 
-      if (policy === "nullify") {
+      if (policy === "nullify" && !validateOnly) {
         for (const owner of referencing) {
           if (def.cardinality === "one") {
             setOneRelation(other, owner, name, def, null);
           } else {
-            removeFromMany(other, owner, name, probe);
+            removeFromMany(
+              other,
+              owner,
+              name,
+              (probe ??= { model: state.model, id: dying.id }),
+            );
           }
         }
       }
@@ -2028,10 +4101,9 @@ function applyDeletePolicies(state: CollectionState, dying: InstanceInternal): v
 }
 
 function cascadeChildren(state: CollectionState, dying: InstanceInternal): void {
-  for (const [name, runtime] of state.definition.relations) {
+  for (const runtime of relationListsOf(state).children) {
+    const name = runtime.name;
     const def = runtime.def;
-
-    if (def.relation !== "children") continue;
 
     const entries =
       def.cardinality === "many"
@@ -2045,16 +4117,21 @@ function cascadeChildren(state: CollectionState, dying: InstanceInternal): void 
       removeChildEntry(state, def, entry);
     }
   }
+  if (dying.ownedInstances?.size)
+    for (const child of [...dying.ownedInstances]) {
+      if (child.alive)
+        disposeInstance(stateOfCollection(collection(child.definition, child.parentScope)), child);
+    }
 }
 
 function rewriteRelationIds(state: CollectionState, oldId: string, newId: string): void {
-  const scopeStates = statesByScope.get(state.scope);
+  const scopeStates = statesOfScope(state.scope);
 
   if (!scopeStates) return;
 
   // §10.1: rebind rewrites every fk pointing at the instance, via reverse indexes.
   for (const other of scopeStates) {
-    for (const [name, runtime] of other.definition.relations) {
+    for (const [name, runtime] of other.model.relations) {
       const def = runtime.def;
       const reverse = reverseOf(other, name);
       const bucket = reverse.get(oldId);
@@ -2062,7 +4139,7 @@ function rewriteRelationIds(state: CollectionState, oldId: string, newId: string
       if (!bucket) continue;
       // Two models may share an id string — only rewrite fks that actually
       // target the rebound instance's model.
-      if (!relationTargetsModel(def, state.definition)) continue;
+      if (!relationTargetsModel(def, state.model)) continue;
 
       if (!relationIsUnion(def)) {
         // model target: every id in this bucket is unambiguously the model's
@@ -2070,14 +4147,18 @@ function rewriteRelationIds(state: CollectionState, oldId: string, newId: string
         reverse.set(newId, bucket);
 
         for (const ownerId of bucket) {
-          const owner = other.instances.get(ownerId);
+          const owner = other.rows.get(ownerId);
 
           if (!owner) continue;
 
           const current = relRead(owner, name);
 
           if (Array.isArray(current)) {
-            relWrite(owner, name, current.map((id) => (id === oldId ? newId : id)));
+            relWrite(
+              owner,
+              name,
+              current.map((id) => (id === oldId ? newId : id)),
+            );
           } else if (current === oldId) {
             relWrite(owner, name, newId);
           }
@@ -2087,11 +4168,11 @@ function rewriteRelationIds(state: CollectionState, oldId: string, newId: string
 
       // union target: surgical — rewrite only entries referencing THIS variant;
       // a same-id entry of another variant keeps its id and its bucket slot
-      const probe: RelationEntry = { model: state.definition, id: oldId };
-      const rewritten: RelationEntry = { model: state.definition, id: newId };
+      const probe: RelationEntry = { model: state.model, id: oldId };
+      const rewritten: RelationEntry = { model: state.model, id: newId };
 
       for (const ownerId of [...bucket]) {
-        const owner = other.instances.get(ownerId);
+        const owner = other.rows.get(ownerId);
 
         if (!owner) continue;
 
@@ -2131,39 +4212,6 @@ function rewriteRelationIds(state: CollectionState, oldId: string, newId: string
 // ---------------------------------------------------------------------------
 // Binding seams (§10.1) and inspector aggregation (§10.3).
 
-export function isModelQuery(value: unknown): value is Query {
-  return (
-    typeof value === "object" && value !== null && (value as Query)["~query"] === true
-  );
-}
-
-/** What a subscription-based binding needs to follow a query: the epoch stores
- * whose bumps can change the result (one per participating collection). */
-export function queryReactivity(query: object): {
-  scope: Scope;
-  versions: StoreWritable<number>[];
-} {
-  const marked = query as Query;
-
-  if (marked["~query"] !== true || !marked["~versions"] || !marked["~scope"]) {
-    throw new Error("[models] queryReactivity expects a collection query (§10.1)");
-  }
-
-  return { scope: marked["~scope"], versions: marked["~versions"]() };
-}
-
-/** Per-instance change feed for bindings: own field/relation writes, dispose,
- * rebind. Granularity is the instance — exactly what an entity view renders. */
-export function subscribeInstance(instance: object, listener: () => void): () => void {
-  const internal = instanceInternalOf(instance);
-
-  if (!internal) {
-    throw new Error("[models] subscribeInstance expects a model instance (§10.1)");
-  }
-
-  return internal.subscribeSelf ? internal.subscribeSelf(listener) : () => {};
-}
-
 // §10.3: devtools must not see a thousand instance scopes — events attribute to
 // the application scope; everything that is not a model instance scope passes
 // through untouched.
@@ -2187,28 +4235,28 @@ export interface CollectionInspectorStats {
 /** Aggregated per-collection view for the inspector (§10.3): entity counts,
  * index statistics, interned plans, pool depth — instead of per-scope noise. */
 export function modelsInspectorSnapshot(scope: Scope): CollectionInspectorStats[] {
-  const states = statesByScope.get(normalizeHomeScope(scope));
+  const states = statesOfScope(normalizeHomeScope(scope));
 
   if (!states) return [];
 
   return [...states].map((state) => ({
-    model: state.definition.name ?? null,
-    kind: state.definition.kind,
-    count: state.instances.size,
+    model: state.model.name ?? null,
+    kind: state.model.kind,
+    count: state.rows.size,
     indexes: [
       ...[...state.indexes.entries()].map(([field, buckets]) => ({
         field,
         kind: "eq" as const,
         size: buckets.size,
       })),
-      ...[...state.ordIndexes.entries()].map(([field, ord]) => ({
+      ...[...state.ordered.entries()].map(([field, ord]) => ({
         field,
         kind: "ord" as const,
         size: ord.byId.size,
       })),
     ],
     plans: state.plans.size,
-    pooledScopes: state.freeScopes.length,
+    pooledScopes: state.pool.length,
   }));
 }
 
@@ -2245,3 +4293,23 @@ function matches(facade: object, predicate: DescriptorPredicate): boolean {
         : typeof value === "string" && value.includes(String(expected));
   }
 }
+
+// V8 holds hidden-class transitions weakly: a memory-reducing collection while
+// no instance is alive (e.g. after removing every row) drops these maps, and
+// the optimized code built on them deoptimizes. Synthetic instances keep them.
+export const retainedModelShapes: readonly object[] = (() => {
+  const registry = { next: 0 } as unknown as CollectionState;
+  const retained: object[] = [];
+  // A facade binds detachable methods onto its target on first access; keep
+  // the common orders of those additions too.
+  for (const methods of [[], ["json"], ["json", "dispose"], ["dispose"], ["onCleanup"]]) {
+    const instance = new NativeInstance(registry, undefined, "shape", 0, 1, false);
+    const facade = createInstanceFacade(instance as unknown as InstanceInternal);
+    for (const method of methods) void (facade as Record<string, unknown>)[method];
+    retained.push(instance, facade);
+  }
+  const completion = new DisposalCompletion();
+  completion.trace = {};
+  retained.push(completion);
+  return retained;
+})();

@@ -18,7 +18,7 @@ export interface RenderedPage {
 export interface HydratedPage<Data> {
   readonly data: Data;
   readonly scope: Scope;
-  readonly dispose: () => void;
+  readonly dispose: () => Promise<void>;
 }
 
 /** Render one request with its own Core scope and a hydration payload. */

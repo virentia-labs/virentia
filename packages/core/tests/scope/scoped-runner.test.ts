@@ -1,3 +1,4 @@
+import { effect } from "../../lib";
 import { afterEach, describe, expect, it } from "vitest";
 import { event, getCurrentScope, reaction, scope, scoped, store } from "../../lib";
 import type { Scope } from "../../lib";
@@ -46,7 +47,7 @@ describe("scoped()", () => {
 
   it("resolves an async body to fn's resolved value", async () => {
     const result = await scoped(scope(), async () => {
-      await Promise.resolve();
+      await tick();
       return 99;
     });
 
@@ -153,7 +154,7 @@ describe("scoped()", () => {
       const inAppScope = scoped(appScope);
 
       await inAppScope(async () => {
-        await Promise.resolve();
+        await tick();
         count.value += 1;
       });
 
@@ -202,7 +203,7 @@ describe("scoped()", () => {
 
         const f = scoped(s).wrap(async () => {
           ev(5);
-          await Promise.resolve();
+          await tick();
         });
 
         await f();
@@ -245,7 +246,7 @@ describe("scoped()", () => {
         const appScope = scope();
         const count = store(0);
         const callback = scoped(appScope).wrap(async (amount: number) => {
-          await Promise.resolve();
+          await tick();
           count.value += amount;
         });
 
@@ -338,3 +339,6 @@ describe("scoped()", () => {
     });
   });
 });
+
+const tickUnit = effect(() => Promise.resolve());
+const tick = () => getCurrentScope() ? tickUnit() : Promise.resolve();

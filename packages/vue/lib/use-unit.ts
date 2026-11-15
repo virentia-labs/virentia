@@ -10,6 +10,7 @@ import {
   type Store,
   type StoreWritable,
 } from "@virentia/core";
+import { boundStoreScopeOf } from "@virentia/core/internal";
 import {
   customRef,
   getCurrentInstance,
@@ -119,6 +120,7 @@ function bindStoreRef<T>(unit: AnyStore<T>, scope: Scope): Readonly<Ref<T>> {
   // subscription itself is installed later.
   let unsubscribe: (() => void) | null = null;
   let disposed = false;
+  const subscriptionScope = boundStoreScopeOf(unit) ?? scope;
   const hydration = useOptionalHydration(scope);
   const instance = getCurrentInstance();
   const serverRendering = instance && inject(ssrContextKey, null) !== null;
@@ -144,7 +146,7 @@ function bindStoreRef<T>(unit: AnyStore<T>, scope: Scope): Readonly<Ref<T>> {
         if (!disposed) {
           if (!unsubscribe && !serverRendering) {
             unsubscribe = unit.subscribe((_value, nextScope) => {
-              if (nextScope !== scope || hydrating) {
+              if (nextScope !== subscriptionScope || hydrating) {
                 return;
               }
 

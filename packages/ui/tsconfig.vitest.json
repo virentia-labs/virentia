@@ -7,7 +7,7 @@
   },
   "include": [
     "lib/**/*.ts",
-    "compiler/**/*.ts",
+    "vite.ts",
     "tests/**/*.ts",
     "tests/**/*.tsx",
     "examples/**/*.ts",

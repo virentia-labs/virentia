@@ -1,4 +1,5 @@
 import { scoped, type Scope } from "@virentia/core";
+import { boundStoreScopeOf } from "@virentia/core/internal";
 import { useCallback, useMemo, useRef, useSyncExternalStore } from "react";
 import { useStoreReadScope } from "./scope";
 import type { AnyStore, UnitLike } from "./types";
@@ -178,9 +179,10 @@ export function useTrackedTree(
       const unsubscribes: Array<() => void> = [];
 
       for (const unit of built.stores) {
+        const subscriptionScope = boundStoreScopeOf(unit) ?? scope;
         unsubscribes.push(
           unit.subscribe((_value: unknown, nextScope: Scope) => {
-            if (nextScope !== scope) {
+            if (nextScope !== subscriptionScope) {
               return;
             }
             if (!reads.has(unit)) {

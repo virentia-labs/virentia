@@ -1,27 +1,30 @@
 /** @jsxImportSource @virentia/ui */
-import { expectTypeOf, test } from "vitest";
-import { component, type ComponentOptions, type ComponentProps } from "../../lib";
+import { f, model, staticModel, type InstanceOf } from "@virentia/core/models";
+import { expectTypeOf } from "vitest";
+import { component, store, type ComponentInput, type ComponentProps, type Readable } from "../../lib";
 
-test("component preserves function props and types the id selector", () => {
-  const Bare = () => "bare";
-  const keyed = <Bare id="named" />;
-  expectTypeOf(keyed).toEqualTypeOf<import("../../lib").ElementDescriptor>();
-
-  const View = (props: { id: string; count: number }) => `${props.id}: ${props.count}`;
-  const Configured = component(View, {
-    keep: true,
-    id: (props) => {
-      expectTypeOf(props).toEqualTypeOf<{ id: string; count: number }>();
-      return props.id;
-    },
-  });
-
-  expectTypeOf<ComponentProps<typeof Configured>>().toEqualTypeOf<{
-    id: string;
-    count: number;
-  }>();
-  expectTypeOf(Configured.model.kind).toEqualTypeOf<"dynamic" | "static">();
-  expectTypeOf<ComponentOptions<{ id: string }>["id"]>().toEqualTypeOf<
-    ((props: { id: string }) => string) | undefined
-  >();
-});
+const Model = staticModel({ data: { title: f.string(), count: f.number(0) } });
+const View = component({ model: Model, view(props, self) {
+  expectTypeOf(props.title).toEqualTypeOf<string | Readable<string>>();
+  expectTypeOf(self.model).toEqualTypeOf<InstanceOf<typeof Model>>();
+  expectTypeOf(self.id).toEqualTypeOf<string>();
+  expectTypeOf(self.instances).toEqualTypeOf<readonly InstanceOf<typeof Model>[]>();
+  return <p>{self.model.title}</p>;
+} });
+expectTypeOf<ComponentProps<typeof View>>().toEqualTypeOf<ComponentInput<typeof Model>>();
+<View title="title" />;
+<View title={store("title")} />;
+<View model={Model.create({ title: "ready" })} />;
+<View model={store<InstanceOf<typeof Model> | null>(null)} />;
+// @ts-expect-error required constructor input stays required without a ready model
+<View />;
+// @ts-expect-error wrong scalar or source type
+<View title={store(1)} />;
+// @ts-expect-error identity is a creation string, never a reactive source
+<View title="title" id={store("id")} />;
+// @ts-expect-error the declaration is not a component instance
+<View model={Model} />;
+// @ts-expect-error removed setup-function overload
+component(() => <p />);
+const Dynamic = component({ model: model({ data: { text: f.string("") } }), view: (_props, self) => <p>{self.model.text}</p> });
+<Dynamic />;

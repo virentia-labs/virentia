@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { computed, reaction, scope, scoped } from "../../lib/index";
-import { collection, f, staticModel, trait, union } from "../../lib/models";
+import { f, staticModel, trait, union } from "../../lib/models";
+import { collection } from "../../lib/models/collection";
 
 // §5.2: a union is positional, variant identity is a model reference. Instances
 // live in variant collections; the union collection is a view — `by` routes
@@ -519,5 +520,19 @@ describe("known-id merge never calls by (§5.2)", () => {
       // break a legitimate known-id merge
       expect(feed.count).toBe(1);
     });
+  });
+});
+
+describe("union query memo after ids are reused", () => {
+  it("returns the recreated variant instances", () => {
+    const A: any = staticModel({ data: { label: f.string("") } });
+    const B: any = staticModel({ data: { size: f.number(0) } });
+    const U: any = union(A, B);
+    const app = scope();
+    const first = scoped(app, () => A.create({ id: "a", label: "first" }));
+    expect(scoped(app, () => collection(U, app).items)).toEqual([first]);
+    scoped(app, () => first.dispose());
+    const second = scoped(app, () => A.create({ id: "a", label: "second" }));
+    expect(scoped(app, () => collection(U, app).items[0])).toBe(second);
   });
 });

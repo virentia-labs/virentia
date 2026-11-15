@@ -2,18 +2,8 @@ import { describe, expect, it } from "vitest";
 import { computed, scope, scoped } from "../../lib/index";
 import type { Scope } from "../../lib/index";
 import { getInspectorScopeId } from "../../lib/kernel/inspector";
-import {
-  collection,
-  f,
-  isModelInstance,
-  isModelQuery,
-  model,
-  modelsInspectorSnapshot,
-  queryReactivity,
-  staticModel,
-  subscribeInstance,
-  union,
-} from "../../lib/models";
+import { f, isModelInstance, isModelQuery, model, modelsInspectorSnapshot, queryReactivity, staticModel, subscribeInstance, union } from "../../lib/models";
+import { collection } from "../../lib/models/collection";
 
 // §10.1 seams the bindings build on, §10.3 inspector aggregation.
 

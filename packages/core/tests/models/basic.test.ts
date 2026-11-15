@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { event, reaction, scope, scoped } from "../../lib/index";
-import { collection, f, fn, model, staticModel, trait } from "../../lib/models";
+import { f, fn, model, staticModel, trait } from "../../lib/models";
+import { collection } from "../../lib/models/collection";
 import type { Props } from "../../lib/models";
 
-// Scenarios follow docs/design/dynamic-models.md; section references in names.
+// Model declarations and instance lifecycle scenarios.
 
 function appScope() {
   return scope();

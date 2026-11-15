@@ -1,4 +1,26 @@
-import { FormatRegistry, Kind, Type } from "@sinclair/typebox";
+export { fieldIsOneWay } from "./protocol";
+// TypeBox's `Type` is an alias of its complete builder namespace. Import the
+// same functions directly so consumers can discard builders we never use.
+import {
+  Any as TypeAny,
+  Argument as TypeArgument,
+  Array as TypeArray,
+  Boolean as TypeBoolean,
+  FormatRegistry,
+  Integer as TypeInteger,
+  Intersect as TypeIntersect,
+  Kind,
+  Literal as TypeLiteral,
+  Null as TypeNull,
+  Number as TypeNumber,
+  Object as TypeObject,
+  Record as TypeRecord,
+  Recursive as TypeRecursive,
+  String as TypeString,
+  Tuple as TypeTuple,
+  Union as TypeUnion,
+  Unknown as TypeUnknown,
+} from "@sinclair/typebox";
 import type { Static, TSchema } from "@sinclair/typebox";
 
 // TypeBox validates string formats only when they are registered; an unknown
@@ -72,11 +94,6 @@ export function fieldOut(def: FieldDef, value: unknown): unknown {
   if (!def.binding.in && def.codec && value != null) return def.codec.out(value);
 
   return value;
-}
-
-/** True when the field converts on input but cannot serialize back (§9.1). */
-export function fieldIsOneWay(def: FieldDef): boolean {
-  return Boolean(def.binding.in) && !def.binding.out;
 }
 
 // A bound props source minted by the Props proxy in function-form `data`
@@ -432,7 +449,7 @@ const arrayFactory = (<I extends FieldLike>(inner: I, ...args: unknown[]) => {
   const item = itemParts(inner);
 
   return composite(
-    Type.Array(item.schema),
+    TypeArray(item.schema),
     item.codec ? arrayCodec(item.codec) : undefined,
     args,
   );
@@ -448,27 +465,27 @@ const arrayFactory = (<I extends FieldLike>(inner: I, ...args: unknown[]) => {
 };
 
 export const f = {
-  string: scalar<string>(Type.String()),
-  number: scalar<number>(Type.Number()),
-  integer: scalar<number>(Type.Integer()),
-  boolean: scalar<boolean>(Type.Boolean()),
-  null: scalar<null>(Type.Null()),
-  any: scalar<any>(Type.Any()),
-  unknown: scalar<unknown>(Type.Unknown()),
+  string: scalar<string>(TypeString()),
+  number: scalar<number>(TypeNumber()),
+  integer: scalar<number>(TypeInteger()),
+  boolean: scalar<boolean>(TypeBoolean()),
+  null: scalar<null>(TypeNull()),
+  any: scalar<any>(TypeAny()),
+  unknown: scalar<unknown>(TypeUnknown()),
 
   /** Stored as Date; ISO string on the wire by default, overridable via `.map` (§4.8). */
-  date: scalar<Date, string>(Type.String({ format: "date-time" }), isoDate),
+  date: scalar<Date, string>(TypeString({ format: "date-time" }), isoDate),
 
   literal<T extends string | number | boolean>(value: T): Field<T, null, true, T> {
     return makeField<T>({
-      schema: Type.Literal(value),
+      schema: TypeLiteral(value),
       defaultValue: { value },
       binding: { key: null },
     }) as Field<T, null, true, T>;
   },
 
   enum: (<T extends string | number>(values: readonly T[], ...args: unknown[]) => {
-    const schema = Type.Union(values.map((value) => Type.Literal(value)));
+    const schema = TypeUnion(values.map((value) => TypeLiteral(value)));
 
     return composite<T>(schema, undefined, args);
   }) as {
@@ -491,7 +508,7 @@ export const f = {
     const hasCodec = parts.some((part) => part.codec);
 
     return composite(
-      Type.Tuple(parts.map((part) => part.schema)),
+      TypeTuple(parts.map((part) => part.schema)),
       hasCodec ? tupleCodec(parts.map((part) => part.codec)) : undefined,
       args,
     );
@@ -516,7 +533,7 @@ export const f = {
   union: (<const Items extends readonly FieldLike[]>(items: Items, ...args: unknown[]) => {
     assertNoItemCodecs("union", items);
 
-    return composite(Type.Union(items.map((item) => itemParts(item).schema)), undefined, args);
+    return composite(TypeUnion(items.map((item) => itemParts(item).schema)), undefined, args);
   }) as {
     <const Items extends readonly FieldLike[]>(
       items: Items,
@@ -537,7 +554,7 @@ export const f = {
   intersect: (<const Items extends readonly FieldLike[]>(items: Items, ...args: unknown[]) => {
     assertNoItemCodecs("intersect", items);
 
-    return composite(Type.Intersect(items.map((item) => itemParts(item).schema)), undefined, args);
+    return composite(TypeIntersect(items.map((item) => itemParts(item).schema)), undefined, args);
   }) as {
     <const Items extends readonly FieldLike[]>(
       items: Items,
@@ -553,7 +570,7 @@ export const f = {
     const item = itemParts(inner);
 
     return composite(
-      Type.Record(Type.String(), item.schema),
+      TypeRecord(TypeString(), item.schema),
       item.codec ? recordCodec(item.codec) : undefined,
       args,
     );
@@ -592,7 +609,7 @@ export const f = {
     }
 
     return composite(
-      Type.Object(properties),
+      TypeObject(properties),
       members.size > 0 ? shapeCodec(members) : undefined,
       args,
     );
@@ -612,7 +629,7 @@ export const f = {
    * item; conversions inside a recursive body are rejected for now (§4.8). */
   recursive: (<T>(build: (self: TSchema) => FieldLike, ...args: unknown[]) => {
     let sawCodec = false;
-    const schema = Type.Recursive((self) => {
+    const schema = TypeRecursive((self) => {
       const part = itemParts(build(self));
 
       sawCodec ||= Boolean(part.codec);
@@ -645,7 +662,7 @@ export const f = {
   /** Generic placeholder — `Type.Argument`, instantiated at trait application (§4.5). */
   arg(index: number): Field<unknown> {
     return makeField<unknown>({
-      schema: Type.Argument(index),
+      schema: TypeArgument(index),
       binding: { key: null },
     });
   },

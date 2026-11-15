@@ -7,6 +7,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   resolve: {
     alias: {
+      "@virentia/core/models": resolve(root, "../core/lib/models.ts"),
       // Most specific first: "@virentia/core/internal" must win over "@virentia/core".
       "@virentia/core/internal": resolve(root, "../core/lib/internal.ts"),
       "@virentia/core": resolve(root, "../core/lib/index.ts"),

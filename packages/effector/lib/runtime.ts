@@ -1,5 +1,5 @@
 import * as virentia from "@virentia/core";
-import { run as runVirentia } from "@virentia/core/internal";
+import { applicationScopeOf, boundEventScopeOf, boundStoreScopeOf, modelScopeInstance, run as runVirentia } from "@virentia/core/internal";
 import {
   allSettled as effectorAllSettled,
   clearNode as clearEffectorNode,
@@ -17,8 +17,8 @@ import { ensureAssociation } from "./associations";
 import { shouldSkipVirentia, suppressEffector, suppressVirentia } from "./association-state";
 import { createMissingAssociationError } from "./errors";
 import { isEffectorUnit, isVirentiaEffect } from "./guards";
-import type { BridgeCleanup, BridgeTarget } from "./internal-types";
-import type { EffectorAssociation, VirentiaTarget, VirentiaUnit } from "./types";
+import type { BridgeCleanup, BridgeTarget, VirentiaBridgeTarget as VirentiaTarget, VirentiaBridgeUnit as VirentiaUnit } from "./internal-types";
+import type { EffectorAssociation } from "./types";
 
 export function installVirentiaToEffectorLink(
   from: VirentiaUnit,
@@ -33,6 +33,15 @@ function installVirentiaToTargetLink(
   map: (payload: unknown) => unknown,
   suppressEffectorWatch: boolean,
 ): BridgeCleanup {
+  if (typeof from !== "function" && "subscribe" in from && boundStoreScopeOf(from)) {
+    // A model computed must be observed through its fixed-scope API. Watching
+    // its shared node globally also observes every sibling and bootstraps self.
+    return from.subscribe((payload, scope) => {
+      const association = ensureAssociation({ virentia: applicationScopeOf(scope) });
+      if (shouldSkipVirentia(association, from as object)) return;
+      runBridgeTarget(association, to, map(payload), { suppressWatch: suppressEffectorWatch });
+    });
+  }
   const watcher = virentia.reaction({
     on: from as virentia.Event<unknown>,
     run(payload) {
@@ -46,9 +55,11 @@ function installVirentiaToTargetLink(
     },
   });
 
-  return () => {
-    watcher.stop();
-  };
+  const stop = () => { watcher.stop(); };
+  const home = boundEventScopeOf(from);
+  const model = home && modelScopeInstance(home) as { beforeDispose?(callback: () => void): () => void } | undefined;
+  const detach = model?.beforeDispose?.(stop);
+  return () => { detach?.(); stop(); };
 }
 
 function runBridgeTarget(
@@ -82,14 +93,31 @@ export async function callAssociation<T>(
   }
 
   if (isVirentiaEffect(unit)) {
-    return virentia.scoped(association.virentia, () => unit(payload));
+    return dispatchVirentia(association, unit, payload);
   }
 
-  await runVirentia({
-    unit: (unit as VirentiaTarget<T>).node,
-    payload,
-    scope: association.virentia,
-  });
+  await dispatchVirentia(association, unit, payload);
+}
+
+function dispatchVirentia<T>(association: EffectorAssociation, unit: VirentiaTarget<T>, payload: T): Promise<unknown> {
+  const home = typeof unit === "function"
+    ? boundEventScopeOf(unit) ?? (isVirentiaEffect(unit) ? boundStoreScopeOf(unit.pending) : undefined)
+    : boundStoreScopeOf(unit);
+  if (home && applicationScopeOf(home) !== association.virentia)
+    throw new Error("Virentia target belongs to another associated application");
+
+  if (typeof unit === "function")
+    return virentia.scoped(association.virentia, () => (unit as (value: T) => Promise<unknown>)(payload));
+
+  if (home) {
+    // The facade owns codecs, writability and disposal guards. An async result
+    // makes scoped wait for reactions spawned by this synchronous assignment.
+    return virentia.scoped(association.virentia, () => {
+      unit.value = payload;
+      return Promise.resolve();
+    });
+  }
+  return runVirentia({ unit: unit.node as virentia.Node, payload, scope: association.virentia });
 }
 
 function launchEffector<T>(
@@ -122,11 +150,13 @@ export function emitVirentia<T>(
 ): void {
   const release = options.suppressReaction ? suppressVirentia(association, unit as object) : null;
 
-  const settled = runVirentia({
-    unit: unit.node,
-    payload,
-    scope: association.virentia,
-  });
+  let settled: Promise<unknown>;
+  try {
+    settled = dispatchVirentia(association, unit, payload);
+  } catch (error) {
+    release?.();
+    throw error;
+  }
 
   if (release) {
     void settled.finally(release);
@@ -143,7 +173,7 @@ export function resolveAssociationFromEffectorScope(
   const association = ensureAssociation({ effector: scope });
   const activeVirentiaScope = virentia.getCurrentScope();
 
-  if (activeVirentiaScope && activeVirentiaScope !== association.virentia) {
+  if (activeVirentiaScope && applicationScopeOf(activeVirentiaScope) !== association.virentia) {
     throw new Error("Effector scope is associated with another Virentia scope");
   }
 
@@ -157,7 +187,7 @@ export function resolveAssociationFromVirentiaScope(): EffectorAssociation {
     throw createMissingAssociationError({});
   }
 
-  return ensureAssociation({ virentia: activeVirentiaScope });
+  return ensureAssociation({ virentia: applicationScopeOf(activeVirentiaScope) });
 }
 
 export function createEffectorScopeNode<T>(

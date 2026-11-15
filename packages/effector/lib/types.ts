@@ -21,6 +21,14 @@ export interface EffectorAssociations {
   readonly byEffector: WeakMap<EffectorScope, EffectorAssociation>;
 }
 
+/** Core model data cells expose a smaller store API than native stores. */
+export interface VirentiaFieldStore<T> {
+  readonly node: unknown;
+  readonly writable: true;
+  value: T;
+  subscribe(listener: (value: T, scope: virentia.Scope) => void): () => void;
+}
+
 export type VirentiaUnit<T = unknown> =
   | virentia.Event<T>
   | virentia.EventCallable<T>

@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getCurrentScope, scoped, store } from "@virentia/core";
-import { createElement as h, useId } from "../lib";
+import { action, component, createElement as h } from "../lib";
+import { staticModel, f } from "@virentia/core/models";
 import { foreignTree } from "../lib/runtime";
 import { hydratePage, renderPage, renderPageAsync } from "../start/runtime";
 
@@ -15,30 +16,22 @@ describe("start runtime", () => {
   it("restores request state and data while retaining the server DOM", () => {
     let initialCount = 7;
     const label = "</script><script>alert(1)</script>&\u2028\u2029";
-    function view(data: { label: string }) {
-      const count = store(initialCount, undefined, { sid: "start/count" });
-      const id = useId();
-      return h(
-        "button",
-        {
-          id,
-          title: data.label,
-          onClick: () => {
-            count.value++;
-          },
-        },
-        () => count.value,
-      );
-    }
+    const Model = staticModel({ name: "StartCounter", data: { count: f.number(0), label: f.string() }, setup(self) {
+      return { increment: action(() => { self.count.value++; }) };
+    } });
+    const App = component({ model: Model, view: (_props, self) => h("button", {
+      id: self.elementId("field"), title: self.model.label, onClick: self.model.increment,
+    }, self.model.count) });
+    const view = (data: { label: string }) => h(App, { label: data.label, count: initialCount });
 
     const first = renderPage(view, { label }, { identifierPrefix: "page" });
     expect(first.payload).not.toMatch(/[<>&\u2028\u2029]/);
     expect(JSON.parse(first.payload).data).toEqual({ label });
-    expect(Object.values(JSON.parse(first.payload).snapshot)).toEqual([7]);
+    expect(Object.values(JSON.parse(first.payload).snapshot)).toContain(7);
 
     initialCount = 9;
     const second = renderPage(view, { label }, { identifierPrefix: "page" });
-    expect(Object.values(JSON.parse(second.payload).snapshot)).toEqual([9]);
+    expect(Object.values(JSON.parse(second.payload).snapshot)).toContain(9);
 
     const container = document.createElement("div");
     container.innerHTML = first.html;

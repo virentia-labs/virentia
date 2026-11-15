@@ -3,6 +3,8 @@ import {
   modelDefinitionBindingOf,
   modelInstanceBindingOf,
   modelQueryBindingOf,
+  modelSingletonBindingOf,
+  resolveModelInstance,
 } from "@virentia/core/internal";
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useOptionalProvidedScope } from "./scope";
@@ -69,7 +71,7 @@ export function isModelDefinition(value: unknown): value is ModelDefinitionLike 
 }
 
 export function isModelInstance(value: unknown): value is ModelEntity {
-  return modelInstanceBindingOf(value) !== undefined;
+  return modelInstanceBindingOf(value) !== undefined || modelSingletonBindingOf(value) !== undefined;
 }
 
 export function isModelQuery(value: unknown): value is ModelQueryLike {
@@ -123,6 +125,11 @@ export function useModelQuery<Q extends ModelQueryLike>(query: Q): Q {
 /** Entity view: `useModel(todos.get(id))`. Re-renders on the instance's own
  * writes, rebind and dispose; resolves to null once the instance is gone. */
 export function useModelEntity<I extends object>(instance: I | null): I | null {
+  const provided = useOptionalProvidedScope();
+  if (instance && modelSingletonBindingOf(instance)) {
+    if (!provided) throw new Error("[useModel] A singleton model requires ScopeProvider");
+    instance = resolveModelInstance(instance, provided);
+  }
   const revisionRef = useRef(0);
 
   const subscribe = useCallback(

@@ -1,36 +1,17 @@
 /** @jsxImportSource @virentia/ui */
-import { collection, f, staticModel, type InstanceOf } from "@virentia/core/models";
-import { expectTypeOf, test } from "vitest";
-import { For } from "../../lib";
-
-test("For infers model instances from a definition, collection and query", () => {
-  const Todo = staticModel({
-    data: { title: f.string(), rank: f.number(0).indexed("ord") },
-  });
-  const todos = collection(Todo);
-  const ordered = todos.sort(Todo.rank.asc);
-
-  <For each={Todo} by={(todo) => todo.id}>
-    {(todo, index) => {
-      expectTypeOf(todo()).toEqualTypeOf<InstanceOf<typeof Todo>>();
-      expectTypeOf(todo().title.value).toEqualTypeOf<string>();
-      expectTypeOf(index()).toEqualTypeOf<number>();
-      return <li>{todo().title.value}</li>;
-    }}
-  </For>;
-
-  <For each={todos}>
-    {(todo) => {
-      expectTypeOf(todo()).toEqualTypeOf<InstanceOf<typeof Todo>>();
-      expectTypeOf(todo().rank.value).toEqualTypeOf<number>();
-      return <li>{todo().title.value}</li>;
-    }}
-  </For>;
-
-  <For each={ordered}>
-    {(todo) => {
-      expectTypeOf(todo()).toEqualTypeOf<InstanceOf<typeof Todo>>();
-      return <li>{todo().title.value}</li>;
-    }}
-  </For>;
-});
+import { children, f, staticModel, type InstanceOf } from "@virentia/core/models";
+import { expectTypeOf } from "vitest";
+import { component, For, type Readable } from "../../lib";
+const Task = staticModel({ data: { title: f.string(), rank: f.number(0) } });
+const Board = staticModel({ data: { tasks: children.many(Task) } });
+const Row = component({ model: Task, view: (_props, self) => <p>{self.model.title}</p> });
+<For each={Task} view={Row} />;
+<For each={Task.instances} view={Row} />;
+<For each={Task.sort(Task.rank.asc)} view={Row} />;
+<For each={Board.create({}).tasks} view={Row} />;
+<For each={Task.instances} view={(item: Readable<InstanceOf<typeof Task>>) => {
+  expectTypeOf(item.value.title.value).toEqualTypeOf<string>();
+  return <p>{item.value.title}</p>;
+}} />;
+// @ts-expect-error no explicit row keys or matching policy
+<For each={Task} view={Row} by={(task: InstanceOf<typeof Task>) => task.id} />;

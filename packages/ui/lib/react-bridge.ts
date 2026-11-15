@@ -3,7 +3,8 @@ import { ScopeProvider } from "@virentia/react";
 import { createElement, useEffect, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, hydrateRoot, type Root } from "react-dom/client";
-import { foreignTree, useId, type ForeignRoot } from "./runtime";
+import { foreignTree } from "./foreign-tree";
+import { contextualElementId, type ForeignRoot } from "./native-runtime";
 import type { Child, ForeignHostTag } from "./types";
 
 export interface ReactTreeProps {
@@ -34,7 +35,7 @@ export function createReactTree(
   props: ReactTreeProps,
   serverRender?: (node: ReactNode, scope: Scope, identifierPrefix: string) => string,
 ): Child {
-  const identifierPrefix = `${useId()}:react:`;
+  const identifierPrefix = `${contextualElementId("react")}:react:`;
   return foreignTree<ReactNode>({
     kind: "react",
     get as() {

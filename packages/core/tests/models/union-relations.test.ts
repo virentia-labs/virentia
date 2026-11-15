@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { scope, scoped } from "../../lib/index";
-import { collection, f, inverse, refs, children, staticModel, trait, union } from "../../lib/models";
+import { f, inverse, refs, children, staticModel, trait, union } from "../../lib/models";
+import { collection } from "../../lib/models/collection";
 
 // §5.2 «Хранение» + §5.4: relations may target a UNION. Instance writes store
 // (model, id) pairs — an id alone cannot name the variant; wire loads store the

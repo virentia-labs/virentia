@@ -1,0 +1,57 @@
+:root {
+  font:
+    16px/1.5 system-ui,
+    sans-serif;
+  color: #19292e;
+  background: #f4f7f6;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 760px;
+  margin: 64px auto;
+  padding: 0 24px;
+}
+h1 {
+  font-size: 2rem;
+  letter-spacing: -0.04em;
+}
+h2 {
+  font-size: 1rem;
+  margin: 0 0 16px;
+}
+p {
+  color: #526569;
+}
+section {
+  background: white;
+  border: 1px solid #d6e1dc;
+  border-radius: 12px;
+  padding: 24px;
+  margin: 20px 0;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+button {
+  font: inherit;
+  padding: 10px 16px;
+  border: 1px solid #aac2b5;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #fff;
+  color: inherit;
+}
+.row > button[data-counter] {
+  color: #fff;
+  background: #155c42;
+  border-color: #155c42;
+}
+button:focus-visible {
+  outline: 3px solid #82c7ab;
+  outline-offset: 3px;
+}

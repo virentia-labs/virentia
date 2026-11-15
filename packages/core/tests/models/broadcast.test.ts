@@ -1,6 +1,8 @@
+import { effect, getCurrentScope } from "../../lib";
 import { describe, expect, it } from "vitest";
 import { event, reaction, scope, scoped, store } from "../../lib/index";
-import { collection, f, staticModel } from "../../lib/models";
+import { f, staticModel } from "../../lib/models";
+import { collection } from "../../lib/models/collection";
 
 // §3.4: one semantics, two implementations — a static model's reaction on an
 // EXTERNAL store fires for every live instance, in each instance's scope; own
@@ -33,16 +35,16 @@ describe("§3.4 broadcast reactions", () => {
 
       filter.value = "milk";
 
-      await Promise.resolve();
-      await Promise.resolve();
+      await tick();
+      await tick();
 
       expect(a.visible.value).toBe(true);
       expect(b.visible.value).toBe(false);
 
       filter.value = "call";
 
-      await Promise.resolve();
-      await Promise.resolve();
+      await tick();
+      await tick();
 
       expect(a.visible.value).toBe(false);
       expect(b.visible.value).toBe(true);
@@ -70,8 +72,8 @@ describe("§3.4 broadcast reactions", () => {
 
       ping.value = 1; // no instances yet
 
-      await Promise.resolve();
-      await Promise.resolve();
+      await tick();
+      await tick();
 
       expect(seen).toEqual([]);
 
@@ -81,8 +83,8 @@ describe("§3.4 broadcast reactions", () => {
       todos.remove(a.id);
       ping.value = 2;
 
-      await Promise.resolve();
-      await Promise.resolve();
+      await tick();
+      await tick();
 
       expect(seen).toEqual(["b"]);
       void b;
@@ -162,8 +164,8 @@ describe("§3.4 broadcast reactions", () => {
       const writer = writers.add({});
 
       await writer.bump();
-      await Promise.resolve();
-      await Promise.resolve();
+      await tick();
+      await tick();
 
       expect(seen.sort()).toEqual(["w1", "w2"]);
     });
@@ -198,8 +200,8 @@ describe("§3.4 broadcast reactions", () => {
     await scoped(first, async () => {
       flag.value = true;
 
-      await Promise.resolve();
-      await Promise.resolve();
+      await tick();
+      await tick();
     });
 
     expect(seen).toEqual(["in-first"]);
@@ -266,3 +268,6 @@ describe("§4.8 input validation by TypeBox schema", () => {
     });
   });
 });
+
+const tickUnit = effect(() => Promise.resolve());
+const tick = () => getCurrentScope() ? tickUnit() : Promise.resolve();

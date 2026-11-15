@@ -8,6 +8,7 @@ import {
   type Store,
   type StoreWritable,
 } from "@virentia/core";
+import { boundStoreScopeOf } from "@virentia/core/internal";
 import { useCallback, useMemo, useRef, useSyncExternalStore } from "react";
 import { useHydrationScope, useProvidedScope } from "./scope";
 import { useTrackedTree, walkUnit } from "./tracked";
@@ -66,8 +67,9 @@ function useStoreUnit<T>(unit: AnyStore<T>, scope: Scope): T {
 
   const subscribe = useCallback(
     (notify: () => void) => {
+      const subscriptionScope = boundStoreScopeOf(unit) ?? scope;
       const unsubscribe = unit.subscribe((_value, nextScope) => {
-        if (nextScope !== scope) {
+        if (nextScope !== subscriptionScope) {
           return;
         }
 

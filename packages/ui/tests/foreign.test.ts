@@ -1,10 +1,13 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { scope, scoped, store } from "@virentia/core";
-import { createElement as h, hydrate } from "../lib";
+import { createElement as h, hydrate as hydrateNative, type Child, type RenderOptions } from "../lib";
 import { foreignTree } from "../lib/runtime";
-import { renderToString } from "../lib/server";
+import { renderToString as serverRender } from "../lib/server";
 
+// Internal opaque-host fixtures, each with an explicit isolated scope.
+const renderToString = (view: () => Child, options?: RenderOptions) => serverRender(view, options ?? { scope: scope() });
+const hydrate = (view: () => Child, container: Element, options?: RenderOptions) => hydrateNative(view, container, options ?? { scope: scope() });
 afterEach(() => {
   document.body.textContent = "";
 });

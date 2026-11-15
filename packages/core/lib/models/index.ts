@@ -1,9 +1,10 @@
 // @virentia/core/models — declaration of models through traits, instance
-// storage in collections, field-declared indexes, descriptor queries, codec as
-// props bindings. Design: docs/design/dynamic-models.md.
+// scope-local instance registries, field-declared indexes, descriptor queries, codec as
+// props bindings.
 
 import { modelDefinitionBinding, type ModelDefinitionBinding } from "./bindings";
-import { collection } from "./collection";
+import { modelCollection } from "./collection";
+import { createSingleton } from "./singleton";
 import {
   model as createModel,
   staticModel as createStaticModel,
@@ -12,9 +13,15 @@ import {
 } from "./definition";
 
 function bindDefinition(definition: ModelDefinition): ModelDefinition {
+  Object.defineProperty(definition, "~static", {
+    value: (input?: Record<string, unknown>) => createSingleton(definition, input, bindDefinition),
+  });
+  Object.defineProperty(definition, "~instancesInScope", {
+    value: () => modelCollection(definition),
+  });
   Object.defineProperty(definition, modelDefinitionBinding, {
     value: {
-      collection: (scope) => collection(definition, scope),
+      collection: (scope) => modelCollection(definition, scope),
     } satisfies ModelDefinitionBinding,
   });
 
@@ -52,7 +59,6 @@ export type {
   ModelKind,
 } from "./definition";
 export {
-  collection,
   isModelQuery,
   modelsInspectorSnapshot,
   queryReactivity,
@@ -79,6 +85,8 @@ export type {
   Model,
   ModelWithDescriptors,
   SelfOf,
+  Singleton,
+  SingletonOf,
   TraitTyped,
   TypedCollection,
   TypedQuery,

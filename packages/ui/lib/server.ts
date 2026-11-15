@@ -1,4 +1,5 @@
 import type { ScopeSnapshot } from "@virentia/core";
+import { markStoreTransient } from "@virentia/core/internal";
 import {
   childContext,
   componentView,
@@ -7,19 +8,21 @@ import {
   foreignHostTag,
   forItems,
   forKey,
+  forRowView,
   Fragment,
   htmlNamespace,
   isElement,
+  isReadable,
+  readBinding,
+  normalizedStyle,
   list,
   listKeyPaths,
   mathNamespace,
   portal,
   provider,
-  readSource,
   rawText,
   runIn,
   settleRetained,
-  show,
   svgDashedAttributes,
   svgNamespace,
   booleanAttributes,
@@ -27,9 +30,10 @@ import {
   type ForProps,
   type ForeignProps,
   type RenderOptions,
-  type ShowProps,
   type UIContext,
-} from "./runtime";
+  createElement,
+  mergeProps,
+} from "./native-runtime";
 import type { Child, ElementDescriptor } from "./types";
 
 interface Output {
@@ -91,11 +95,26 @@ function dynamic(read: () => Child, ctx: UIContext, state: State): Output {
 function walk(value: Child, ctx: UIContext, state: State): Output {
   if (value == null || typeof value === "boolean") return empty;
   if (typeof value === "function") return dynamic(value, ctx, state);
+  if (isReadable(value)) {
+    const initial = value.value;
+    if (initial == null || ["string", "number", "bigint", "boolean"].includes(typeof initial)) {
+      const target = childContext(ctx);
+      const content = childContext(target, "0");
+      return region(walk(initial == null || typeof initial === "boolean" ? "" : initial, content, state), state);
+    }
+    return dynamic(() => value.value, ctx, state);
+  }
   if (typeof value === "string" || typeof value === "number" || typeof value === "bigint") {
     const text = String(value);
     return { html: `${state.markers ? "<!--ui:t-->" : ""}${escapeText(text)}`, text };
   }
-  if (Array.isArray(value)) return combine(value.map((item) => walk(item, ctx, state)));
+  if (Array.isArray(value))
+    return combine(
+      value.map((item, index) => {
+        const child = childContext(ctx, `item:${index}`);
+        return runIn(child, () => walk(item, child, state));
+      }),
+    );
   if (isElement(value)) return description(value, ctx, state);
   if (typeof value === "object" && "then" in value) {
     throw new TypeError(
@@ -110,7 +129,7 @@ function walk(value: Child, ctx: UIContext, state: State): Output {
 
 function description(value: ElementDescriptor, ctx: UIContext, state: State): Output {
   const { type, props } = value;
-  if (type === Fragment) return dynamic(() => props.children as Child, ctx, state);
+  if (type === Fragment) return walk(props.children as Child, ctx, state);
   if (type === foreign) {
     const host = childContext(ctx);
     const tag = foreignHostTag(props.as, host.namespace);
@@ -151,21 +170,9 @@ function description(value: ElementDescriptor, ctx: UIContext, state: State): Ou
   if (type === provider) {
     const child = childContext(ctx);
     const values = new Map(ctx.values);
-    values.set(props.id as symbol, () => props.value);
+    values.set(props.id as symbol, () => readBinding(props.value));
     child.values = values;
-    return runIn(child, () => dynamic(() => props.children as Child, child, state));
-  }
-  if (type === show) {
-    const target = childContext(ctx);
-    const config = props as unknown as ShowProps;
-    const visible = runIn(target, () => Boolean(readSource(config.when)));
-    const content = childContext(target, visible ? "shown" : "fallback");
-    return region(
-      runIn(content, () =>
-        dynamic(() => (visible ? config.children : config.fallback), content, state),
-      ),
-      state,
-    );
+    return runIn(child, () => walk(props.children as Child, child, state));
   }
   if (type === list) {
     const target = childContext(ctx);
@@ -173,14 +180,13 @@ function description(value: ElementDescriptor, ctx: UIContext, state: State): Ou
     const config = props as unknown as ForProps<unknown>;
     const { items, keys } = runIn(target, () => {
       const items = forItems(config.each, target.scope);
-      const keys = items.map((item) => forKey(item, config.by));
-      if (new Set(keys).size !== keys.length) throw new Error("[ui] For requires unique keys");
+      const keys = items.map((item) => forKey(item));
       return { items, keys };
     });
     if (!items.length) {
       const fallback = childContext(target);
       return region(
-        runIn(fallback, () => dynamic(() => config.fallback, fallback, state)),
+        runIn(fallback, () => walk(config.fallback, fallback, state)),
         state,
       );
     }
@@ -188,14 +194,12 @@ function description(value: ElementDescriptor, ctx: UIContext, state: State): Ou
       combine(
         items.map((item, index) => {
           const row = childContext(target, rowPath(keys[index]));
+          const content = childContext(row);
           return region(
-            runIn(row, () =>
+            runIn(content, () =>
               walk(
-                config.children(
-                  () => item,
-                  () => index,
-                ),
-                row,
+                forRowView(config, item, index),
+                content,
                 state,
               ),
             ),
@@ -208,6 +212,11 @@ function description(value: ElementDescriptor, ctx: UIContext, state: State): Ou
   }
   if (typeof type === "function") {
     const child = childContext(ctx);
+    const selection = props.model;
+    if (isReadable(selection)) return runIn(child, () => dynamic(() => {
+      const model = selection.value;
+      return model === null ? null : createElement(type, mergeProps(props, { model }));
+    }, child, state));
     return runIn(child, () => walk(componentView(type, props, child), child, state));
   }
   if (typeof type === "string") return element(type, props, ctx, state);
@@ -315,7 +324,17 @@ function element(
   return runIn(child, () => {
     const values = new Map<string, unknown>();
     for (const key of Object.keys(props)) {
-      if (key !== "children" && key !== "key") values.set(key, props[key]);
+      if (key === "ref" && isReadable(props[key])) markStoreTransient(props[key]);
+      if (key !== "children" && key !== "key") {
+        values.set(
+          key,
+          key === "ref" || /^on/i.test(key)
+            ? props[key]
+            : key === "style" || key === "classList"
+              ? normalizedStyle(props[key])
+              : readBinding(props[key]),
+        );
+      }
     }
     const html = namespace === htmlNamespace;
     const name = html ? tag.toLowerCase() : tag;
@@ -364,7 +383,7 @@ function element(
               : undefined,
         };
       }
-      content = dynamic(() => props.children as Child, child, childState);
+      content = walk(props.children as Child, child, childState);
     }
     if (html && name === "pre" && !state.markers && content.html.startsWith("\n")) {
       content = { ...content, html: `\n${content.html}` };
@@ -461,27 +480,27 @@ async function renderAsync(
 }
 
 /** Render synchronous HTML with boundaries that hydrate() can adopt in place. */
-export function renderToString(factory: () => Child, options: RenderOptions = {}): string {
+export function renderToString(factory: () => Child, options: RenderOptions): string {
   return render(factory, options, true);
 }
 
 /** Await foreign SSR renderers, then return HTML that hydrate() can adopt in place. */
 export function renderToStringAsync(
   factory: () => Child,
-  options: RenderOptions = {},
+  options: RenderOptions,
 ): Promise<string> {
   return renderAsync(factory, options, true);
 }
 
 /** Render synchronous HTML without hydration metadata. */
-export function renderToStaticMarkup(factory: () => Child, options: RenderOptions = {}): string {
+export function renderToStaticMarkup(factory: () => Child, options: RenderOptions): string {
   return render(factory, options, false);
 }
 
 /** Await foreign SSR renderers and omit native hydration metadata. */
 export function renderToStaticMarkupAsync(
   factory: () => Child,
-  options: RenderOptions = {},
+  options: RenderOptions,
 ): Promise<string> {
   return renderAsync(factory, options, false);
 }

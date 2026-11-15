@@ -45,7 +45,7 @@ export function useOptionalProvidedScope(): Scope | null {
   return inject(scopeKey, null);
 }
 
-export const ScopeProvider = defineComponent({
+export const ScopeProvider = /* @__PURE__ */ defineComponent({
   name: "ScopeProvider",
   props: {
     scope: {

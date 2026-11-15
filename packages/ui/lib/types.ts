@@ -1,21 +1,31 @@
-import type { Event as CoreEvent, Scope } from "@virentia/core";
-import type { InstanceApi } from "@virentia/core/models";
+import type { EventCallable, Scope, StoreWritable } from "@virentia/core";
+import type { AnyModel, InstanceOf } from "@virentia/core/models";
+import type { Context } from "./native-runtime";
 
-export interface ComponentLifecycleEvent<P> {
+/** A native component descriptor or a pure, model-free view fragment. */
+export type Component<P = {}> = (props: P, self: any) => Child;
+
+/** Lexically bound, typed context; there is no global UI self. */
+export type ComponentSelf<M extends AnyModel = AnyModel> = {
   readonly id: string;
-  readonly model: InstanceApi;
-  readonly props: P;
   readonly scope: Scope;
+  readonly model: InstanceOf<M>;
+  readonly instances: readonly InstanceOf<M>[];
+  elementId(name: string): string;
+  context<T>(target: Context<T>): () => T;
+} & Pick<InstanceOf<M>, Extract<keyof InstanceOf<M>, "mounted" | "unmounted">>;
+
+/** A pure structural view; its direct reactive reads may cause it to run again. */
+export type View = () => Child;
+
+/** A value that the renderer reads inside its own reactive subscription. */
+export interface Readable<T> {
+  readonly value: T;
+  readonly node: unknown;
 }
 
-/** Per-instance Core event sources, retained with setup when `keep: true`. */
-export interface ComponentLifecycle<P> {
-  readonly mounted: CoreEvent<ComponentLifecycleEvent<P>>;
-  readonly unmounted: CoreEvent<ComponentLifecycleEvent<P>>;
-}
-
-/** A component runs once per instance; reactive bindings update its DOM. */
-export type Component<P = {}> = (props: P, lifecycle: ComponentLifecycle<P>) => Child;
+/** Plain values, store units and explicit JavaScript accessors are all valid bindings. */
+export type Binding<T> = T | Readable<T> | (() => T);
 
 export interface ElementDescriptor {
   readonly type: string | Component<any> | symbol;
@@ -32,7 +42,8 @@ export type Child =
   | Node
   | ElementDescriptor
   | readonly Child[]
-  | (() => Child);
+  | Readable<Child>
+  | View;
 
 /** HTML containers supported as opaque hosts for optional React/Vue trees. */
 export type ForeignHostTag =
@@ -86,7 +97,19 @@ export type EventHandler<T extends EventTarget, E extends Event = Event> = (
   event: NativeEvent<T, E>,
 ) => void;
 
-export type Ref<T extends Element> = ((element: T) => void | (() => void)) | { current: T | null };
+/** Only the call signature and Core node are needed by the DOM dispatcher. */
+export type DOMEventUnit<T extends EventTarget, E extends Event = Event> =
+  (((payload: NativeEvent<T, E>) => unknown) & Pick<EventCallable<any>, "node">)
+  | EventCallable<void>;
+
+/** A transient, writable store belonging to a model instance. */
+export type RefUnit<T extends Element = Element> = StoreWritable<T | null>;
+
+export type Ref<T extends Element> = {
+  value: T | null;
+  readonly node: unknown;
+  readonly writable: true;
+};
 
 type EventNames = {
   onAbort: "abort";
@@ -187,12 +210,9 @@ type EventFor<K extends string> = K extends keyof GlobalEventHandlersEventMap
   : Event;
 
 export type EventHandlers<T extends EventTarget> = {
-  [K in keyof EventNames as K | `${K}Capture`]?: EventHandler<T, EventFor<EventNames[K]>> | null;
+  [K in keyof EventNames as K | `${K}Capture`]?: DOMEventUnit<T, EventFor<EventNames[K]>> | null;
 } & {
-  [K in keyof GlobalEventHandlersEventMap as `on:${K}`]?: EventHandler<
-    T,
-    GlobalEventHandlersEventMap[K]
-  > | null;
+  [K in keyof GlobalEventHandlersEventMap as `on:${K}`]?: DOMEventUnit<T, GlobalEventHandlersEventMap[K]> | null;
 };
 
 type StyleProperty = {
@@ -205,30 +225,30 @@ type KebabCase<S extends string> = S extends `${infer Head}${infer Tail}`
   : S;
 
 export type CSSProperties = {
-  [K in StyleProperty | KebabCase<StyleProperty> | `--${string}`]?: string | number | null;
+  [K in StyleProperty | KebabCase<StyleProperty> | `--${string}`]?: Binding<string | number | null>;
 };
 
-export type ClassList = Record<string, boolean | null | undefined>;
+export type ClassList = Record<string, Binding<boolean | null | undefined>>;
 
 type ScalarProperties<T> = {
   [K in keyof T as K extends string
     ? T[K] extends string | number | boolean | null
       ? K
       : never
-    : never]?: T[K] | null;
+    : never]?: Binding<T[K] | null>;
 };
 
 export type DOMAttributes<T extends Element> = EventHandlers<T> & {
   children?: Child;
   key?: string | number | symbol;
   ref?: Ref<T> | null;
-  class?: string | null;
-  className?: string | null;
-  classList?: ClassList;
-  style?: string | CSSProperties | null;
-  role?: string;
+  class?: Binding<string | null>;
+  className?: Binding<string | null>;
+  classList?: Binding<ClassList>;
+  style?: Binding<string | CSSProperties | null>;
+  role?: Binding<string>;
 } & {
-  [K in `data-${string}` | `aria-${string}`]?: string | number | boolean | null;
+  [K in `data-${string}` | `aria-${string}`]?: Binding<string | number | boolean | null>;
 };
 
 export type HTMLAttributes<T extends HTMLElement> = Omit<
@@ -236,9 +256,9 @@ export type HTMLAttributes<T extends HTMLElement> = Omit<
   keyof DOMAttributes<T> | "children"
 > &
   DOMAttributes<T> & {
-    for?: string;
-    spellcheck?: boolean | "true" | "false";
-    contenteditable?: boolean | "true" | "false" | "plaintext-only";
+    for?: Binding<string>;
+    spellcheck?: Binding<boolean | "true" | "false">;
+    contenteditable?: Binding<boolean | "true" | "false" | "plaintext-only">;
   };
 
 type SVGPresentationAttribute =
@@ -302,15 +322,17 @@ export type SVGAttributes<T extends SVGElement> = Omit<
   keyof DOMAttributes<T> | "children"
 > &
   DOMAttributes<T> & {
-    [K in keyof T as SVGValue<T[K]> extends never ? never : K]?: SVGValue<T[K]> | null;
+    [K in keyof T as SVGValue<T[K]> extends never ? never : K]?: Binding<SVGValue<T[K]> | null>;
   } & {
-    [K in SVGPresentationAttribute | KebabCase<SVGPresentationAttribute>]?: string | number | null;
+    [K in SVGPresentationAttribute | KebabCase<SVGPresentationAttribute>]?: Binding<
+      string | number | null
+    >;
   } & {
-    d?: string;
-    points?: string;
-    xmlns?: string;
-    "xmlns:xlink"?: string;
-    "xlink:href"?: string;
+    d?: Binding<string>;
+    points?: Binding<string>;
+    xmlns?: Binding<string>;
+    "xmlns:xlink"?: Binding<string>;
+    "xlink:href"?: Binding<string>;
   };
 
 export type IntrinsicElements = {
@@ -329,7 +351,7 @@ export namespace JSX {
   }
   export interface IntrinsicAttributes {
     key?: string | number | symbol;
-    /** Optional component-model identity; generated from the tree when omitted. */
+    /** Local component-model identity; otherwise a fresh model ID is generated. */
     id?: string;
   }
   export type IntrinsicElements = import("./types").IntrinsicElements;

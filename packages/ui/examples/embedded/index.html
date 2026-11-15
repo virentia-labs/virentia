@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Virentia — standalone and embedded</title>
+  </head>
+  <body>
+    <main>
+      <h1>One native component, three homes</h1>
+      <p>
+        Each button keeps its own count. All three share the total. Changing host props preserves
+        the native instance and DOM.
+      </p>
+      <section>
+        <h2>Standalone</h2>
+        <div id="native" class="row"></div>
+      </section>
+      <section>
+        <h2>Inside React</h2>
+        <div id="react"></div>
+      </section>
+      <section>
+        <h2>Inside Vue</h2>
+        <div id="vue"></div>
+      </section>
+      <p>
+        Inspect the rows: the counter button itself is the root, with no adapter element around it.
+      </p>
+    </main>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>

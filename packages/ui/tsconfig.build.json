@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "@virentia/ui"
+  },
+  "include": ["lib/**/*.ts", "start/**/*.ts", "vite.ts"],
+  "exclude": ["tests", "examples"]
+}

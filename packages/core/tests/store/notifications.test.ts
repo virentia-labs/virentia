@@ -78,15 +78,15 @@ describe("store", () => {
       ).toThrow("Store is read-only");
     });
 
-    it("throws when a property other than value is assigned in ref mode", () => {
+    it("keeps a property other than value off its state in ref mode", () => {
       const sc = scope();
       const s = store(0);
 
-      expect(() =>
-        scoped(sc, () => {
-          (s as unknown as { count: number }).count = 1;
-        }),
-      ).toThrow("Store value must be written through .value");
+      // A value store is an ordinary object: another property is just that.
+      scoped(sc, () => {
+        (s as unknown as { count: number }).count = 1;
+      });
+      expect(scoped(sc, () => s.value)).toBe(0);
     });
   });
 
@@ -634,7 +634,8 @@ describe("store", () => {
         });
       };
 
-      expect(writeNonValueProperty).toThrow("Store value must be written through .value");
+      expect(writeNonValueProperty).not.toThrow();
+      expect(scoped(appScope, () => counter.value)).toBe(0);
       expect(writeReadonlyStore).toThrow("Store is read-only");
     });
 

@@ -1,9 +1,8 @@
 import { existsSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { resolve } from "node:path";
-import virentiaCore from "@virentia/core/compiler/vite";
 import { normalizePath, type Plugin } from "vite";
-import virentiaUI from "../compiler/vite";
+import virentiaUI from "../vite";
 import { renderDocument } from "./document";
 
 const clientId = "virtual:virentia-start/client";
@@ -134,7 +133,7 @@ export async function renderRequest(requestUrl, request) {
   };
 
   const namespace = options.namespace ?? "app";
-  return [virentiaCore({ namespace }), virentiaUI({ namespace }), start];
+  return [virentiaUI({ namespace }), start];
 }
 
 function isPageRequest(request: IncomingMessage): boolean {

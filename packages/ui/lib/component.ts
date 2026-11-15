@@ -1,84 +1,100 @@
-import { event, type EventCallable } from "@virentia/core";
-import { staticModel, type ModelDefinition } from "@virentia/core/models";
-import type { Child, Component, ComponentLifecycle, ComponentLifecycleEvent } from "./types";
+import {
+  type AnyModel,
+  type Dto,
+  type InstanceOf,
+  type ModelDefinition,
+} from "@virentia/core/models";
+import type { Child, Component, ComponentSelf, Readable } from "./types";
+import { isModelDefinition, modelDefinitionBindingOf, type ModelDefinitionBinding } from "@virentia/core/internal";
 
-/** Configure the lifetime and identity of a function component's model instance. */
-export interface ComponentOptions<P extends object> {
-  /** Retain the model instance after its DOM subtree unmounts. */
-  keep?: boolean;
-  /** Derive the instance id from props; the runtime supplies a tree id otherwise. */
-  id?: (props: P) => string;
-}
-
-/** A configured JSX component with an inspectable Core model definition. */
-export type DefinedComponent<P extends object> = Component<P> & {
-  readonly model: ModelDefinition;
+/** Constructor inputs and view props share one model-derived contract. */
+type ModelInputs<M extends AnyModel> = Dto<M> &
+  (M extends { readonly "~props"?: infer P } ? NonNullable<P> : {});
+export type ModelProps<M extends AnyModel> = {
+  [K in keyof ModelInputs<M>]: K extends "id"
+    ? ModelInputs<M>[K]
+    : ModelInputs<M>[K] | Readable<ModelInputs<M>[K]>;
 };
 
-/** @internal Runtime metadata for both configured and ordinary function components. */
-export interface ComponentMetadata<P extends object> {
-  readonly view: Component<P>;
-  readonly model: ModelDefinition;
-  readonly lifecycle: {
-    readonly mounted: EventCallable<ComponentLifecycleEvent<P>>;
-    readonly unmounted: EventCallable<ComponentLifecycleEvent<P>>;
-  };
+export type ComponentInput<M extends AnyModel> =
+  | (ModelProps<M> & { model?: undefined; keep?: boolean })
+  | (Partial<ModelProps<M>> & {
+      model: InstanceOf<M> | Readable<InstanceOf<M> | null>;
+      keep?: boolean;
+    });
+
+export interface ComponentOptions<P extends object = Record<string, unknown>> {
+  /** Keep an automatically created model after its display unmounts. */
+  keep?: boolean;
+  /** Optional local identity derived from constructor props. */
+  id?: (props: P) => string;
+  /** Stable root used by host-renderer adapters. */
+  root?: string;
+}
+
+export interface ComponentConfig<M extends AnyModel> extends ComponentOptions<ModelProps<M>> {
+  model: M;
+  /** Called once per DOM attachment, never by scalar state updates. */
+  view: (props: ModelProps<M>, self: ComponentSelf<M>) => Child;
+}
+
+export type DefinedComponent<M extends AnyModel> = Component<ComponentInput<M>> & {
+  readonly model: M;
+};
+
+export interface ComponentMetadata<M extends AnyModel = AnyModel> {
+  readonly model: M;
+  readonly view: ComponentConfig<M>["view"];
   readonly keep: boolean;
-  readonly id?: (props: P) => string;
+  readonly id?: ComponentConfig<M>["id"];
+  readonly lifecycle?: { mounted: boolean; unmounted: boolean };
+  readonly definitionBinding?: ModelDefinitionBinding;
+  readonly idFromProps?: ModelDefinition["idFromProps"];
 }
 
-const metadata = new WeakMap<Component<object>, ComponentMetadata<object>>();
+const metadata = new WeakMap<Function, ComponentMetadata>();
+const rootTags = new WeakMap<Function, string>();
 
-function defineComponent<P extends object>(
-  view: Component<P>,
-  options: ComponentOptions<P>,
-): ComponentMetadata<P> {
-  let mounted!: EventCallable<ComponentLifecycleEvent<P>>;
-  let unmounted!: EventCallable<ComponentLifecycleEvent<P>>;
-  const model = staticModel({
-    name: view.name || undefined,
-    setup: () => {
-      mounted = event<ComponentLifecycleEvent<P>>(`${view.name || "component"}.mounted`);
-      unmounted = event<ComponentLifecycleEvent<P>>(`${view.name || "component"}.unmounted`);
-      return { view };
-    },
-  }) as ModelDefinition;
-
-  return {
-    view,
-    model,
-    lifecycle: { mounted, unmounted },
-    keep: options.keep === true,
-    id: options.id,
-  };
+export function withRoot<T extends Component<any>>(view: T, tag: string): T {
+  rootTags.set(view, tag);
+  return view;
 }
 
-/**
- * Add explicit model lifetime or id derivation to a function component.
- * A plain function component receives the same static-model backing lazily.
- */
-export function component<P extends object>(
-  view: Component<P>,
-  options: ComponentOptions<P> = {},
-): DefinedComponent<P> {
-  const configured = function VirentiaComponent(props: P, lifecycle: ComponentLifecycle<P>): Child {
-    return view(props, lifecycle);
-  };
-  const definition = defineComponent(view, options);
-  Object.defineProperty(configured, "model", {
-    value: definition.model,
-    enumerable: true,
-  });
-  metadata.set(configured as Component<object>, definition as unknown as ComponentMetadata<object>);
-  return configured as DefinedComponent<P>;
+export function componentRootOf(type: Component<any>): string | undefined {
+  return rootTags.get(type);
 }
 
-/** @internal Return the stable model definition associated with a JSX component type. */
-export function componentMetadataOf<P extends object>(type: Component<P>): ComponentMetadata<P> {
-  let known = metadata.get(type as Component<object>);
-  if (!known) {
-    known = defineComponent(type, {}) as unknown as ComponentMetadata<object>;
-    metadata.set(type as Component<object>, known);
+/** Bind an existing Core model definition to a DOM view; no hidden model. */
+export function component<M extends AnyModel>(config: ComponentConfig<M>): DefinedComponent<M> {
+  if (!config || !isModelDefinition(config.model) || typeof config.view !== "function") {
+    throw new TypeError("[ui] component expects { model: model/staticModel, view }");
   }
-  return known as unknown as ComponentMetadata<P>;
+  const result = ((props: ComponentInput<M>, self: ComponentSelf<M>) =>
+    config.view(props as ModelProps<M>, self)) as DefinedComponent<M>;
+  Object.defineProperty(result, "model", { value: config.model, enumerable: true });
+  const definition = config.model as unknown as ModelDefinition;
+  const hasMember = (name: string) =>
+    definition.staticMembers?.has(name) ||
+    definition.fields.has(name) ||
+    definition.relations.has(name) ||
+    definition.inverses.has(name);
+  metadata.set(result, {
+    model: config.model,
+    view: config.view,
+    keep: config.keep === true,
+    id: config.id,
+    definitionBinding: modelDefinitionBindingOf(config.model),
+    idFromProps: definition.idFromProps,
+    lifecycle:
+      definition.kind === "static"
+        ? { mounted: Boolean(hasMember("mounted")), unmounted: Boolean(hasMember("unmounted")) }
+        : undefined,
+  } as unknown as ComponentMetadata);
+  if (config.root) withRoot(result, config.root);
+  return result;
+}
+
+/** @internal Plain view helpers do not acquire a model or identity. */
+export function componentMetadataOf(type: Component<any>): ComponentMetadata | undefined {
+  return metadata.get(type);
 }

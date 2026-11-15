@@ -1,7 +1,8 @@
 import type { Scope } from "@virentia/core";
 import { ScopeProvider, type ScopeHydration } from "@virentia/vue";
 import { createApp, createSSRApp, defineComponent, h, shallowRef, type VNode } from "vue";
-import { foreignTree, useId, type ForeignRoot } from "./runtime";
+import { foreignTree } from "./foreign-tree";
+import { contextualElementId, type ForeignRoot } from "./native-runtime";
 import type { Child, ForeignHostTag } from "./types";
 
 export interface VueTreeProps {
@@ -63,7 +64,7 @@ export function createVueTree(
   props: VueTreeProps,
   serverRender?: (node: VNode | null, scope: Scope, idPrefix: string) => Promise<string>,
 ): Child {
-  const idPrefix = `${useId()}:vue:`;
+  const idPrefix = `${contextualElementId("vue")}:vue:`;
   return foreignTree<VNode | null>({
     kind: "vue",
     asyncServerRender: true,

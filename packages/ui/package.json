@@ -14,6 +14,7 @@
     "dist"
   ],
   "type": "module",
+  "sideEffects": ["./dist/start/cli.mjs", "./dist/start/cli.cjs"],
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
@@ -37,11 +38,6 @@
       "types": "./dist/jsx-dev-runtime.d.mts",
       "import": "./dist/jsx-dev-runtime.mjs",
       "require": "./dist/jsx-dev-runtime.cjs"
-    },
-    "./compiler": {
-      "types": "./dist/compiler/index.d.mts",
-      "import": "./dist/compiler/index.mjs",
-      "require": "./dist/compiler/index.cjs"
     },
     "./start": {
       "types": "./dist/start/index.d.mts",
@@ -87,9 +83,9 @@
       "require": "./dist/vue/server.cjs"
     },
     "./vite": {
-      "types": "./dist/compiler/vite.d.mts",
-      "import": "./dist/compiler/vite.mjs",
-      "require": "./dist/compiler/vite.cjs"
+      "types": "./dist/vite.d.mts",
+      "import": "./dist/vite.mjs",
+      "require": "./dist/vite.cjs"
     }
   },
   "scripts": {
@@ -99,6 +95,8 @@
     "start:build": "node dist/start/cli.mjs build --root examples/start",
     "start:serve": "node dist/start/cli.mjs serve --root examples/start",
     "playground:build": "vite build --config examples/playground/vite.config.ts",
+    "embedded:dev": "vite --config examples/embedded/vite.config.ts",
+    "embedded:build": "vite build --config examples/embedded/vite.config.ts",
     "build": "tsdown",
     "test": "vitest run && tsc --noEmit -p tsconfig.vitest.json",
     "test:watch": "vitest",
@@ -108,14 +106,13 @@
     "virentia-start": "./dist/start/cli.mjs"
   },
   "dependencies": {
-    "@babel/types": "7.29.0",
-    "@sinclair/typebox": "^0.34.52",
     "@virentia/core": "workspace:*"
   },
   "devDependencies": {
     "@babel/core": "7.29.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@virentia/mutable": "workspace:*",
     "@virentia/react": "workspace:*",
     "@virentia/vue": "workspace:*",
     "happy-dom": "^20.0.10",

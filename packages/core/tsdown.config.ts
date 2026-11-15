@@ -12,6 +12,13 @@ export default defineConfig({
   },
   outDir: "dist",
   format: ["esm", "cjs"],
+  // Keep initialization with the module that owns it. Merging events and
+  // stores into one shared chunk prevents consumers from dropping store setup.
+  unbundle: true,
+  outputOptions(options, format) {
+    // Native require() keeps shared bundles and its existing load structure.
+    if (format === "cjs") options.preserveModules = false;
+  },
   dts: true,
   clean: true,
 });

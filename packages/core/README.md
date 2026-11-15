@@ -9,7 +9,8 @@ Use it to describe business state without depending on React, routing, or any ot
 - effects run external async work;
 - reactions describe rules between stores, events, and effects;
 - scopes hold concrete values for one app, request, test, widget, or cached screen;
-- owners define cleanup boundaries for runtime models.
+- static models share unit declarations and give each instance isolated state and cleanup;
+- owners provide lower-level cleanup boundaries for subscriptions and adapters.
 
 ## Links
 
@@ -24,68 +25,69 @@ pnpm add @virentia/core
 ## Counter
 
 ```ts
-import { event, reaction, scope, scoped, store } from "@virentia/core";
+import { event, reaction, scope, scoped } from "@virentia/core";
+import { f, staticModel } from "@virentia/core/models";
 
-export function createCounterModel() {
-  const incremented = event<number>();
-  const count = store(0);
-
-  reaction({
-    on: incremented,
-    run(amount) {
-      count.value += amount;
-    },
-  });
-
-  return { count, incremented };
-}
-
-const model = createCounterModel();
-const appScope = scope();
-
-// `scoped` runs the callback in the scope and its promise waits for everything
-// the callback triggers (reactions, effects) to settle.
-await scoped(appScope, () => model.incremented(1));
-
-scoped(appScope, () => {
-  console.log(model.count.value);
+const Counter = staticModel({
+  data: { count: f.number(0) },
+  setup(self) {
+    const incremented = event<number>();
+    reaction({
+      on: incremented,
+      run(amount) {
+        self.count.value += amount;
+      },
+    });
+    return { incremented };
+  },
 });
+
+const appScope = scope();
+const model = scoped(appScope, () => Counter.create({}));
+
+// Instance members carry their own scope, including when called outside `scoped`.
+await model.incremented(1);
+
+console.log(model.count.value);
+await model.dispose();
 ```
 
 ## Runtime Cleanup
 
-`owner` groups reactions, subscriptions, and cleanup callbacks created at runtime. The returned model root gets `dispose()` and `[Symbol.dispose]()` when it is an object.
+Declare units in `staticModel.setup`, which runs once per definition. Create external resources in `onCreate`, which runs once per instance, and register their cleanup with `self.onCleanup`.
 
 ```ts
-import { event, onCleanup, owner, reaction, store } from "@virentia/core";
+import { event, reaction, scope, scoped } from "@virentia/core";
+import { f, staticModel } from "@virentia/core/models";
 
-export function createDraftModel() {
-  return owner(() => {
+const Draft = staticModel({
+  data: { text: f.string("") },
+  setup(self) {
     const changed = event<string>();
-    const text = store("");
-    const timer = setInterval(() => {}, 1000);
-
     reaction({
       on: changed,
       run(value) {
-        text.value = value;
+        self.text.value = value;
       },
     });
+    return { changed };
+  },
+  onCreate(self) {
+    const timer = setInterval(() => {}, 1000);
+    self.onCleanup(() => clearInterval(timer));
+  },
+});
 
-    onCleanup(() => {
-      clearInterval(timer);
-    });
-
-    return { changed, text };
-  });
-}
-
-const draft = createDraftModel();
-
-draft.dispose();
+const draft = scoped(scope(), () => Draft.create({}));
+await draft.changed("saved");
+await draft.dispose();
 ```
 
-`using` can be used in runtimes or build pipelines that support Explicit Resource Management. Plain `model.dispose()` is the safe baseline.
+Disposal releases that instance's resources and pending effects. Other instances keep running. A new instance can reuse the disposed instance's ID with fresh state.
+
+For a module-style graph with nested unit APIs, `Draft.static()` creates independent native units with values isolated by application scope. Use and dispose that singleton inside `scoped(appScope, ...)`. `.create()` binds direct members and the native APIs of cooperating packages (Forms, net and router). Arbitrary application objects keep their existing behavior.
+
+`owner`, `onCleanup` and `withOwner` remain available for lower-level resource groups and existing factory APIs. They do not need to become model identities.
 
 ## Source-stable SIDs
 
@@ -101,7 +103,7 @@ export default defineConfig({
 });
 ```
 
-The adapter needs Babel 7 in the build and runs before Vite's regular transforms. It leaves JSX and TypeScript syntax for the rest of the build pipeline. It recognizes named, aliased and namespace imports from `@virentia/core` or `@virentia/ui`, rather than unrelated functions with the same names. The generated SID uses `namespace`, the module path relative to Vite's resolved root, and the source call position. Keep the same relative source paths and namespace on both sides; override `root` when Vite's resolved root is not the intended source root. Use `sid: false` to disable automatic SIDs.
+The adapter runs before Vite's regular transforms. Under Vite 8 it parses with Vite's own oxc parser and inserts SIDs into the source as it is; with an older Vite it runs Babel 7, which then must be installed. Both give the same SIDs. It leaves JSX and TypeScript syntax for the rest of the build pipeline. It recognizes named, aliased and namespace imports from `@virentia/core` or `@virentia/ui`, rather than unrelated functions with the same names. The generated SID uses `namespace`, the module path relative to Vite's resolved root, and the source call position. Keep the same relative source paths and namespace on both sides; override `root` when Vite's resolved root is not the intended source root. Use `sid: false` to disable automatic SIDs.
 
 Other build tools can run the Babel 7 plugin exported by `@virentia/core/compiler`, passing a filename and options such as `[[virentiaCore, { root: projectRoot, namespace: "my-app" }]]` in their Babel plugin list. The [`@virentia/ui/vite`](../ui/README.md#ordinary-jsx-compiled-bindings) adapter already includes this Core pass while compiling native Virentia JSX.
 
@@ -110,6 +112,8 @@ The compiler preserves an explicit `sid` in a literal metadata object. For a sto
 ## Main API
 
 `scope`, `scoped`, `store`, `computed`, `event`, `effect`, `reaction`, `owner`, `onCleanup`, `getOwner`, `withOwner`, `lazyModel`.
+
+`@virentia/core/models`: `staticModel`, `model`, `trait`, `f`, `refs`, `children`, `inverse`, `union`.
 
 Derived effects come from `effect(...).variant(...)`: a variant is a separately
 observable front door to the same effect — its own `pending`, `doneData`, and

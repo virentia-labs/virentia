@@ -1,75 +1,51 @@
-// @vitest-environment happy-dom
+import { effect, scope, scoped } from "@virentia/core";
+import { f, model, staticModel } from "@virentia/core/models";
+import { describe, expect, vi } from "vitest";
+import { it } from "./support/vitest";
+import { action, component, h } from "../lib";
 
-import { scope, scoped, store, type EventCallable } from "@virentia/core";
-import { setActiveScope } from "@virentia/core/internal";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { action, createElement as h, render } from "../lib";
-import { onUnmount } from "../lib/runtime";
-
-afterEach(() => {
-  setActiveScope(null);
-});
-
-describe("component actions", () => {
-  it("turns a DOM event into a scoped reaction without rerunning the component", () => {
-    const container = document.createElement("div");
-    const count = store(0);
-    let setups = 0;
-    let unmounts = 0;
-
-    function Counter() {
-      setups++;
-      const increment = action(() => {
-        count.value++;
-      });
-      onUnmount(() => unmounts++);
-      return h("button", { onClick: increment }, () => count.value);
-    }
-
-    const dispose = render(() => h(Counter), container);
-    const button = container.querySelector("button")!;
-    button.click();
-    button.click();
-
-    expect(button.textContent).toBe("2");
-    expect(container.querySelector("button")).toBe(button);
-    expect(setups).toBe(1);
-    dispose();
-    dispose();
-    expect(unmounts).toBe(1);
-  });
-
-  it("preserves payload typing, waits for the reaction, and stops with its owner", async () => {
-    const container = document.createElement("div");
-    const appScope = scope();
-    const otherScope = scope();
-    const count = store(0);
-    const handler = vi.fn(async (amount: number, api: { scope: typeof appScope }) => {
-      expect(api.scope).toBe(appScope);
-      await Promise.resolve();
-      scoped(api.scope, () => {
-        count.value += amount;
-      });
+describe("model-owned actions", () => {
+  for (const define of [model, staticModel]) {
+    it(`runs before DOM, while retained, and after a direct unit await in ${define.name}`, async ({ root }) => {
+      const tick = effect(async () => {});
+      const called = vi.fn();
+      const Model = define({ data: { count: f.number(0) }, setup(self) {
+        const increment = action("increment", async (amount: number) => {
+          await tick();
+          self.count.value += amount;
+          called();
+        });
+        return { increment };
+      } });
+      const view = vi.fn((_props, self) => h("output", null, self.model.count));
+      const Counter = component({ model: Model, view });
+      const instance = root.run(() => Model.create({ id: "counter" }));
+      await instance.increment(2);
+      await root.render(() => h(Counter, { model: instance }));
+      expect(root.container.textContent).toBe("2");
+      const output = root.container.querySelector("output");
+      await instance.increment(3);
+      expect(root.container.querySelector("output")).toBe(output);
+      expect(root.container.textContent).toBe("5");
+      expect(view).toHaveBeenCalledTimes(1);
+      await root.render(() => null);
+      await instance.increment(4);
+      expect(instance.count.value).toBe(9);
+      expect(called).toHaveBeenCalledTimes(3);
+      await instance.dispose();
+      expect(() => instance.increment(1)).toThrow("disposed");
     });
-    let increment!: EventCallable<number>;
-
-    function Counter() {
-      increment = action("increment", handler);
-      return h("output", null, () => count.value);
-    }
-
-    const dispose = render(() => h(Counter), container, { scope: appScope });
-    await scoped(appScope, () => increment(3));
-    expect(container.textContent).toBe("3");
-    expect(handler).toHaveBeenCalledTimes(1);
-
-    await scoped(otherScope, () => increment(5));
-    expect(handler).toHaveBeenCalledTimes(1);
-    expect(scoped(otherScope, () => count.value)).toBe(0);
-
-    dispose();
-    await scoped(appScope, () => increment(7));
-    expect(handler).toHaveBeenCalledTimes(1);
-    expect(scoped(appScope, () => count.value)).toBe(3);
+  }
+  it("binds native DOM payloads to the model's instance, not an ambient caller", async ({ root }) => {
+    const Model = staticModel({ data: { text: f.string("") }, setup(self) {
+      return { input: action((event: Event) => { self.text.value = (event.currentTarget as HTMLInputElement).value; }) };
+    } });
+    const Input = component({ model: Model, view: (_props, self) => h("input", { value: self.model.text, onInput: self.model.input }) });
+    await root.render(() => h(Input, { id: "one" }));
+    const input = root.container.querySelector("input")!;
+    input.value = "typed";
+    scoped(scope(), () => input.dispatchEvent(new Event("input")));
+    expect(input.value).toBe("typed");
+    expect(root.run(() => Input.model.create({ id: "one" })).text.value).toBe("typed");
   });
 });

@@ -8,8 +8,8 @@ import {
   type ReactNode,
 } from "react";
 
-const ScopeContext = createContext<Scope | null>(null);
-const HydrationScopeContext = createContext<{
+const ScopeContext = /* @__PURE__ */ createContext<Scope | null>(null);
+const HydrationScopeContext = /* @__PURE__ */ createContext<{
   scope: Scope;
   hydrationScope?: Scope;
 } | null>(null);

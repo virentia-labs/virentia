@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { computed, event, owner, reaction, scope, scoped, store } from "../../lib/index";
-import { collection, f, model, staticModel } from "../../lib/models";
+import { f, model, staticModel } from "../../lib/models";
+import { collection } from "../../lib/models/collection";
 import type { Props } from "../../lib/models";
 
 // Regressions for the adversarial-review findings (workflow wf_435ca70a-adf).

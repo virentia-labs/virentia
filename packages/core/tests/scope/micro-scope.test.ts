@@ -1,11 +1,21 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { dependency, getCurrentScope, provideDependency, reaction, scope, scoped, store } from "../../lib";
+import {
+  dependency,
+  getCurrentScope,
+  provideDependency,
+  reaction,
+  scope,
+  scoped,
+  store,
+} from "../../lib";
 import type { Scope } from "../../lib";
 import { node } from "../../lib/internal";
 import {
   createMicroScope,
   isMicroScope,
   readMicroDependencies,
+  peekMicroDependencies,
+  takeMicroDependencies,
   trackMicroDependency,
   unwrapMicroScope,
 } from "../../lib/scope/micro";
@@ -15,6 +25,42 @@ import { resetActiveScope } from "../support/scope-helpers";
 afterEach(resetActiveScope);
 
 describe("micro-scope", () => {
+  it("keeps tracking private and mutable on frozen overlays without copying identity", () => {
+    const parent = scope();
+    const micro = Object.freeze(createMicroScope(parent));
+    const source = node();
+    expect(Object.keys(micro)).toEqual(["values", "handlers", "deps"]);
+    expect(isMicroScope({ ...micro })).toBe(false);
+    trackMicroDependency(micro, source);
+    const captured = takeMicroDependencies(micro)!;
+    expect([...captured]).toEqual([source]);
+    expect(peekMicroDependencies(micro)!.size).toBe(0);
+    expect(unwrapMicroScope(micro)).toBe(parent);
+    const next = readMicroDependencies(micro)!;
+    expect(next).not.toBe(captured);
+    trackMicroDependency(micro, source);
+    expect(next.has(source)).toBe(true);
+  });
+
+  it("does not interpret proxy wrappers or primitive inputs as overlays", () => {
+    const parent = scope();
+    const micro = createMicroScope(parent);
+    const wrapper = new Proxy(micro, {});
+    expect(isMicroScope(wrapper)).toBe(false);
+    expect(unwrapMicroScope(wrapper)).toBe(wrapper);
+    for (const value of [null, undefined, 0, 1, "scope", Symbol("scope")])
+      expect(isMicroScope(value as unknown as Scope)).toBe(false);
+  });
+
+  it("keeps an early dependency-set handle live while tracking continues", () => {
+    const micro = createMicroScope(scope());
+    const dependencies = readMicroDependencies(micro)!;
+    const source = node();
+    trackMicroDependency(micro, source);
+    expect(readMicroDependencies(micro)).toBe(dependencies);
+    expect(dependencies.has(source)).toBe(true);
+    expect(readMicroDependencies(createMicroScope(scope()))!.size).toBe(0);
+  });
   it("is the ambient scope inside an auto-reaction body", () => {
     let captured = null as Scope | null;
     const s = scope();

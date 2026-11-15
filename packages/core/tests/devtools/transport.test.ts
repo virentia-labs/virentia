@@ -33,6 +33,15 @@ afterEach(() => {
 });
 
 describe("createWebSocketTransport", () => {
+  it("does not recurse when a failed socket emits error synchronously from close", () => {
+    const fake = makeFakeCtor();
+    const transport = createWebSocketTransport("ws://x", { webSocket: fake.ctor, reconnectDelay: 0 });
+    const socket = fake.instances[0]!;
+    const close = vi.spyOn(socket, "close").mockImplementation(() => { socket.fire("error"); });
+    expect(() => socket.fire("error")).not.toThrow();
+    expect(close).toHaveBeenCalledTimes(1);
+    transport.dispose();
+  });
   it("throws a descriptive error when no WebSocket is available", () => {
     vi.stubGlobal("WebSocket", undefined);
 

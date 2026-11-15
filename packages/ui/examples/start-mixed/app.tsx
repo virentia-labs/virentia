@@ -1,35 +1,16 @@
 /** @jsxImportSource @virentia/ui */
-import { store } from "@virentia/ui";
-import { ReactTree } from "@virentia/ui/react";
-import { VueTree } from "@virentia/ui/vue";
-import { useUnit as useReactUnit } from "@virentia/react";
-import { useUnit as useVueUnit } from "@virentia/vue";
-import { createElement as reactH } from "react";
-import { defineComponent, h as vueH } from "vue";
+import { children, f, staticModel } from "@virentia/core/models";
+import { component, For } from "@virentia/ui";
+const CounterModel = staticModel({ name: "RequestCounter", data: { label: f.string(), count: f.number() } });
+const PageModel = staticModel({ name: "RequestPage", data: { counters: children.many(CounterModel) } });
+const Row = component({ model: CounterModel, view: (_props, self) => <p>{self.model.label}: {self.model.count}</p> });
+const Page = component({ model: PageModel, view: (_props, self) => <main><h1>Model-owned SSR</h1><For each={self.model.counters} view={Row} /></main> });
 
-const count = store(0);
-
-function ReactCounter() {
-  const value = useReactUnit(count);
-  return reactH("p", { "data-renderer": "react" }, `React: ${value}`);
-}
-
-const VueCounter = defineComponent({
-  setup() {
-    const value = useVueUnit(count);
-    return () => vueH("p", { "data-renderer": "vue" }, `Vue: ${value.value}`);
-  },
-});
-
-export default function App({ data }: { data: { count: number } }) {
-  count.value = data.count;
-
-  return (
-    <main>
-      <h1>One scope, three renderers</h1>
-      <button onClick={() => count.value++}>Virentia: {count.value}</button>
-      <ReactTree node={reactH(ReactCounter)} />
-      <VueTree node={vueH(VueCounter)} />
-    </main>
-  );
+/** Request bootstrap creates the root graph; views only receive its instances. */
+export default function app({ data }: { data: { count: number } }) {
+  const instance = PageModel.create({ id: "page", counters: [
+    { id: "first", label: "First", count: data.count },
+    { id: "second", label: "Second", count: data.count },
+  ] });
+  return <Page model={instance} />;
 }

@@ -10,7 +10,7 @@ describe("action types", () => {
       const increment = action(() => {
         count.value++;
       });
-      expectTypeOf(increment).toMatchTypeOf<EventCallable<unknown>>();
+      expectTypeOf(increment).toEqualTypeOf<EventCallable<void>>();
       void increment();
       return <button onClick={increment}>{count.value}</button>;
     }

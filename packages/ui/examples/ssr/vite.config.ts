@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
-import virentiaUI from "../../compiler/vite";
+import virentiaUI from "../../vite";
 
 function serverRendering(): Plugin {
   return {
@@ -34,6 +34,8 @@ export default defineConfig({
   plugins: [virentiaUI({ namespace: "ssr-demo" }), serverRendering()],
   resolve: {
     alias: {
+      "@virentia/ui/jsx-runtime": fileURLToPath(new URL("../../lib/jsx-runtime.ts", import.meta.url)),
+      "@virentia/ui/jsx-dev-runtime": fileURLToPath(new URL("../../lib/jsx-dev-runtime.ts", import.meta.url)),
       "@virentia/ui/server": fileURLToPath(new URL("../../lib/server.ts", import.meta.url)),
       "@virentia/ui": fileURLToPath(new URL("../../lib/index.ts", import.meta.url)),
       "@virentia/core/internal": fileURLToPath(

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { reactive, readonlyReactive, scope, scoped, store } from "../../lib";
+import { computed, reactive, readonlyReactive, scope, scoped, store } from "../../lib";
+import { storeModeOf } from "../../lib/internal";
 
 // Enumerating a store must show the STATE and nothing else. Leaking `node`,
 // `subscribe`, `map`, … into `Object.keys` / spread / `JSON.stringify` corrupts
@@ -85,12 +86,14 @@ describe("store enumeration", () => {
   });
 
   describe("a plain store", () => {
-    it("enumerates value alone", () => {
+    it("enumerates nothing and serializes to its value", () => {
       const s = scope();
       const $n = store(5);
 
       scoped(s, () => {
-        expect(Object.keys($n)).toEqual(["value"]);
+        // `value` and the api members live on the prototype: nothing is own.
+        expect(Object.keys($n)).toEqual([]);
+        expect(Object.keys({ ...$n })).toEqual([]);
         expect(JSON.parse(JSON.stringify($n))).toEqual({ value: 5 });
       });
     });
@@ -129,6 +132,17 @@ describe("store enumeration", () => {
       const $doubled = $n.map((v) => v * 2);
 
       expect(scoped(s, () => $doubled.value)).toBe(4);
+    });
+  });
+
+  describe("telling a value store from an object store", () => {
+    it("reports the mode without enumerating", () => {
+      expect(storeModeOf(store(1))).toBe("ref");
+      expect(storeModeOf(computed(() => 1))).toBe("ref");
+      expect(storeModeOf(store(1).map((value) => value + 1))).toBe("ref");
+      expect(storeModeOf(reactive({ value: 1 }))).toBe("reactive");
+      expect(storeModeOf({ value: 1 })).toBeUndefined();
+      expect(storeModeOf(null)).toBeUndefined();
     });
   });
 });

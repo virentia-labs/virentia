@@ -4,6 +4,23 @@ import { mutableStore } from "../../lib";
 
 describe("mutableStore", () => {
   describe("an array length change", () => {
+    it("invalidates root-array length and index readers after a structural mutation", () => {
+      const state = mutableStore([1, 2, 3]);
+      const length = computed(() => state.value.length);
+      const third = computed(() => state.value[2]);
+      const s = scope();
+      scoped(s, () => {
+        expect(length.value).toBe(3);
+        expect(third.value).toBe(3);
+        state.value.pop();
+        expect(length.value).toBe(2);
+        expect(third.value).toBeUndefined();
+        state.value.push(4);
+        expect(length.value).toBe(3);
+        expect(third.value).toBe(4);
+      });
+    });
+
     it("truncates via length=0 and re-runs a length reader", async () => {
       const s = scope();
       const trunc = event<void>();

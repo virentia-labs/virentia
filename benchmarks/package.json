@@ -1,0 +1,25 @@
+{
+  "name": "virentia-performance-benchmarks",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "bench:node": "node build.mjs && node run-node.mjs",
+    "bench:instances": "node build.mjs && node run-instances.mjs",
+    "bench:registries": "node build.mjs && node run-registries.mjs",
+    "bench:queries": "node build.mjs && node run-queries.mjs",
+    "bench:ui": "node build.mjs && node run-browser.mjs minified"
+  },
+  "devDependencies": {
+    "@sinclair/typebox": "0.34.52",
+    "effector": "23.4.4",
+    "esbuild": "0.28.2",
+    "mobx": "7.1.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "vue": "3.5.38"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

@@ -1,6 +1,23 @@
 import type { Scope } from "../scope";
 import type { Node } from "./types";
 
+declare const process: { env: { NODE_ENV?: string } };
+
+/**
+ * Development-only diagnostics, such as eager unit registration for late
+ * devtools and the stack of the call that disposed a model instance. Bundlers
+ * replace `process.env.NODE_ENV` statically; without a bundler, Node honours
+ * its environment and other runtimes keep diagnostics on. (Defined here: this
+ * module must stay loadable on its own, with type-only imports.)
+ */
+export const devDiagnostics: boolean = (() => {
+  try {
+    return process.env.NODE_ENV !== "production";
+  } catch {
+    return true;
+  }
+})();
+
 export const inspectorMetaKey = "virentia.inspector";
 
 export type InspectorEvent =
@@ -100,26 +117,34 @@ export interface InspectorSnapshot {
   breakpoints: string[];
 }
 
-const nodes = new Set<Node>();
-const scopes = new Set<Scope>();
+// Registration must not own the application graph. Live units remain discoverable
+// when devtools opens late, but a completed request/root can be collected.
+// Production builds register only while inspection is enabled: eager weak
+// registration (WeakRef + finalizer per unit) is a large share of unit creation.
+const nodes = new WeakSet<Node>();
+const scopes = new WeakSet<Scope>();
 const listeners = new Set<InspectorListener>();
-const nodeIds = new WeakMap<Node, string>();
+const nodeIds = new WeakMap<Node, number>();
 const scopeIds = new WeakMap<Scope, string>();
-const nodeById = new Map<string, Node>();
-const scopeById = new Map<string, Scope>();
+const nodeById = new Map<number, WeakRef<Node>>();
+const scopeById = new Map<string, WeakRef<Scope>>();
 const scopeMeta = new WeakMap<Scope, InspectorScopeMeta>();
 const snapshotPreparers = new WeakMap<Node, () => void>();
 const nodeParents = new WeakMap<Node, { parent: Node; role: string }>();
-const nodeLinks: InspectorNodeLink[] = [];
+const nodeLinks = new WeakMap<Node, Map<string, InspectorNodeLink>>();
 const breakpoints = new Set<string>();
+const nodeFinalizer = new FinalizationRegistry<number>((id) => {
+  nodeById.delete(id);
+  if (breakpoints.size) breakpoints.delete(`node:${id}`);
+});
+const scopeFinalizer = new FinalizationRegistry<string>((id) => scopeById.delete(id));
 
 let enabled = false;
 let nextNodeId = 0;
 let nextScopeId = 0;
 
 interface InspectorNodeLink {
-  source: Node;
-  target: Node;
+  target: WeakRef<Node>;
   kind: InspectorEdgeKind;
   role?: string;
 }
@@ -136,6 +161,11 @@ export function enableInspector(): () => void {
 
 export function isInspectorEnabled(): boolean {
   return enabled;
+}
+
+/** Units created now are discoverable by an inspector enabled later (development builds). */
+export function isInspectorDiscoverable(): boolean {
+  return enabled || devDiagnostics;
 }
 
 export function onInspectorEvent(listener: InspectorListener): () => void {
@@ -202,11 +232,12 @@ export function annotateInspectorScope(scope: Scope, meta: InspectorScopeMeta): 
 }
 
 export function registerInspectorNode(node: Node): void {
+  if (!enabled && !devDiagnostics) return;
   const known = nodes.has(node);
 
   if (!known) {
     nodes.add(node);
-    getInspectorNodeId(node);
+    nodeNumber(node);
   }
 
   if (!enabled || known) {
@@ -230,7 +261,11 @@ function resolveScopeAlias(scope: Scope): Scope {
 }
 
 export function registerInspectorScope(scope: Scope | null | undefined): void {
-  if (!scope) {
+  // Like nodes: production registers scopes only once devtools are enabled. A
+  // registration keeps a weak reference to the scope, and a WeakRef target
+  // stays alive until the current job ends — a synchronous loop over many
+  // scopes would hold every one of them, with all its state, until then.
+  if (!scope || (!enabled && !devDiagnostics)) {
     return;
   }
 
@@ -262,20 +297,21 @@ export function linkInspectorNodes(
     role?: string;
   } = {},
 ): void {
+  // Linking must obey the same registration policy as node creation. Calling
+  // getInspectorNodeId below otherwise registers WeakRefs/finalizers even when
+  // both production diagnostics and the inspector are disabled.
+  if (!enabled && !devDiagnostics) return;
   const kind = options.kind ?? "owner";
 
   registerInspectorNode(source);
   registerInspectorNode(target);
 
-  if (
-    nodeLinks.some((link) => link.source === source && link.target === target && link.kind === kind)
-  ) {
-    return;
-  }
-
-  nodeLinks.push({
-    source,
-    target,
+  let links = nodeLinks.get(source);
+  if (!links) nodeLinks.set(source, (links = new Map()));
+  const key = `${kind}:${getInspectorNodeId(target)}`;
+  if (links.has(key)) return;
+  links.set(key, {
+    target: nodeById.get(nodeNumber(target))!,
     kind,
     role: options.role,
   });
@@ -345,12 +381,17 @@ export function getInspectorBreakpoints(): string[] {
 }
 
 export function getInspectorNodeId(node: Node): string {
+  return `node:${nodeNumber(node)}`;
+}
+
+function nodeNumber(node: Node): number {
   let id = nodeIds.get(node);
 
   if (!id) {
-    id = `node:${++nextNodeId}`;
+    id = ++nextNodeId;
     nodeIds.set(node, id);
-    nodeById.set(id, node);
+    nodeById.set(id, new WeakRef(node));
+    nodeFinalizer.register(node, id);
   }
 
   return id;
@@ -364,18 +405,22 @@ export function getInspectorScopeId(scope: Scope): string {
   if (!id) {
     id = `scope:${++nextScopeId}`;
     scopeIds.set(scope, id);
-    scopeById.set(id, scope);
+    scopeById.set(id, new WeakRef(scope));
+    scopeFinalizer.register(scope, id);
   }
 
   return id;
 }
 
 export function getInspectorNodeById(id: string): Node | undefined {
-  return nodeById.get(id);
+  if (!id.startsWith("node:")) return;
+  const number = Number(id.slice(5));
+  if (`node:${number}` !== id) return;
+  return nodeById.get(number)?.deref();
 }
 
 export function getInspectorScopeById(id: string): Scope | undefined {
-  return scopeById.get(id);
+  return scopeById.get(id)?.deref();
 }
 
 export function readInspectorNodeMeta(node: Node): InspectorNodeMeta {
@@ -392,13 +437,48 @@ export function readInspectorNodeMeta(node: Node): InspectorNodeMeta {
 // at creation — units are created during model setup, not per update — so an
 // anonymous unit in a failure report still points at real source.
 export function captureDeclarationSite(): string | undefined {
-  const stack = new Error().stack;
+  return declarationSite(new Error().stack);
+}
 
+/** Capture the call site now, but format its stack only when diagnostics need it. */
+export function withDeferredDeclarationSite(
+  meta: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!enabled && !devDiagnostics) return meta;
+  const declaration = new Error();
+  const inspector = readInspectorNodeMetaFromRecord(meta);
+  Object.defineProperty(inspector, "loc", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      const loc = declarationSite(declaration.stack);
+      Object.defineProperty(inspector, "loc", {
+        value: loc,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      return loc;
+    },
+    set(loc: string | undefined) {
+      Object.defineProperty(inspector, "loc", {
+        value: loc,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    },
+  });
+  return meta;
+}
+
+function declarationSite(stack: string | undefined): string | undefined {
   if (!stack) return undefined;
 
   // Skip frames belonging to this library — its source tree during development,
   // its bundles once published — so the first remaining frame is the caller's.
-  const internal = /[/\\](?:packages[/\\]core[/\\]lib|dist[/\\](?:index|internal|devtools|kernel-))|@virentia[/\\]core/;
+  const internal =
+    /[/\\](?:packages[/\\]core[/\\]lib|dist[/\\](?:index|internal|devtools|kernel-))|@virentia[/\\]core/;
 
   for (const frame of stack.split("\n").slice(1)) {
     if (internal.test(frame)) continue;
@@ -421,18 +501,20 @@ export function describeNode(node: Node): string {
 }
 
 export function getInspectorSnapshot(): InspectorSnapshot {
-  for (const node of Array.from(nodes)) {
-    snapshotPreparers.get(node)?.();
+  for (const node of liveValues(nodeById).filter((node) => nodes.has(node))) {
+    const prepare = snapshotPreparers.get(node);
+    if (prepare) prepare();
+    else (node as { prepareInspectorSnapshot?(): void }).prepareInspectorSnapshot?.();
   }
 
-  for (const node of Array.from(nodes)) {
+  for (const node of liveValues(nodeById).filter((node) => nodes.has(node))) {
     for (const next of node.next ?? []) {
       registerInspectorNode(next);
     }
   }
 
   const visibleNodes = dedupeNamedNodes(
-    [...nodes].filter((node) => !readInspectorNodeMeta(node).internal),
+    liveValues(nodeById).filter((node) => nodes.has(node) && !readInspectorNodeMeta(node).internal),
   );
   const visibleNodeSet = new Set(visibleNodes);
   const snapshotNodes = visibleNodes.map((node) => {
@@ -477,27 +559,43 @@ export function getInspectorSnapshot(): InspectorSnapshot {
     }
   }
 
-  for (const link of nodeLinks) {
-    if (visibleNodeSet.has(link.source) && visibleNodeSet.has(link.target)) {
-      addEdge(link.source, link.target, link.kind);
+  for (const source of visibleNodes) {
+    const links = nodeLinks.get(source);
+    if (!links) continue;
+    for (const [key, link] of links) {
+      const target = link.target.deref();
+      if (!target) links.delete(key);
+      else if (visibleNodeSet.has(target)) addEdge(source, target, link.kind);
     }
   }
 
   return {
     nodes: snapshotNodes,
     edges,
-    scopes: [...scopes].map((scope) => {
-      const id = getInspectorScopeId(scope);
+    scopes: liveValues(scopeById)
+      .filter((scope) => scopes.has(scope))
+      .map((scope) => {
+        const id = getInspectorScopeId(scope);
 
-      return {
-        id,
-        name: scopeMeta.get(scope)?.name ?? `scope ${id.replace("scope:", "#")}`,
-      };
-    }),
+        return {
+          id,
+          name: scopeMeta.get(scope)?.name ?? `scope ${id.replace("scope:", "#")}`,
+        };
+      }),
     breakpoints: getInspectorBreakpoints().filter((id) =>
       snapshotNodes.some((node) => node.id === id),
     ),
   };
+}
+
+function liveValues<T extends object, K>(registry: Map<K, WeakRef<T>>): T[] {
+  const values: T[] = [];
+  for (const [id, ref] of registry) {
+    const value = ref.deref();
+    if (value) values.push(value);
+    else registry.delete(id);
+  }
+  return values;
 }
 
 function dedupeNamedNodes(input: Node[]): Node[] {
