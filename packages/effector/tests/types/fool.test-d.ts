@@ -8,6 +8,7 @@ import type {
   UnitTargetable as EffectorUnitTargetable,
 } from "effector";
 import { effect, event } from "@virentia/core";
+import type { FieldStore } from "@virentia/core/models";
 import type * as virentia from "@virentia/core";
 import type { Effect as VirentiaEffect, EventCallable as VirentiaEventCallable } from "@virentia/core";
 import { fool } from "../../lib";
@@ -19,6 +20,7 @@ declare const vEventCallable: virentia.EventCallable<number>;
 declare const vEffect: virentia.Effect<number, string, boolean>;
 declare const vStore: virentia.Store<number>;
 declare const vStoreWritable: virentia.StoreWritable<number>;
+declare const modelField: FieldStore<string>;
 declare const vEventVoid: virentia.EventCallable<void>;
 declare const vEventUnion: virentia.EventCallable<number | string>;
 declare const vEventReadonly: virentia.EventCallable<{ readonly id: string }>;
@@ -36,6 +38,13 @@ declare const eStoreWritable: EffectorStoreWritable<number>;
 declare const mixedFamily: virentia.EventCallable<number> | EffectorEventCallable<number>;
 
 describe("fool() — virentia-direction overload return types (dual identity)", () => {
+  it("preserves a model data cell's payload and minimal store API", () => {
+    const unit = fool(modelField);
+    expectTypeOf(unit).toEqualTypeOf<FieldStore<string> & EffectorEventCallable<string>>();
+    expectTypeOf(unit).toBeCallableWith("email");
+    // @ts-expect-error data cell payload is still a string
+    unit(3);
+  });
   it("virentia.EventCallable<T> -> EventCallable<T> & EffectorEventCallable<T>", () => {
     expectTypeOf(fool(vEventCallable)).toEqualTypeOf<
       virentia.EventCallable<number> & EffectorEventCallable<number>

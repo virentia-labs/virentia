@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "react": ["packages/react/node_modules/@types/react/index.d.ts"],
+      "react/*": ["packages/react/node_modules/@types/react/*"],
+      "react-dom/*": ["../router/packages/react/node_modules/@types/react-dom/*"]
+    }
+  },
+  "include": ["tests/**/*.test.ts"]
+}

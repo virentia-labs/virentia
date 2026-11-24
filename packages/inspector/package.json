@@ -22,6 +22,7 @@
     "dist"
   ],
   "type": "module",
+  "sideEffects": ["**/*.css", "./dist/app/**", "./dist/cli.mjs", "./dist/cli.cjs", "./bin/virentia-inspector.mjs"],
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.mts",

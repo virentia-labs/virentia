@@ -12,8 +12,8 @@ import type {
   Scope as EffectorScope,
 } from "effector";
 import { shouldSkipEffector } from "./association-state";
-import { isEffectorUnit, isObjectLike, isVirentiaEffect, isVirentiaUnit } from "./guards";
-import type { BridgeUnit } from "./internal-types";
+import { isEffectorUnit, isObjectLike, isVirentiaEffect, isVirentiaFieldStore, isVirentiaUnit } from "./guards";
+import type { BridgeUnit, VirentiaBridgeUnit } from "./internal-types";
 import {
   callAssociation,
   createEffectorScopeNode,
@@ -22,7 +22,7 @@ import {
   resolveAssociationFromEffectorScope,
   resolveAssociationFromVirentiaScope,
 } from "./runtime";
-import type { VirentiaTarget, VirentiaUnit } from "./types";
+import type { VirentiaFieldStore, VirentiaTarget, VirentiaUnit } from "./types";
 
 type AnyCall = (...args: any[]) => unknown;
 
@@ -40,6 +40,7 @@ export function fool<T>(
   unit: virentia.StoreWritable<T>,
 ): virentia.StoreWritable<T> & EffectorEventCallable<T>;
 export function fool<T>(unit: virentia.Store<T>): virentia.Store<T> & EffectorEventCallable<T>;
+export function fool<Unit extends VirentiaFieldStore<any>>(unit: Unit): Unit & EffectorEventCallable<Unit["value"]>;
 export function fool<Params, Done, Fail>(
   unit: EffectorEffect<Params, Done, Fail>,
 ): EffectorEffect<Params, Done, Fail> & virentia.Effect<Params, Done, Fail>;
@@ -67,8 +68,8 @@ export function fool(unit: BridgeUnit): BridgeUnit {
 
   const fooled = isEffectorUnit(unit)
     ? createFooledEffectorUnit(unit)
-    : isVirentiaUnit(unit)
-      ? createFooledVirentiaUnit(unit as VirentiaUnit)
+    : isVirentiaUnit(unit) || isVirentiaFieldStore(unit)
+      ? createFooledVirentiaUnit(unit)
       : null;
 
   if (!fooled) {
@@ -81,8 +82,8 @@ export function fool(unit: BridgeUnit): BridgeUnit {
   return fooled;
 }
 
-function createFooledVirentiaUnit(unit: VirentiaUnit): BridgeUnit {
-  const effectorUnit = createEffectorAdapter(unit);
+function createFooledVirentiaUnit(unit: VirentiaBridgeUnit): BridgeUnit {
+  const effectorUnit = toEffectorUnit(unit);
   const base =
     typeof unit === "function" ? createCallableBridge((...args) => (unit as AnyCall)(...args)) : {};
 
@@ -119,7 +120,9 @@ function createCallableBridge(call: AnyCall): AnyCall {
   return (...args: any[]) => call(...args);
 }
 
-function createEffectorAdapter(unit: BridgeUnit): EffectorUnit<unknown> {
+export function toEffectorUnit<Params, Done, Fail>(unit: virentia.Effect<Params, Done, Fail>): EffectorEffect<Params, Done, Fail>;
+export function toEffectorUnit(unit: BridgeUnit): EffectorUnit<unknown>;
+export function toEffectorUnit(unit: BridgeUnit): EffectorUnit<unknown> {
   if (isEffectorUnit(unit)) {
     return unit;
   }
@@ -156,9 +159,9 @@ function createEffectorAdapter(unit: BridgeUnit): EffectorUnit<unknown> {
   return adapter;
 }
 
-function createVirentiaAdapter(unit: BridgeUnit): VirentiaUnit {
-  if (isVirentiaUnit(unit)) {
-    return unit as VirentiaUnit;
+function createVirentiaAdapter(unit: BridgeUnit): VirentiaBridgeUnit {
+  if (isVirentiaUnit(unit) || isVirentiaFieldStore(unit)) {
+    return unit;
   }
 
   if (effectorIs.effect(unit)) {

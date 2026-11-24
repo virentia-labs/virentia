@@ -1,14 +1,23 @@
 import { getActiveScope, requireActiveScope, setActiveScope } from "./internal";
 import type { Scope } from "./types";
-import { beginSpawnCollection } from "../kernel";
+import { NativeScope } from "./native";
+import { closeSpawnCollection, openSpawnCollection } from "../kernel/run";
 import { registerInspectorScope } from "../kernel/inspector";
 import type { Effect, EffectHandler } from "../units/effect";
 import { seedScopeStoreValue } from "../units/store";
 import type { StoreWritable } from "../units/store";
 import { provideDependency } from "../units/dependency";
 import type { Dependency } from "../units/dependency";
+import { initializeSnapshot } from "./snapshot";
+import { scopePromise } from "./promise";
+import type { ScopeSnapshot } from "./snapshot";
+
+export { serialize } from "./snapshot";
+export type { JsonValue, ScopeSnapshot } from "./snapshot";
 
 export interface ScopeOptions {
+  /** Lazy writable SID values. Apply before reading derived stores; explicit values below take precedence. */
+  snapshot?: ScopeSnapshot;
   values?:
     | ReadonlyMap<StoreWritable<any>, unknown>
     | readonly (readonly [StoreWritable<any>, unknown])[];
@@ -19,11 +28,9 @@ export interface ScopeOptions {
 }
 
 export function scope(options: ScopeOptions = {}): Scope {
-  const nextScope: Scope = {
-    values: new Map(),
-    handlers: new Map(),
-    deps: new Map(),
-  };
+  const nextScope: Scope = new NativeScope(new Map(), new Map(), new Map());
+
+  if (options.snapshot !== undefined) initializeSnapshot(nextScope, options.snapshot);
 
   if (options.values) {
     const values = options.values instanceof Map ? options.values.entries() : options.values;
@@ -88,53 +95,64 @@ export type * from "./types";
 type AnyFunction = (this: unknown, ...args: any[]) => unknown;
 
 /**
- * Runs `fn` with `scope` as the ambient scope. The ambient stays installed across
- * `fn`'s own awaits (so a write after `await` still lands in `scope`), then is
- * restored to what it was before.
+ * Runs the synchronous body in `scope`, restoring its caller immediately.
+ * Direct awaits of Virentia units resume in that body's context. Native promises
+ * (fetch, timers, Promise.all) do not carry context and must use scoped explicitly.
  *
  * A synchronous `fn` restores immediately and returns its value. An asynchronous
  * `fn` returns a promise that resolves only after `fn` AND every async unit it
  * triggered from its synchronous body (a store write firing a reaction, an effect
- * call, …) have fully settled — only then is the ambient restored. That wait is
- * what stops a detached reaction from outliving the `scoped(...)` and clobbering
- * the global ambient afterwards. (Work spawned only after one of `fn`'s own awaits
+ * call, …) have fully settled. (Work spawned only after one of `fn`'s own awaits
  * is not tracked — trigger it before you await, or from an awaited unit.)
  */
 function runScopedExec<T>(scope: Scope, fn: () => T): T {
-  const stopCollecting = beginSpawnCollection();
+  openSpawnCollection();
   const previousScope = setActiveScope(scope);
   let result: T;
 
   try {
     result = fn();
   } catch (error) {
-    stopCollecting();
+    closeSpawnCollection();
     setActiveScope(previousScope);
     throw error;
   }
 
-  const spawned = stopCollecting();
+  const spawned = closeSpawnCollection();
+  setActiveScope(previousScope);
 
   if (!isThenable(result)) {
-    setActiveScope(previousScope);
     // Nobody is awaiting a synchronous body, so any work it spawned would settle
     // with no handler attached — and a rejection there would take the process
     // down. The failure has already been reported through the contained-error
     // funnel, so absorb it here instead of turning a logged bug into a crash.
-    void settleAll(spawned);
+    if (spawned) void settleAll(spawned);
 
     return result;
   }
 
-  return Promise.resolve(result)
-    .then(
+  if (!spawned) return scopePromise(result, previousScope) as T;
+
+  return settleScopedBody(result, spawned, previousScope) as T;
+}
+
+// Separate from runScopedExec: its closures would otherwise make every
+// (synchronous) scoped body allocate their context.
+function settleScopedBody(
+  result: PromiseLike<unknown>,
+  spawned: Promise<void>[],
+  previousScope: Scope | null,
+): Promise<unknown> {
+  return scopePromise(
+    Promise.resolve(result).then(
       (value) => settleAll(spawned).then(() => value),
       (error) =>
         settleAll(spawned).then(() => {
           throw error;
         }),
-    )
-    .finally(() => setActiveScope(previousScope)) as T;
+    ),
+    previousScope,
+  );
 }
 
 function settleAll(promises: Promise<void>[]): Promise<void> {

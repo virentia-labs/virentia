@@ -141,8 +141,8 @@ describe("lazyModel", () => {
 
     scoped(s, () => {
       expect(model.count.value).toBe(3);
-      // The loaded store proxy exposes its `value` key without leaking `prototype`.
-      expect(Reflect.ownKeys(model.count)).toContain("value");
+      // The loaded store exposes `value` (from its prototype) without leaking `prototype`.
+      expect("value" in model.count).toBe(true);
       expect(Reflect.ownKeys(model.count)).not.toContain("prototype");
     });
   });

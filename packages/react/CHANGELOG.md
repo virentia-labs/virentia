@@ -1,15 +1,13 @@
 # @virentia/react
 
-## 0.5.2
+## 0.6.0
 
-### Patch Changes
+### Minor Changes
 
-- Stop the root `@virentia/react` entry from loading `@virentia/core/models` and its optional TypeBox peer when entity models are not used.
+- Support native model bindings and instance queries in useModel and component. Keep TypeBox optional when using the React root entry.
 
-  Model-aware `useModel` and `component` behavior is preserved through a lightweight core binding protocol, and their generated React declarations now infer model inputs and instances structurally without importing the models subpath.
-
-- Updated dependencies
-  - @virentia/core@0.11.2
+- Updated Virentia dependencies
+  - @virentia/core@0.12.0
 
 ## 0.5.1
 

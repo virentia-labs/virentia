@@ -4,7 +4,7 @@ import type {
   UnitTargetable as EffectorUnitTargetable,
 } from "effector";
 import type * as virentia from "@virentia/core";
-import type { VirentiaTarget, VirentiaUnit } from "../../lib";
+import type { VirentiaFieldStore, VirentiaTarget, VirentiaUnit } from "../../lib";
 import type { BridgeTarget, BridgeUnit } from "../../lib/internal-types";
 
 describe("VirentiaUnit / VirentiaTarget", () => {
@@ -51,13 +51,13 @@ describe("VirentiaUnit / VirentiaTarget", () => {
 describe("internal bridge types (BridgeUnit / BridgeTarget)", () => {
   it("BridgeUnit<T> unions the effector and virentia unit worlds", () => {
     expectTypeOf<BridgeUnit<number>>().toEqualTypeOf<
-      EffectorUnit<number> | EffectorUnitTargetable<number> | VirentiaUnit<number>
+      EffectorUnit<number> | EffectorUnitTargetable<number> | VirentiaUnit<number> | VirentiaFieldStore<number>
     >();
   });
 
   it("BridgeTarget<T> unions the effector and virentia target worlds", () => {
     expectTypeOf<BridgeTarget<number>>().toEqualTypeOf<
-      EffectorUnitTargetable<number> | VirentiaTarget<number>
+      EffectorUnitTargetable<number> | VirentiaTarget<number> | VirentiaFieldStore<number>
     >();
   });
 

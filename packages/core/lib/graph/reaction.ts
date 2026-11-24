@@ -1,14 +1,26 @@
-import { node, runDetached } from "../kernel";
-import type { Node } from "../kernel";
-import { captureDeclarationSite, withInspectorMeta } from "../kernel/inspector";
+import { runDetached } from "../kernel";
+import { registerDirectRun } from "../kernel/run";
+import type { KernelExecutionContext, Node } from "../kernel";
+import { topologyChanged, topologyShrank } from "../kernel/topology";
+import { registerOwnedNode } from "../kernel/create";
+import {
+  devDiagnostics,
+  isInspectorEnabled,
+  withDeferredDeclarationSite,
+  withInspectorMeta,
+} from "../kernel/inspector";
 import { getActiveScope, setActiveScope } from "../scope/internal";
 import type { Scope } from "../scope";
-import { detachScopedDependent, reconcileScopedEdges } from "../kernel/scoped-edges";
+import { detachScopedDependent, reconcileScopedEdges, reconcileScopedSource } from "../kernel/scoped-edges";
 import { createMicroScope, readMicroDependencies, unwrapMicroScope } from "../scope/micro";
 import { registerCleanup } from "./owner";
+import { trackUnitDeclaration } from "./declaration";
+import { boundEventScopeOf } from "../units/event";
+import { boundStoreAlive, boundStoreScopeOf, initializeScopedComputed, isNativeStoreUnit } from "../units/binding";
 import type { Effect } from "../units/effect";
 import type { Event, EventCallable } from "../units/event";
 import type { Reactive, ReactiveWritable, Store, StoreWritable } from "../units/store";
+import { retainShapes } from "../kernel/shapes";
 
 export interface Unit<_T = unknown> {
   readonly node: Node;
@@ -69,6 +81,73 @@ export interface ReactionEffectApi {
   readonly signal: AbortSignal;
 }
 
+// The api object of one explicit reaction run. `signal` stays an own enumerable
+// accessor like an object literal's, but shares one getter: an accessor in a
+// literal is defined through the runtime on every run, which costs more than
+// the rest of a synchronous reaction run.
+const signalAccessor: PropertyDescriptor = {
+  get(this: ReactionRunApi): AbortSignal {
+    return ReactionRunApi.signalOf(this);
+  },
+  enumerable: true,
+  configurable: true,
+};
+
+class ReactionRunApi implements ReactionEffectApi {
+  readonly scope: Scope;
+  declare readonly signal: AbortSignal;
+  #controller: AbortController | null = null;
+  readonly #reaction: { runs(): Set<AbortController> };
+
+  constructor(scope: Scope, reaction: { runs(): Set<AbortController> }) {
+    this.scope = scope;
+    this.#reaction = reaction;
+    Object.defineProperty(this, "signal", signalAccessor);
+  }
+
+  /** The run's AbortController, created (and registered) on the first read. */
+  static signalOf(api: ReactionRunApi): AbortSignal {
+    let controller = api.#controller;
+    if (!controller) {
+      controller = api.#controller = new AbortController();
+      api.#reaction.runs().add(controller);
+    }
+    return controller.signal;
+  }
+
+  static controllerOf(api: ReactionRunApi | undefined): AbortController | null {
+    return api === undefined ? null : api.#controller;
+  }
+}
+// A run's API lives for that run: keep its hidden class (see kernel/shapes.ts).
+retainShapes(
+  "core/graph/reaction",
+  new ReactionRunApi(
+    { values: new Map(), handlers: new Map(), deps: new Map() },
+    { runs: () => new Set() },
+  ),
+);
+
+// Whether a run body can see its second argument, read once from its source.
+// It cannot when it declares at most one plain parameter, never names
+// `arguments` or `eval`, and is not a sloppy-mode `function` (whose
+// `fn.arguments` exposes the call to other code). Anything else keeps its api:
+// destructuring, defaults, rest, comments or escapes in the header, computed or
+// quoted method keys, bound and native functions, proxies.
+const functionSource = Function.prototype.toString;
+const PLAIN_HEADER =
+  /^(?:[\p{ID_Continue}$\s*]*\(\s*(?:[\p{ID_Start}$_][\p{ID_Continue}$]*\s*)?\)|(?:async\s+)?[\p{ID_Start}$_][\p{ID_Continue}$]*\s*=>)/u;
+const SEES_CALL = /\b(?:arguments|eval)\b|\\u|\[native code\]/;
+
+/** @internal Exported for tests. */
+export function takesRunApi(run: unknown): boolean {
+  if (typeof run !== "function") return true;
+  const source = functionSource.call(run);
+  return (
+    !PLAIN_HEADER.test(source) || SEES_CALL.test(source) || Object.hasOwn(run, "arguments")
+  );
+}
+
 // Returns `void` so both a plain side effect (`v => arr.push(v)`, whose return
 // is ignored) and an `async` body (whose `Promise<void>` is accepted by the
 // void-return rule) type-check. Async is detected at runtime.
@@ -95,7 +174,11 @@ let reactionConfigTransform:
   | (<C extends { run: (...args: never[]) => unknown }>(config: C) => C)
   | null = null;
 
-/** @internal models-only seam; returns the previous transform for restoration. */
+/**
+ * @internal models-only seam; returns the previous transform for restoration.
+ * The wrapped `run` must pass its arguments through: whether a run gets its
+ * api is judged on the body as written.
+ */
 export function setReactionConfigTransform(
   transform: typeof reactionConfigTransform,
 ): typeof reactionConfigTransform {
@@ -136,110 +219,221 @@ export function reaction(config: AutoReactionConfig): Reaction;
 export function reaction(
   input: (() => unknown) | AutoReactionConfig | ReactionConfig<any, UnitList>,
 ): Reaction {
+  trackUnitDeclaration("reaction");
+  // Judged on the first run, so a reaction that never fires pays nothing; a
+  // wrapped body is judged now, as written, before the wrapper hides it.
+  let takesApi: boolean | undefined;
   if (reactionConfigTransform && typeof input === "object" && "on" in input) {
+    takesApi = takesRunApi(input.run);
     input = reactionConfigTransform(input as never) as typeof input;
   }
 
-  const explicit = typeof input === "object" && "on" in input;
-  const runHandler =
-    typeof input === "function" ? input : (input as { run: (...args: never[]) => unknown }).run;
-  const name = typeof input === "object" ? input.name : undefined;
-  const key = typeof input === "object" ? input.key : undefined;
-  const configuredScopes = typeof input === "object" && input.scope ? toArray(input.scope) : null;
-  // Per-scope behavior is opt-in through an explicit `scope:` — never inferred
-  // from the ambient scope at creation, which is a fragile global we must not
-  // depend on. With `scope:` the reaction fires only in those scopes and stores
-  // its dynamic edges per scope; without it the reaction is global (fires in any
-  // scope its source changed in, with a single dependency set).
-  const allowedScopes = configuredScopes ? new Set(configuredScopes) : null;
-  const useGlobalEdges = !configuredScopes;
-  const currentDependencies = new Set<Node>();
-  const boundScopes = new Set<Scope>();
+  const core = registerOwnedNode(new ReactionCore(input, takesApi));
+
+  if (core.explicit) {
+    for (const source of toArray((input as ReactionConfig<any, UnitList>).on)) {
+      const home = boundStoreSourceScopeOf(source);
+      if (home && core.allowed === home) {
+        reconcileScopedSource(home, core, source.node);
+        (core.boundScopes ??= new Set()).add(home);
+        // A scoped computed needs its dependencies in this instance before
+        // its first update. Merely filtering a global edge leaves it dormant.
+        if (!initializeScopedComputed(source, home)) {
+          try { (source as Store<unknown>).value; } catch {}
+        }
+      } else attach(source.node, core);
+      // A scope-less reaction observes globally: let a lazy computed source make
+      // its dependency edges global too, so this reaction fires in every scope
+      // the dependency changes in — not only where the computed was already read.
+      // A scoped reaction keeps the per-scope opt-in and does NOT globalize.
+      if (core.allowed === null) {
+        source.node.onObserve?.();
+      }
+      core.dependencies.add(source.node);
+    }
+  } else {
+    // Run the initial auto pass through the kernel (not `runAuto` directly) so an
+    // async body's effect `await`s are reentrant — that keeps the ambient
+    // micro-scope alive across them, exactly like a later triggered run. A
+    // synchronous body still runs synchronously inside this drain.
+    //
+    // An auto reaction only forms its dynamic per-scope edges by RUNNING in a
+    // scope, so the creation pass must run in EVERY configured scope — otherwise a
+    // `scope: [a, b]` auto reaction would subscribe (and ever fire) only in `a`.
+    const allowed = core.allowed;
+    if (allowed === null) runDetached({ unit: core, scope: undefined });
+    else if (allowed instanceof Set)
+      for (const configuredScope of allowed) runDetached({ unit: core, scope: configuredScope });
+    else runDetached({ unit: core, scope: allowed });
+  }
+
+  const stop = (): void => core.stop();
+  const result: Reaction = {
+    node: core,
+    explicit: core.explicit,
+
+    dependencies(): readonly Node[] {
+      return [...core.dependencies];
+    },
+
+    stop,
+  };
+
+  registerCleanup(stop);
+
+  return result;
+}
+
+/**
+ * One reaction: its graph node and everything its runs share. Collections only
+ * an async body or a second scope needs are created when one appears.
+ */
+class ReactionCore implements Node {
+  resolveScope: ((scope: Scope) => Scope) | undefined = undefined;
+  next: Node[] | undefined = undefined;
+  // A shared function, called as this node's method by the kernel.
+  run = runReaction as (ctx: KernelExecutionContext) => unknown;
+  readonly explicit: boolean;
+  readonly handler: (...args: never[]) => unknown;
+  /** Whether an explicit body can see the api object (see takesRunApi). */
+  takesApi: boolean | undefined;
+  /**
+   * The scopes it runs in: `null` for a global reaction, else one scope or a
+   * Set. Per-scope behavior is opt-in through `scope:` or a scope-bound event
+   * view, never inferred from the ambient scope at reaction creation. An
+   * explicit scope overrides a bound source's scope; unbound sources stay global.
+   */
+  readonly allowed: Scope | Set<Scope> | null;
+  /** Explicit sources, or a global auto reaction's tracked reads. */
+  readonly dependencies = new Set<Node>();
+  /** Scopes a scoped auto reaction holds edges in. */
+  boundScopes: Set<Scope> | undefined = undefined;
   // Async-body bookkeeping. `inFlight` is the currently-running body per scope
   // (for cancel-previous); `activeRuns` is every live controller (for stop()).
-  const inFlight = new WeakMap<Scope, AbortController>();
-  const activeRuns = new Set<AbortController>();
+  inFlight: WeakMap<Scope, AbortController> | undefined = undefined;
+  activeRuns: Set<AbortController> | undefined = undefined;
   // Latest-wins for async auto reactions: only the most recently started run for
   // a scope is allowed to commit its collected dependencies.
-  const runTokens = new WeakMap<Scope, object>();
-  let stopped = false;
+  runTokens: WeakMap<Scope, object> | undefined = undefined;
+  stopped = false;
+  readonly #name: string | undefined;
+  readonly #key: boolean | undefined;
+  #meta: Record<string, unknown> | undefined;
 
-  const reactionNode = node({
-    meta: withInspectorMeta(undefined, {
-      type: "reaction",
-      name,
-      key,
-      internal: false,
-      loc: captureDeclarationSite(),
-    }),
-    run: (ctx) => {
-      if (stopped || !matchesScope(allowedScopes, ctx.scope)) {
-        return ctx.value;
-      }
+  constructor(
+    input: (() => unknown) | AutoReactionConfig | ReactionConfig<any, UnitList>,
+    takesApi: boolean | undefined,
+  ) {
+    const config = typeof input === "object" ? input : undefined;
+    this.explicit = config !== undefined && "on" in config;
+    this.handler =
+      config === undefined ? (input as () => unknown) : (config as { run: () => unknown }).run;
+    this.takesApi = takesApi;
+    this.#name = config?.name;
+    this.#key = config?.key;
+    const scope = config?.scope;
+    const sourceScope = this.explicit
+      ? boundSourceScopeOf((config as ReactionConfig<any, UnitList>).on)
+      : undefined;
+    this.allowed = scope
+      ? Array.isArray(scope)
+        ? scope.length === 1
+          ? scope[0]
+          : new Set(scope as readonly Scope[])
+        : (scope as Scope)
+      : (sourceScope ?? null);
+    // The declaration site is captured now, when anything reads it.
+    if (isInspectorEnabled() || devDiagnostics) this.#meta = this.createMeta();
+  }
 
-      if (explicit) {
-        return runBody(ctx.scope, ctx.value, (api) =>
-          (runHandler as ReactionRun<unknown>)(ctx.value, api),
-        );
-      }
+  get meta(): Record<string, unknown> {
+    return (this.#meta ??= this.createMeta());
+  }
+  set meta(value: Record<string, unknown>) {
+    this.#meta = value;
+  }
+  private createMeta(): Record<string, unknown> {
+    return withDeferredDeclarationSite(
+      withInspectorMeta(undefined, {
+        type: "reaction",
+        name: this.#name,
+        key: this.#key,
+        internal: false,
+      }),
+    );
+  }
 
-      return runAuto(ctx.value);
-    },
-  });
+  matches(scope: Scope | null): boolean {
+    const allowed = this.allowed;
+    if (allowed === null) return true;
+    if (scope === null) return false;
+    return allowed instanceof Set ? allowed.has(scope) : allowed === scope;
+  }
 
-  // Starts a tracked run: resolves the real scope and installs a fresh per-run
-  // micro-scope as the ambient scope. Because the kernel restores the ambient
-  // scope across effect `await`s, this micro-scope keeps collecting the reaction's
-  // direct reads even after an `await`.
-  const beginTracking = (): { micro: Scope; realScope: Scope; previousScope: Scope | null } => {
-    // Track in the concrete scope the reaction is running in (the firing scope,
-    // or a configured scope during the creation pass). A global reaction with no
-    // active scope falls back to a throwaway scope — its edges are global anyway.
-    const realScope = unwrapMicroScope(getActiveScope()) ?? createTrackingScope();
-    const micro = createMicroScope(realScope);
+  runs(): Set<AbortController> {
+    return (this.activeRuns ??= new Set());
+  }
 
-    return { micro, realScope, previousScope: setActiveScope(micro) };
-  };
-
-  const commitDependencies = (realScope: Scope, micro: Scope): void => {
+  commitDependencies(realScope: Scope, micro: Scope): void {
     const deps = readMicroDependencies(micro) ?? new Set<Node>();
 
-    if (useGlobalEdges) {
-      reconcileDependencies(reactionNode, currentDependencies, new Set(deps));
+    if (this.allowed === null) {
+      reconcileDependencies(this, this.dependencies, new Set(deps));
     } else {
-      reconcileScopedEdges(realScope, reactionNode, deps);
-      boundScopes.add(realScope);
+      reconcileScopedEdges(realScope, this, deps);
+      const bound = (this.boundScopes ??= new Set());
+      bound.add(realScope);
     }
-  };
+  }
 
   // Auto form. A synchronous body reconciles its dependencies immediately; an
   // async body keeps tracking across awaits (micro-scope survives them) and
   // reconciles when it finishes — but only if it is still the latest run for its
   // scope, so a slow earlier run cannot overwrite a newer one's dependencies.
-  const runAuto = (ctxValue: unknown): PromiseLike<unknown> | unknown => {
-    const { micro, realScope, previousScope } = beginTracking();
+  runAuto(ctxValue: unknown): PromiseLike<unknown> | unknown {
+    // A tracked run resolves the real scope and installs a fresh per-run
+    // micro-scope as the ambient scope. Because the kernel restores the ambient
+    // scope across effect `await`s, this micro-scope keeps collecting the
+    // reaction's direct reads even after an `await`. It tracks in the concrete
+    // scope the reaction is running in (the firing scope, or a configured scope
+    // during the creation pass). A global reaction with no active scope falls
+    // back to a throwaway scope — its edges are global anyway.
+    const realScope = unwrapMicroScope(getActiveScope()) ?? createTrackingScope();
+    const micro = createMicroScope(realScope);
+    const previousScope = setActiveScope(micro);
     let result: unknown;
 
     try {
-      result = (runHandler as () => unknown)();
+      result = (this.handler as () => unknown)();
     } finally {
       setActiveScope(previousScope);
     }
 
     if (!isThenable(result)) {
-      commitDependencies(realScope, micro);
+      this.commitDependencies(realScope, micro);
       return ctxValue;
     }
 
+    return this.settleAuto(result, realScope, micro, ctxValue);
+  }
+
+  // The async tail of runAuto, apart so a synchronous run allocates no closures.
+  settleAuto(
+    result: PromiseLike<unknown>,
+    realScope: Scope,
+    micro: Scope,
+    ctxValue: unknown,
+  ): PromiseLike<unknown> {
     const token = {};
+    const runTokens = (this.runTokens ??= new WeakMap());
     runTokens.set(realScope, token);
 
     const commitIfLatest = (): void => {
       // Guard on `stopped`: a parked async auto run must NOT re-attach its
       // dependency edges after `stop()` / owner-dispose, which would resurrect a
       // stopped reaction onto its sources (a leak that defeats GC).
-      if (!stopped && runTokens.get(realScope) === token) {
-        commitDependencies(realScope, micro);
+      if (!this.stopped && runTokens.get(realScope) === token) {
+        this.commitDependencies(realScope, micro);
       }
     };
 
@@ -254,57 +448,63 @@ export function reaction(
         // A stopped reaction has no owner left to care about its outcome:
         // `stop()`/owner-dispose already detached it, and the rejection is
         // normally just the teardown abort of whatever the body was awaiting.
-        if (stopped) return ctxValue;
+        if (this.stopped) return ctxValue;
 
         throw error;
       },
     );
-  };
+  }
 
   // Invokes an async-capable body with cancel-previous semantics. A sync body
   // returns `ctxValue` unchanged; an async body returns a promise the drain (and
   // therefore a `scoped(...)` that triggered the reaction) awaits.
-  const runBody = (
-    scope: Scope | null,
-    ctxValue: unknown,
-    invoke: (api: ReactionEffectApi) => void | PromiseLike<unknown>,
-  ): PromiseLike<unknown> | unknown => {
-    if (scope) {
+  runBody(scope: Scope | null, ctxValue: unknown): PromiseLike<unknown> | unknown {
+    const inFlight = this.inFlight;
+    if (scope && inFlight && this.activeRuns?.size) {
       inFlight.get(scope)?.abort();
       inFlight.delete(scope);
     }
 
-    let controller: AbortController | null = null;
-    const result = invoke({
-      scope: scope as Scope,
-      get signal() {
-        if (!controller) {
-          controller = new AbortController();
-          activeRuns.add(controller);
-        }
-
-        return controller.signal;
-      },
-    });
+    // A body that cannot see its api gets none, and so never asks for a signal.
+    const takesApi = this.takesApi ?? (this.takesApi = takesRunApi(this.handler));
+    const api = takesApi ? new ReactionRunApi(scope as Scope, this) : undefined;
+    const result = (this.handler as (value: unknown, api?: ReactionEffectApi) => unknown)(
+      ctxValue,
+      api,
+    );
 
     if (!isThenable(result)) {
+      const controller = ReactionRunApi.controllerOf(api);
       if (controller) {
-        activeRuns.delete(controller);
+        this.activeRuns?.delete(controller);
       }
 
       return ctxValue;
     }
 
-    if (scope && controller) {
-      inFlight.set(scope, controller);
+    return this.settleBody(result, api, scope, ctxValue);
+  }
+
+  // The async tail of runBody, apart so a synchronous run allocates no closures.
+  settleBody(
+    result: PromiseLike<unknown>,
+    api: ReactionRunApi | undefined,
+    scope: Scope | null,
+    ctxValue: unknown,
+  ): PromiseLike<unknown> {
+    const started = ReactionRunApi.controllerOf(api);
+    if (scope && started) {
+      (this.inFlight ??= new WeakMap()).set(scope, started);
     }
 
     const settle = (): void => {
+      // The body may have asked for its signal only after it started waiting.
+      const controller = ReactionRunApi.controllerOf(api);
       if (controller) {
-        activeRuns.delete(controller);
+        this.activeRuns?.delete(controller);
 
-        if (scope && inFlight.get(scope) === controller) {
-          inFlight.delete(scope);
+        if (scope && this.inFlight?.get(scope) === controller) {
+          this.inFlight.delete(scope);
         }
       }
     };
@@ -319,80 +519,62 @@ export function reaction(
 
         // Same as the auto form: a stopped reaction's parked run settles
         // quietly — its teardown abort is not a failure anyone can act on.
-        if (stopped) return ctxValue;
+        if (this.stopped) return ctxValue;
 
         throw error;
       },
     );
-  };
-
-  if (explicit) {
-    for (const source of toArray((input as ReactionConfig<any, UnitList>).on)) {
-      attach(source.node, reactionNode);
-      // A scope-less reaction observes globally: let a lazy computed source make
-      // its dependency edges global too, so this reaction fires in every scope
-      // the dependency changes in — not only where the computed was already read.
-      // A scoped reaction keeps the per-scope opt-in and does NOT globalize.
-      if (useGlobalEdges) {
-        source.node.onObserve?.();
-      }
-      currentDependencies.add(source.node);
-    }
-  } else {
-    // Run the initial auto pass through the kernel (not `runAuto` directly) so an
-    // async body's effect `await`s are reentrant — that keeps the ambient
-    // micro-scope alive across them, exactly like a later triggered run. A
-    // synchronous body still runs synchronously inside this drain.
-    //
-    // An auto reaction only forms its dynamic per-scope edges by RUNNING in a
-    // scope, so the creation pass must run in EVERY configured scope — otherwise a
-    // `scope: [a, b]` auto reaction would subscribe (and ever fire) only in `a`.
-    if (configuredScopes) {
-      for (const configuredScope of configuredScopes) {
-        runDetached({ unit: reactionNode, scope: configuredScope });
-      }
-    } else {
-      runDetached({ unit: reactionNode, scope: undefined });
-    }
   }
 
-  const result: Reaction = {
-    node: reactionNode,
-    explicit,
+  stop(): void {
+    this.stopped = true;
 
-    dependencies(): readonly Node[] {
-      return [...currentDependencies];
-    },
-
-    stop(): void {
-      stopped = true;
-
+    const activeRuns = this.activeRuns;
+    if (activeRuns) {
       for (const controller of activeRuns) {
         controller.abort();
       }
 
       activeRuns.clear();
+    }
 
-      for (const dependency of currentDependencies) {
-        detach(dependency, reactionNode);
-      }
+    const dependencies = this.dependencies;
+    for (const dependency of dependencies) {
+      detach(dependency, this);
+    }
 
-      currentDependencies.clear();
+    dependencies.clear();
 
+    const boundScopes = this.boundScopes;
+    if (boundScopes) {
       for (const scope of boundScopes) {
-        detachScopedDependent(scope, reactionNode);
+        detachScopedDependent(scope, this);
       }
 
       boundScopes.clear();
-    },
-  };
-
-  registerCleanup(() => {
-    result.stop();
-  });
-
-  return result;
+    }
+  }
 }
+
+function runReaction(this: ReactionCore, ctx: KernelExecutionContext): unknown {
+  return runReactionIn(this, ctx.scope, ctx.value);
+}
+
+// A reaction reads only the scope and the value of its run: its source's
+// propagation may run it without an item (see registerDirectRun).
+function runReactionIn(node: Node, scope: Scope | null, value: unknown): unknown {
+  const reaction = node as ReactionCore;
+  if (reaction.stopped || !reaction.matches(scope)) {
+    return value;
+  }
+
+  if (reaction.explicit) {
+    return reaction.runBody(scope, value);
+  }
+
+  return reaction.runAuto(value);
+}
+registerDirectRun(runReaction, runReactionIn);
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {
   return (
@@ -417,11 +599,11 @@ function reconcileDependencies(node: Node, current: Set<Node>, next: Set<Node>):
 }
 
 function attach(source: Node, next: Node): void {
-  source.next = source.next ?? [];
-
-  if (!source.next.includes(next)) {
-    source.next.push(next);
-  }
+  // A literal keeps the common single-dependent array at capacity 1.
+  if (!source.next) source.next = [next];
+  else if (!source.next.includes(next)) source.next.push(next);
+  else return;
+  topologyChanged();
 }
 
 function detach(source: Node, next: Node): void {
@@ -431,6 +613,7 @@ function detach(source: Node, next: Node): void {
 
   if (index >= 0) {
     source.next.splice(index, 1);
+    topologyShrank();
   }
 }
 
@@ -438,8 +621,27 @@ function toArray<T>(value: T | readonly T[]): readonly T[] {
   return Array.isArray(value) ? (value as readonly T[]) : [value as T];
 }
 
-function matchesScope(allowedScopes: ReadonlySet<Scope> | null, scope: Scope | null): boolean {
-  return !allowedScopes || (scope !== null && allowedScopes.has(scope));
+function boundSourceScopeOf(sources: UnitList): Scope | undefined {
+  let scope: Scope | undefined;
+
+  for (const source of toArray(sources)) {
+    const bound = boundEventScopeOf(source) ?? boundStoreSourceScopeOf(source);
+    if (!bound) continue;
+    if (scope && scope !== bound) {
+      throw new TypeError("[core] reaction sources are bound to different scopes");
+    }
+    scope = bound;
+  }
+
+  return scope;
+}
+
+function boundStoreSourceScopeOf(source: SourceUnit<any>): Scope | undefined {
+  const scope = typeof source === "object" && source && !isNativeStoreUnit(source) && "subscribe" in source
+    ? boundStoreScopeOf(source as { subscribe: Function }) : undefined;
+  if (scope && (source as { [boundStoreAlive]?: boolean })[boundStoreAlive] === false)
+    throw new Error("[core] Cannot observe a disposed model store");
+  return scope;
 }
 
 function createTrackingScope(): Scope {

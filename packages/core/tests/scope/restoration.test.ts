@@ -3,21 +3,23 @@ import { effect, event, getCurrentScope, reaction, scope, scoped, store } from "
 import type { Scope } from "../../lib";
 import { resetActiveScope } from "../support/scope-helpers";
 
-const tick = () => Promise.resolve();
+const tickUnit = effect(() => Promise.resolve());
+const tick = () => getCurrentScope() ? tickUnit() : Promise.resolve();
+const timerUnit = effect(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
 
 afterEach(resetActiveScope);
 
 describe("scope restoration", () => {
   describe("across an awaited body", () => {
-    it("stays installed while an async scoped is pending", async () => {
+    it("restores the synchronous caller while async scoped is pending", async () => {
       const s = scope();
 
       const pending = scoped(s, async () => {
-        await Promise.resolve();
+        await tick();
       });
 
-      // The scope is still ambient synchronously after the call, before we await.
-      expect(getCurrentScope()).toBe(s);
+      // Pending work must not occupy the shared synchronous context.
+      expect(getCurrentScope()).toBe(null);
 
       await pending;
 
@@ -32,7 +34,7 @@ describe("scope restoration", () => {
       reaction({
         on: ev,
         async run() {
-          await Promise.resolve();
+          await tick();
         },
       });
 
@@ -49,7 +51,7 @@ describe("scope restoration", () => {
       const s = scope();
       const st = store(0);
       const fx = effect(async () => {
-        await Promise.resolve();
+        await tick();
         return 1;
       });
 
@@ -66,17 +68,17 @@ describe("scope restoration", () => {
       expect(scoped(s, () => st.value)).toBe(5);
     });
 
-    it("holds the same scope at every await boundary", async () => {
+    it("holds the same scope at every direct unit await boundary", async () => {
       const s = scope();
       const observed: (Scope | null)[] = [];
 
       await scoped(s, async () => {
         observed.push(getCurrentScope());
-        await Promise.resolve();
+        await tick();
         observed.push(getCurrentScope());
-        await Promise.resolve();
+        await tick();
         observed.push(getCurrentScope());
-        await new Promise<void>((r) => setTimeout(r, 0));
+        await timerUnit();
         observed.push(getCurrentScope());
       });
 
@@ -90,7 +92,7 @@ describe("scope restoration", () => {
 
       const observed = await scoped(outer, async () => {
         await scoped(inner, async () => {
-          await Promise.resolve();
+          await tick();
         });
         return getCurrentScope();
       });
@@ -108,7 +110,7 @@ describe("scope restoration", () => {
         value.value = 1;
 
         await scoped(inner, async () => {
-          await Promise.resolve();
+          await tick();
           value.value = 2;
         });
 
@@ -128,7 +130,7 @@ describe("scope restoration", () => {
       await scoped(appScope, async () => {
         count.value += 1;
 
-        await Promise.resolve();
+        await tick();
         count.value += 1;
       });
 
@@ -143,7 +145,7 @@ describe("scope restoration", () => {
       const count = store(0);
 
       await scoped(appScope, async () => {
-        await Promise.resolve();
+        await tick();
         count.value += 1;
       });
 
@@ -158,13 +160,13 @@ describe("scope restoration", () => {
       const count = store(0);
 
       await scoped(appScope, async () => {
-        await Promise.resolve();
+        await tick();
         count.value += 1;
 
-        await Promise.resolve();
+        await tick();
         count.value += 1;
 
-        await Promise.resolve();
+        await tick();
         count.value += 1;
       });
 
@@ -196,7 +198,7 @@ describe("scope restoration", () => {
       reaction({
         on: ev,
         run: async (_payload, api) => {
-          await Promise.resolve();
+          await tick();
           scoped(api.scope, () => {
             st.value = 7;
           });
@@ -231,7 +233,7 @@ describe("scope restoration", () => {
     it("assigns no return value when the body throws synchronously", () => {
       const s = scope();
       const fx = effect(async () => {
-        await Promise.resolve();
+        await tick();
         return 1;
       });
 
@@ -261,7 +263,7 @@ describe("scope restoration", () => {
         on: ev,
         run: async () => {
           ran = true;
-          await Promise.resolve();
+          await tick();
           throw new Error("reaction fail");
         },
       });
@@ -275,7 +277,7 @@ describe("scope restoration", () => {
     it("resolves the body even when a fire-and-forget effect fails", async () => {
       const s = scope();
       const fx = effect(async () => {
-        await Promise.resolve();
+        await tick();
         throw new Error("effect fail");
       });
       const failures: unknown[] = [];
@@ -295,7 +297,7 @@ describe("scope restoration", () => {
     it("resolves to the body's value despite a rejecting spawned effect", async () => {
       const s = scope();
       const fx = effect(async () => {
-        await Promise.resolve();
+        await tick();
         throw new Error("spawn-reject");
       });
       reaction({ on: fx.failData, run: () => {} });
@@ -316,7 +318,7 @@ describe("scope restoration", () => {
       // the ambient scope must be neutral once control returns to the event loop.
       const s = scope();
       const slowFx = effect(async () => {
-        await Promise.resolve();
+        await tick();
       });
 
       scoped(s, () => {

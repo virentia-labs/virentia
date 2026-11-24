@@ -2,21 +2,15 @@ import { describe, expect, it } from "vitest";
 import { effect, event, reaction, scope, scoped, store } from "../../lib";
 import { getInspectorSnapshot, isInspectorEnabled } from "../../lib/kernel/inspector";
 
-// Devtools are opt-in, but the registries that back them are populated from the
-// very first unit. These probes measure what an app pays when nobody ever opened
-// the inspector — the production case.
-//
-// This is a CHARACTERIZATION of an accepted trade-off, not an endorsement: the
-// registries are eager so that opening the inspector mid-session shows the units
-// that already exist. Gating registration on `enabled` removes the retention at
-// no byte cost, but then devtools only ever see units created after they were
-// switched on. Revisit together — do not "fix" one side in isolation.
+// Registration is eager but weak: opening devtools late still sees live units.
+// WeakRefs survive the current job, so these synchronous checks cover discovery,
+// not retention. weak-retention.test.ts verifies collection across GC turns.
 describe("inspector registries with devtools never enabled", () => {
   it("is disabled by default", () => {
     expect(isInspectorEnabled()).toBe(false);
   });
 
-  it("retains every scope ever created", () => {
+  it("discovers scopes registered before inspection is enabled", () => {
     const before = getInspectorSnapshot().scopes.length;
 
     // A server handling requests creates a scope per request.
@@ -33,7 +27,7 @@ describe("inspector registries with devtools never enabled", () => {
     expect(after - before).toBe(500);
   });
 
-  it("retains every unit ever created", () => {
+  it("discovers units registered before inspection is enabled", () => {
     const before = getInspectorSnapshot().nodes.length;
 
     // A model instantiated per screen/session creates fresh units each time.
@@ -49,7 +43,7 @@ describe("inspector registries with devtools never enabled", () => {
     expect(after - before).toBeGreaterThanOrEqual(200);
   });
 
-  it("retains the units of a disposed model", () => {
+  it("discovers a still-live effect", () => {
     const before = getInspectorSnapshot().nodes.length;
     const fx = effect(async () => 1);
 

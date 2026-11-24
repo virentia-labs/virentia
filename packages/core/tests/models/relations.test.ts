@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { scope, scoped } from "../../lib/index";
-import { Self, children, collection, f, inverse, refs, staticModel } from "../../lib/models";
+import { Self, children, f, inverse, refs, staticModel } from "../../lib/models";
+import { collection } from "../../lib/models/collection";
 
-// Scenarios follow docs/design/dynamic-models.md §5 (relations).
+// Model relation scenarios.
 
 function app<T>(fn: () => T): T {
   return scoped(scope(), fn) as T;

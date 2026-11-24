@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { computed, event, reaction, scope, scoped } from "../../lib/index";
-import { collection, f, model, staticModel } from "../../lib/models";
+import { f, model, staticModel } from "../../lib/models";
+import { collection, type Query } from "../../lib/models/collection";
+import { withTransaction } from "../../lib/internal";
 
 // §7.3 ord indexes and §8 reactive query terminals with plan interning.
 
@@ -19,6 +21,59 @@ function declareTodos(kind: typeof model | typeof staticModel) {
 
   return Todo;
 }
+
+describe("lazy collection epoch exposure", () => {
+  it("exposes the current epoch and then publishes every subsequent change", () => {
+    const Row = staticModel({ data: { count: f.number(0) } });
+    const current = scope();
+    const rows = collection(Row, current);
+    scoped(current, () => {
+      Row.create({ id: "one" });
+      Row.create({ id: "two" });
+    });
+    expect(rows.count).toBe(2);
+    const version = (rows as unknown as Query)["~versions"]!()[0];
+    expect(scoped(current, () => version.value)).toBe(2);
+    const seen: number[] = [];
+    const off = version.subscribe((value) => {
+      seen.push(value);
+    });
+    scoped(current, () => {
+      Row.create({ id: "three" });
+    });
+    rows.get("three")!.count.value = 5;
+    rows.remove("three");
+    expect(seen).toEqual([3, 4, 5]);
+    off();
+  });
+
+  it("keeps transaction staging and late auto-query subscriptions intact", () => {
+    const Row = staticModel({ data: { count: f.number(0) } });
+    const current = scope();
+    const rows = collection(Row, current);
+    const seen: number[] = [];
+    let observer!: ReturnType<typeof reaction>;
+    scoped(current, () =>
+      withTransaction(() => {
+        Row.create({ id: "one" });
+        observer = reaction({
+          scope: current,
+          run: () => {
+            seen.push(rows.count);
+          },
+        });
+        Row.create({ id: "two" });
+        expect(rows.count).toBe(2);
+      }),
+    );
+    expect(seen.at(-1)).toBe(2);
+    scoped(current, () => {
+      Row.create({ id: "three" });
+    });
+    expect(seen.at(-1)).toBe(3);
+    observer.stop();
+  });
+});
 
 describe("§7.3 ord indexes", () => {
   it("range predicates use the sorted view and stay correct after writes", () => {
@@ -226,9 +281,7 @@ describe("§8 plan interning and stable identity", () => {
       const posts: any = collection(Post);
       const bob = users.add({ login: "bob" });
       const p = posts.add({});
-      const authored = computed(
-        () => posts.where((x: any) => x.author.value !== null).count,
-      );
+      const authored = computed(() => posts.where((x: any) => x.author.value !== null).count);
 
       expect(authored.value).toBe(0);
 
@@ -275,5 +328,34 @@ describe("§3.4 reactions stay per-instance with reactive queries around", () =>
 
       expect(done.ids).toEqual([b.id]);
     });
+  });
+});
+
+describe("query memo after ids are reused", () => {
+  it("removes instances recreated under the ids of removed ones", async () => {
+    const Row: any = staticModel({ data: { label: f.string("") } });
+    const app = scope();
+    const data = [{ id: "a", label: "a" }, { id: "b", label: "b" }];
+    scoped(app, () => Row.create(data));
+    // A read memoizes the query's ids; the same ids come back below, and the
+    // second remove() resolves the query without any read in between.
+    expect(scoped(app, () => Row.instances.ids)).toEqual(["a", "b"]);
+    await scoped(app, () => Row.instances.remove());
+    scoped(app, () => Row.create(data));
+    await scoped(app, () => Row.instances.remove());
+    expect(scoped(app, () => Row.instances.count)).toBe(0);
+  });
+
+  it("hands out the recreated instances, keeping the id array", () => {
+    const Row: any = staticModel({ data: { label: f.string("") } });
+    const app = scope();
+    const first = scoped(app, () => Row.create({ id: "a", label: "first" }));
+    const ids = scoped(app, () => Row.instances.ids);
+    expect(scoped(app, () => Row.instances.items)).toEqual([first]);
+    scoped(app, () => first.dispose());
+    const second = scoped(app, () => Row.create({ id: "a", label: "second" }));
+    expect(scoped(app, () => Row.instances.items[0])).toBe(second);
+    expect(scoped(app, () => Row.instances.first.label.value)).toBe("second");
+    expect(scoped(app, () => Row.instances.ids)).toBe(ids);
   });
 });

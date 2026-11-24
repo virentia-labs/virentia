@@ -1,10 +1,11 @@
 import { describe, expectTypeOf, it } from "vitest";
 import { event, reaction } from "../../lib/index";
-import { collection, f, fn, inverse, refs, staticModel, trait } from "../../lib/models";
+import { f, fn, inverse, refs, staticModel, trait } from "../../lib/models";
+import { collection } from "../../lib/models/collection";
 import type { Dto, Impl, InstanceOf } from "../../lib/models";
 
-// Type-level scenarios from docs/design/dynamic-models.md. The mutual-cycle
-// cases are the §5.4 promise: zero annotations, zero names, zero collectors.
+// Type-level declaration and relation scenarios. Mutual-cycle cases require
+// zero annotations, zero names and zero collectors.
 
 describe("§3.1 typed declaration and instance surface", () => {
   const Todo = staticModel({

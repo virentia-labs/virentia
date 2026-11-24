@@ -89,7 +89,13 @@ describe("store types", () => {
   it("exposes StoreApi members and devtools options", () => {
     expectTypeOf(store(0).node).toEqualTypeOf<Node>();
     expectTypeOf<StoreSubscriber<number>>().toEqualTypeOf<(value: number, scope: Scope) => void>();
-    expectTypeOf<StoreDevtoolsOptions>().toEqualTypeOf<{ name?: string; key?: boolean }>();
+    expectTypeOf<StoreDevtoolsOptions>().toEqualTypeOf<{
+      name?: string;
+      key?: boolean;
+      sid?: string;
+      hasSkipToken?: boolean;
+    }>();
+    expectTypeOf(store(0).sid).toEqualTypeOf<string | undefined>();
     // subscribe returns an unsubscribe function.
     expectTypeOf<Store<number>["subscribe"]>().returns.toEqualTypeOf<() => void>();
   });

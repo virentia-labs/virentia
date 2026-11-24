@@ -1,8 +1,14 @@
 node_modules
 dist
-docs
 .md
 .claude/settings.local.json
 
 # Left behind when a `vitest typecheck` run is interrupted; vitest removes it on a clean exit.
 tsconfig.vitest-temp.json
+.DS_Store
+.pnpm-store/
+
+# Internal design discussions and investigation records stay local.
+docs/
+benchmarks/*.json
+!benchmarks/package.json

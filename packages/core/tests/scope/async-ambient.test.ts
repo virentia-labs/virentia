@@ -12,7 +12,7 @@ describe("async ambient scope", () => {
       const s = scope();
       const submitted = event<number>();
       const doubleFx = effect(async (value: number) => {
-        await Promise.resolve();
+        await tick();
         return value * 2;
       });
       const results: number[] = [];
@@ -49,7 +49,7 @@ describe("async ambient scope", () => {
       });
 
       await scoped(s, async () => {
-        await Promise.resolve();
+        await tick();
         // Triggered only AFTER the body's own await → not in the spawn collection.
         ev();
       });
@@ -153,22 +153,16 @@ describe("async ambient scope", () => {
   });
 
   describe("under concurrency", () => {
-    it.fails("resets the ambient to null instead of leaking a stale scope", async () => {
+    it("resets the ambient to null instead of leaking a stale scope", async () => {
       const a = scope();
       const b = scope();
 
-      // ACCEPTED LIMITATION (not a scheduled fix): concurrent async scoped() calls
-      // are unsupported by design — there is a single global activeScope and JS
-      // async frames cannot be isolated from one another. p1 installs `a` and yields;
-      // p2 captures the leaked `a` as its "previous scope" and restores to it, so the
-      // ambient ends at `a` rather than null. The scope-required guard on unit calls
-      // limits the blast radius. Kept as it.fails to mark the boundary: were scopes
-      // ever isolated per async frame, this would flip and signal it.
+      // Each invocation restores its synchronous caller while pending.
       const p1 = scoped(a, async () => {
-        await Promise.resolve();
+        await tick();
       });
       const p2 = scoped(b, async () => {
-        await Promise.resolve();
+        await tick();
       });
 
       await Promise.all([p1, p2]);
@@ -188,7 +182,7 @@ describe("async ambient scope", () => {
 
       // Start A: it installs `a`, then parks on gateA (ambient stays `a`).
       const pA = scoped(a, async () => {
-        await gateA;
+        await waitFor(gateA);
         // Post-await write. Doc promise: this lands in `a`.
         st.value = "from-A";
       });
@@ -196,7 +190,7 @@ describe("async ambient scope", () => {
       // Start B synchronously after A parked: installs `b` as the global ambient,
       // then resolves immediately.
       const pB = scoped(b, async () => {
-        await Promise.resolve();
+        await tick();
       });
 
       await pB; // let B fully settle; the ambient is now whatever B left behind
@@ -213,18 +207,13 @@ describe("async ambient scope", () => {
     });
   });
 
-  // ACCEPTED LIMITATION (not a scheduled fix): same root cause as the concurrency
-  // cases above — an async auto-reaction's per-run micro-scope leaks into the single
-  // global ambient across microtasks, so an unrelated top-level read becomes a
-  // phantom dependency. Detached/concurrent async scoped is unsupported by design;
-  // kept as it.fails to mark the boundary.
-  it.fails("does not gain a phantom dependency on a store read outside its body", async () => {
+  it("does not gain a phantom dependency on a store read outside its body", async () => {
     const s = scope();
     const trigger = store(0);
     const other = store(0); // NEVER read by the reaction body
     let runs = 0;
     const fx = effect(async () => {
-      await Promise.resolve();
+      await tick();
       return 1;
     });
 
@@ -240,8 +229,8 @@ describe("async ambient scope", () => {
     // Drain the entire async settle. An unrelated top-level read of `other` at
     // every boundary is a no-op except while the leaked micro-scope is ambient.
     for (let i = 0; i < 30; i += 1) {
-      void other.value;
-      await Promise.resolve();
+      scoped(s, () => { void other.value; });
+      await tick();
     }
 
     const runsAfterInitial = runs;
@@ -257,3 +246,7 @@ describe("async ambient scope", () => {
     expect(runs).toBe(runsAfterInitial);
   });
 });
+
+const tickUnit = effect(() => Promise.resolve());
+const tick = () => getCurrentScope() ? tickUnit() : Promise.resolve();
+const waitFor = effect((promise: Promise<void>) => promise);

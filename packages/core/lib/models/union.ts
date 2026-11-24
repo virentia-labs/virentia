@@ -1,6 +1,7 @@
 import type { Scope } from "../scope/types";
 import {
   collection,
+  normalizeHomeScope,
   idsEqual,
   ordKeyOf,
   setUnionCollectionFactory,
@@ -12,6 +13,9 @@ import type { AddOptions, Collection, Query } from "./collection";
 import { isModelDefinition } from "./definition";
 import type { DescriptorPredicate, DescriptorSort, ModelDefinition } from "./definition";
 import type { AnyModel, TypedUnion, UnionCollection, UnionQuery } from "./types";
+import { requireActiveScope } from "../scope/internal";
+import { seedScopeStoreValue, type StoreWritable } from "../units/store";
+import { readRegistry, registryStore, type RegistryStore } from "./registry";
 
 // §5.2: a union is positional — variant identity is a MODEL REFERENCE, never a
 // string key. Instances live in their variants' collections; the union
@@ -23,6 +27,16 @@ export interface UnionDefinition {
   readonly variants: readonly ModelDefinition[];
   readonly discriminate?: (json: Record<string, unknown>) => ModelDefinition;
   by(discriminate: (json: never) => ModelDefinition): UnionDefinition;
+  create(
+    input: Record<string, unknown> | readonly Record<string, unknown>[],
+    options?: AddOptions,
+  ): object | object[];
+  get(id: string): object | null;
+  readonly instances: UnionQuery;
+  where: UnionQuery["where"];
+  sort: UnionQuery["sort"];
+  take: UnionQuery["take"];
+  match: UnionQuery["match"];
 }
 
 const unionBrand = Symbol("virentia.models.union");
@@ -52,7 +66,9 @@ function computeCommonFields(variants: readonly ModelDefinition[]): {
 
     if (!origin) continue; // the model's own data — no trait reference to share
 
-    if (rest.every((variant) => variant.fields.has(name) && variant.fieldOrigins.get(name) === origin)) {
+    if (
+      rest.every((variant) => variant.fields.has(name) && variant.fieldOrigins.get(name) === origin)
+    ) {
       common.add(name);
     }
   }
@@ -87,6 +103,11 @@ function buildUnion(
 ): UnionDefinition {
   const { common, anywhere } = computeCommonFields(variants);
   const descriptors = new Map<string, object>();
+  const instances = (): UnionCollection =>
+    getOrCreateUnionCollection(
+      definition,
+      normalizeHomeScope(requireActiveScope(() => "access union instances")),
+    );
 
   const base = {
     [unionBrand]: true,
@@ -101,9 +122,38 @@ function buildUnion(
 
       return buildUnion(variants, fn as UnionDefinition["discriminate"]);
     },
+    create(
+      input: Record<string, unknown> | readonly Record<string, unknown>[],
+      options?: AddOptions,
+    ) {
+      const target = instances();
+      return Array.isArray(input)
+        ? target.add(input, options)
+        : target.add(input as Record<string, unknown>, options);
+    },
+    get(id: string) {
+      return instances().get(id);
+    },
+    get instances() {
+      return instances();
+    },
+    where(...args: Parameters<UnionQuery["where"]>) {
+      return instances().where(...args);
+    },
+    sort(...args: Parameters<UnionQuery["sort"]>) {
+      return instances().sort(...args);
+    },
+    take(count: number) {
+      return instances().take(count);
+    },
+    match(...branches: Array<readonly [unknown, (descriptors: never) => unknown]>) {
+      const target = instances();
+      return Reflect.apply(target.match, target, branches) as UnionQuery;
+    },
   };
 
-  return new Proxy(base, {
+  Object.defineProperty(base, "instances", { enumerable: false });
+  const definition = new Proxy(base, {
     get(target, property, receiver) {
       if (typeof property !== "string" || property in target) {
         return Reflect.get(target, property, receiver);
@@ -121,14 +171,13 @@ function buildUnion(
       }
 
       if (anywhere.has(property)) {
-        throw new Error(
-          `[models] "${property}" is not a common member of this union — a member is common only when every variant carries it from the SAME trait by reference; a name coincidence gives nothing (§5.2)`,
-        );
+        throw new Error(`[models] "${property}" is not a common member of this union — a member is common only when every variant carries it from the SAME trait by reference; a name coincidence gives nothing (§5.2)`);
       }
 
       return undefined;
     },
   }) as UnionDefinition;
+  return definition;
 }
 
 // Same operator set as model descriptors (§8); `model` is the union itself, and
@@ -140,7 +189,14 @@ function createUnionDescriptor(unionRef: UnionDefinition, field: string): object
     value: unknown,
     upper?: unknown,
   ): DescriptorPredicate =>
-    ({ "~predicate": true, model: unionRef, field, op, value, upper }) as unknown as DescriptorPredicate;
+    ({
+      "~predicate": true,
+      model: unionRef,
+      field,
+      op,
+      value,
+      upper,
+    }) as unknown as DescriptorPredicate;
 
   return {
     "~descriptor": true,
@@ -192,23 +248,21 @@ interface UnionPlan {
   takeCount?: number;
 }
 
-const unionCollectionsByScope = new WeakMap<Scope, Map<UnionDefinition, UnionCollection>>();
+const unionRegistries = new WeakMap<UnionDefinition, RegistryStore<UnionCollection>>();
 
 setUnionCollectionFactory((definition, scope) =>
   getOrCreateUnionCollection(definition as UnionDefinition, scope),
 );
 
 function getOrCreateUnionCollection(definition: UnionDefinition, scope: Scope): UnionCollection {
-  let byDefinition = unionCollectionsByScope.get(scope);
-
-  if (!byDefinition) {
-    byDefinition = new Map();
-    unionCollectionsByScope.set(scope, byDefinition);
+  let registry = unionRegistries.get(definition);
+  if (!registry) {
+    registry = registryStore<UnionCollection>();
+    unionRegistries.set(definition, registry);
   }
+  const existing = readRegistry(registry, scope);
 
-  const existing = byDefinition.get(definition);
-
-  if (existing) return existing;
+  if (existing?.scope === scope) return existing;
 
   const state: UnionState = {
     definition,
@@ -219,7 +273,7 @@ function getOrCreateUnionCollection(definition: UnionDefinition, scope: Scope): 
 
   const created = createUnionCollection(state);
 
-  byDefinition.set(definition, created);
+  seedScopeStoreValue(scope, registry.unit, created);
 
   return created;
 }
@@ -240,21 +294,15 @@ function assertUnionPredicate(state: UnionState, predicate: DescriptorPredicate)
   if ((predicate as { model?: unknown }).model === state.definition) return;
 
   if (variantIndexOf(state, predicate.model) >= 0) {
-    throw new Error(
-      `[models] "${predicate.field}" is a variant descriptor — route variant-specific predicates through match(), a union query filters by COMMON members only (§5.2)`,
-    );
+    throw new Error(`[models] "${predicate.field}" is a variant descriptor — route variant-specific predicates through match(), a union query filters by COMMON members only (§5.2)`);
   }
 
-  throw new Error(
-    `[models] descriptor "${predicate.field}" belongs to a different model than this union (§8)`,
-  );
+  throw new Error(`[models] descriptor "${predicate.field}" belongs to a different model than this union (§8)`);
 }
 
 function assertUnionSort(state: UnionState, by: DescriptorSort): void {
   if ((by as { model?: unknown }).model !== state.definition) {
-    throw new Error(
-      "[models] union sort takes a COMMON member descriptor of this union (§5.2)",
-    );
+    throw new Error("[models] union sort takes a COMMON member descriptor of this union (§5.2)");
   }
 }
 
@@ -300,9 +348,7 @@ function checkVariantMigration(
   if (index < 0 || index === foundIndex) return;
   if (!isFullInputFor(state.definition.variants[index], input)) return;
 
-  throw new Error(
-    `[models] add(): id "${String(input.id)}" already lives in ${variantLabel(state, foundIndex)}, but by() discriminates this json as ${variantLabel(state, index)} — there is no variant migration (§5.2)`,
-  );
+  throw new Error(`[models] add(): id "${String(input.id)}" already lives in ${variantLabel(state, foundIndex)}, but by() discriminates this json as ${variantLabel(state, index)} — there is no variant migration (§5.2)`);
 }
 
 function routeVariantIndex(state: UnionState, input: Record<string, unknown>): number {
@@ -310,7 +356,7 @@ function routeVariantIndex(state: UnionState, input: Record<string, unknown>): n
 
   if (suppliedId !== undefined) {
     const found = state.collections.findIndex((target) =>
-      stateOfCollection(target).instances.has(suppliedId),
+      stateOfCollection(target).rows.has(suppliedId),
     );
 
     if (found >= 0) {
@@ -323,9 +369,7 @@ function routeVariantIndex(state: UnionState, input: Record<string, unknown>): n
   const { discriminate } = state.definition;
 
   if (!discriminate) {
-    throw new Error(
-      "[models] this union has no discriminator — declare union(...).by((json) => Variant) to add through the union (§5.2)",
-    );
+    throw new Error("[models] this union has no discriminator — declare union(...).by((json) => Variant) to add through the union (§5.2)");
   }
 
   const target = discriminate(input);
@@ -507,6 +551,9 @@ function createUnionQuery(state: UnionState, plan: UnionPlan): UnionQuery {
 
     if (record && valuesEqual(record.values, values) && idsEqual(record.ids, ids)) {
       record.parts = parts;
+      // Equal ids can belong to recreated instances: keep the id array, not
+      // facades of disposed ones.
+      if (!sameItems(record.items, items)) record.items = items;
 
       return record;
     }
@@ -574,9 +621,7 @@ function createUnionQuery(state: UnionState, plan: UnionPlan): UnionQuery {
 
       for (const branch of branches) {
         if (!Array.isArray(branch) || branch.length !== 2 || typeof branch[1] !== "function") {
-          throw new Error(
-            "[models] match branch must be [Variant, (descriptors) => predicate | boolean] (§5.2)",
-          );
+          throw new Error("[models] match branch must be [Variant, (descriptors) => predicate | boolean] (§5.2)");
         }
 
         const index = variantIndexOf(state, branch[0]);
@@ -586,9 +631,7 @@ function createUnionQuery(state: UnionState, plan: UnionPlan): UnionQuery {
         }
 
         if (seen.has(index)) {
-          throw new Error(
-            `[models] match has two branches for ${variantLabel(state, index)} (§5.2)`,
-          );
+          throw new Error(`[models] match has two branches for ${variantLabel(state, index)} (§5.2)`);
         }
 
         seen.add(index);
@@ -605,16 +648,12 @@ function createUnionQuery(state: UnionState, plan: UnionPlan): UnionQuery {
           (result as { "~predicate"?: unknown })["~predicate"] === true
         ) {
           if ((result as DescriptorPredicate).model !== state.definition.variants[index]) {
-            throw new Error(
-              `[models] match branch for ${variantLabel(state, index)} returned a predicate built from another model's descriptors (§5.2)`,
-            );
+            throw new Error(`[models] match branch for ${variantLabel(state, index)} returned a predicate built from another model's descriptors (§5.2)`);
           }
 
           entries[index] = result as DescriptorPredicate;
         } else {
-          throw new Error(
-            "[models] match branch must return a descriptor predicate or a boolean literal (§5.2)",
-          );
+          throw new Error("[models] match branch must return a descriptor predicate or a boolean literal (§5.2)");
         }
       }
 
@@ -624,9 +663,7 @@ function createUnionQuery(state: UnionState, plan: UnionPlan): UnionQuery {
           .filter((index) => !seen.has(index))
           .map((index) => variantLabel(state, index));
 
-        throw new Error(
-          `[models] match must be exhaustive — missing: ${missing.join(", ")} (§5.2)`,
-        );
+        throw new Error(`[models] match must be exhaustive — missing: ${missing.join(", ")} (§5.2)`);
       }
 
       return createUnionQuery(state, { ...plan, matches: [...plan.matches, entries] });
@@ -655,9 +692,12 @@ function createUnionQuery(state: UnionState, plan: UnionPlan): UnionQuery {
     },
 
     remove() {
+      const pending: Promise<void>[] = [];
       for (const facade of [...resolve().items]) {
-        (facade as { dispose(): void }).dispose();
+        const result = (facade as { dispose(): void | Promise<void> }).dispose();
+        if (result) pending.push(result);
       }
+      if (pending.length) return Promise.all(pending).then(() => {});
     },
 
     toArray() {
@@ -681,16 +721,15 @@ function createUnionCollection(state: UnionState): UnionCollection {
     return state.collections[index].add(input, options);
   };
 
-  const self: UnionCollection = Object.assign(createUnionQuery(state, emptyPlan), {
+  const query = createUnionQuery(state, emptyPlan);
+  const removeAll = query.remove;
+  const self: UnionCollection = Object.assign(query, {
     "~unionCollection": true as const,
     model: state.definition,
     scope: state.scope,
     variants: state.definition.variants,
 
-    add(
-      input: Record<string, unknown> | readonly Record<string, unknown>[],
-      options?: AddOptions,
-    ) {
+    add(input: Record<string, unknown> | readonly Record<string, unknown>[], options?: AddOptions) {
       if (Array.isArray(input)) {
         // §3.1 batch semantics across variants: route + validate everything
         // first, then apply; a mid-apply failure rolls back this batch's
@@ -708,7 +747,7 @@ function createUnionCollection(state: UnionState): UnionCollection {
             const target = state.collections[targets[position]];
             const suppliedId = typeof entry.id === "string" ? entry.id : undefined;
             const isCreation =
-              suppliedId === undefined || !stateOfCollection(target).instances.has(suppliedId);
+              suppliedId === undefined || !stateOfCollection(target).rows.has(suppliedId);
             const facade = target.add(entry, options) as object;
 
             if (isCreation) created.push(facade);
@@ -737,16 +776,23 @@ function createUnionCollection(state: UnionState): UnionCollection {
       return null;
     },
 
-    remove(id: string) {
+    remove(id?: string) {
+      if (id === undefined) return removeAll();
       for (const target of state.collections) {
-        if (stateOfCollection(target).instances.has(id)) {
-          target.remove(id);
-
-          return;
+        if (stateOfCollection(target).rows.has(id)) {
+          return target.remove(id);
         }
       }
     },
   }) as unknown as UnionCollection;
 
   return self;
+}
+
+function sameItems(a: readonly unknown[], b: readonly unknown[]): boolean {
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) return false;
+  }
+
+  return a.length === b.length;
 }

@@ -569,7 +569,12 @@ export function createWebSocketTransport(
         scheduleReconnect();
       }
     });
+    let closingAfterError = false;
     created.addEventListener("error", () => {
+      // Some WebSocket implementations emit error synchronously from close().
+      // Do not recursively close an already failing connection.
+      if (closingAfterError) return;
+      closingAfterError = true;
       created.close();
     });
   };

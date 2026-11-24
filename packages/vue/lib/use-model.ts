@@ -8,7 +8,7 @@ import {
   type ReactiveWritable,
   type Scope,
 } from "@virentia/core";
-import { isModelDefinition, isModelInstance, isModelQuery } from "@virentia/core/models";
+import { isModelDefinition, isModelInstance, isModelQuery, modelSingletonBindingOf } from "@virentia/core/internal";
 import type {
   AnyModel,
   Dto,
@@ -71,7 +71,7 @@ export function useModel(
     );
   }
 
-  if (modelOrFactory === null || modelOrFactory === undefined || isModelInstance(modelOrFactory)) {
+  if (modelOrFactory === null || modelOrFactory === undefined || isModelInstance(modelOrFactory) || modelSingletonBindingOf(modelOrFactory)) {
     return useModelEntity(modelOrFactory ?? null);
   }
 

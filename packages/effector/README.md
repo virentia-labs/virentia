@@ -145,6 +145,27 @@ The Effector feature owns navigation and launches its own event naturally. The V
 
 Use `scoped`, Effector `allSettled`, `scopeBind`, or UI Providers to choose scopes.
 
+## Model instances
+
+Associate the application scope once. Units obtained from a `staticModel`
+instance retain their instance scope when passed to `fool`:
+
+```ts
+const [first, second] = scoped(virentiaScope, () => Counter.create([{}, {}]));
+const setFirst = fool(first.set);
+await allSettled(setFirst, { scope: effectorScope, params: 2 });
+// first changes; second keeps its own state.
+
+const writeValue = fool(first.value); // model data FieldStore is supported
+await allSettled(writeValue, { scope: effectorScope, params: 3 });
+```
+
+Use bound handles at this boundary. A shared `.node` describes the definition;
+the handle carries instance identity, codecs and lifetime. Model events and
+store subscriptions route back through their application's association. Sending
+a fixed handle through another application's Effector fork is rejected.
+Subscriptions to model stores and events are detached when the model is disposed.
+
 ## Tests
 
 ```sh

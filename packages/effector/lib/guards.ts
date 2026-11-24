@@ -1,7 +1,12 @@
 import * as virentia from "@virentia/core";
 import { is as effectorIs } from "effector";
 import type { Unit as EffectorUnit } from "effector";
-import type { VirentiaUnit } from "./types";
+import type { VirentiaFieldStore, VirentiaUnit } from "./types";
+
+export function isVirentiaFieldStore(value: unknown): value is VirentiaFieldStore<any> {
+  return Boolean(value && typeof value === "object" && "node" in value &&
+    "subscribe" in value && "writable" in value && value.writable === true && !isEffectorUnit(value));
+}
 
 export function isEffectorUnit(value: unknown): value is EffectorUnit<any> {
   return effectorIs.unit(value as any);

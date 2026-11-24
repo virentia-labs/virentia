@@ -19,15 +19,7 @@ afterEach(() => {
 });
 
 describe("component", () => {
-  // SUSPECTED BUG: onMounted/onUnmounted fire lifecycle events fire-and-forget
-  // (`void instance.mounted()`) inside `scoped(scope, () => …)`. Because that
-  // callback is non-thenable, `scoped` restores the ambient synchronously, but
-  // the event's async reaction drain re-installs `scope` as the global ambient
-  // and never restores it. After any Virentia component mounts, getActiveScope()
-  // stays non-null, silently breaking scope isolation (and component.create()'s
-  // "no surrounding scope" guard). Correct behavior: no ambient scope should
-  // survive a mount. Marked `.fails` because the code currently leaks.
-  it.fails("does not leak the ambient scope after a component mounts (suspected bug)", async () => {
+  it("does not leak the ambient scope after mounting or unmounting", async () => {
     const appScope = scope();
     const Counter = component({ model: createCounterModel, view: counterView() });
 
@@ -38,5 +30,7 @@ describe("component", () => {
 
     expect(getActiveScope()).toBe(null);
     wrapper.unmount();
+    await flushPromises();
+    expect(getActiveScope()).toBe(null);
   });
 });

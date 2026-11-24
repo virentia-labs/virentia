@@ -15,6 +15,36 @@ export interface DisposableOwner {
 export type Cleanup = () => void;
 
 let activeOwner: Owner | null = null;
+const disposeSymbol = getDisposeSymbol();
+
+// A prototype marker: almost every owner asked about is NOT deferred, and a
+// missing symbol property is far cheaper to answer than a failed `#x in` check.
+const deferredOwner = Symbol("virentia.deferredOwner");
+
+/** @internal A synchronous read can defer allocating ownership until it escapes. */
+export abstract class DeferredOwner implements Owner {
+  declare readonly [deferredOwner]: true;
+  abstract resolveOwner(): Owner;
+  static resolve(owner: Owner | null): Owner | null {
+    return owner && (owner as Partial<DeferredOwner>)[deferredOwner] === true
+      ? (owner as DeferredOwner).resolveOwner()
+      : owner;
+  }
+  get disposed(): boolean {
+    return this.resolveOwner().disposed;
+  }
+  get dispose(): Owner["dispose"] {
+    return this.resolveOwner().dispose;
+  }
+  get onCleanup(): Owner["onCleanup"] {
+    return this.resolveOwner().onCleanup;
+  }
+  get [Symbol.dispose](): Owner[typeof Symbol.dispose] {
+    return this.resolveOwner()[Symbol.dispose];
+  }
+}
+
+Object.defineProperty(DeferredOwner.prototype, deferredOwner, { value: true });
 
 declare global {
   interface SymbolConstructor {
@@ -55,7 +85,14 @@ export function owner<T>(fn: (dispose: () => void, owner: Owner) => T): T {
 }
 
 export function getOwner(): Owner | null {
-  return activeOwner;
+  return DeferredOwner.resolve(activeOwner);
+}
+
+/** @internal Only synchronous frames and owned-promise continuation handoffs. */
+export function setOwner(owner: Owner | null): Owner | null {
+  const previous = activeOwner;
+  activeOwner = owner;
+  return previous;
 }
 
 export function onCleanup(fn: Cleanup): () => void {
@@ -65,12 +102,8 @@ export function onCleanup(fn: Cleanup): () => void {
 }
 
 export function withOwner<T>(owner: Owner | null, fn: () => T): T {
-  if (!owner) {
-    return fn();
-  }
-
   const previousOwner = activeOwner;
-  activeOwner = owner;
+  activeOwner = owner ?? previousOwner;
 
   try {
     return fn();
@@ -79,8 +112,32 @@ export function withOwner<T>(owner: Owner | null, fn: () => T): T {
   }
 }
 
+/** @internal Infrastructure ownership must not inherit a consumer's owner. */
+export function withoutOwner<T>(fn: () => T): T {
+  const previous = setOwner(null);
+  try {
+    return fn();
+  } finally {
+    setOwner(previous);
+  }
+}
+
 export function registerCleanup(fn: Cleanup): () => void {
   return onCleanup(fn);
+}
+
+/**
+ * @internal The function a subscription returns: `unsubscribe` itself, or —
+ * while an owner is active — one that also withdraws it from that owner.
+ */
+export function ownedUnsubscribe(unsubscribe: () => void): () => void {
+  const owner = activeOwner;
+  if (!owner) return unsubscribe;
+  const unregister = owner.onCleanup(unsubscribe);
+  return () => {
+    unregister();
+    unsubscribe();
+  };
 }
 
 interface OwnerState extends Owner {
@@ -88,7 +145,8 @@ interface OwnerState extends Owner {
   cleanups: Cleanup[];
 }
 
-function createOwner(): Owner {
+/** @internal An unattached owner, without a setup callback or disposable result wrapper. */
+export function createOwner(): Owner {
   const owner: OwnerState = {
     disposed: false,
     cleanups: [],
@@ -168,8 +226,6 @@ function isObject(value: unknown): value is object {
 }
 
 function noop(): void {}
-
-const disposeSymbol = getDisposeSymbol();
 
 function getDisposeSymbol(): typeof Symbol.dispose {
   if (typeof Symbol.dispose === "symbol") {

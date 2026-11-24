@@ -1,5 +1,5 @@
 import { getCurrentScope } from "@virentia/core";
-import { createElement, useMemo, type ComponentType } from "react";
+import { createElement, useMemo, type ComponentType, type FC } from "react";
 import type {
   CachedComponentConfig,
   ComponentConfig,
@@ -15,6 +15,7 @@ import {
   modelCollectionFor,
   useModelScreen,
   type ModelDefinitionInstance,
+  type ModelDefinitionInput,
   type ModelDefinitionLike,
   type ModelDefinitionProps,
 } from "./models";
@@ -37,12 +38,19 @@ export interface DefinitionComponentConfig<M extends ModelDefinitionLike> {
   mapProps?: (props: Record<string, unknown>) => ModelDefinitionProps<M>;
 }
 
+/** Core instances, including singletons, already own their lifetime. */
+export type DefinitionComponent<M extends ModelDefinitionLike> = FC<
+  Record<string, unknown> & { readonly model?: ModelDefinitionInstance<M> }
+> & {
+  readonly create: (props: ModelDefinitionInput<M>) => ModelDefinitionInstance<M>;
+};
+
 // Mapped overloads first: they require `mapProps`, so a config that provides it
 // binds here (pinning external `Props` from `mapProps`' parameter), and a config
 // without `mapProps` falls through to the plain overloads below.
 export function component<M extends ModelDefinitionLike>(
   config: DefinitionComponentConfig<M>,
-): VirentiaComponent<Record<string, unknown>, ModelDefinitionInstance<M>>;
+): DefinitionComponent<M>;
 export function component<Props, ModelProps, Key, Model extends object>(
   config: MappedCachedComponentConfig<Props, ModelProps, Key, Model>,
 ): VirentiaComponent<Props, Model, ModelProps>;

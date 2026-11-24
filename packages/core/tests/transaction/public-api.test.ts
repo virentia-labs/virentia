@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { event, reaction, reactive, scope, scoped, store } from "../../lib";
+import { effect, event, reaction, reactive, scope, scoped, store } from "../../lib";
 
 describe("transaction batching through the public API", () => {
   it("notifies a subscriber once with the final value after several writes in one reaction", async () => {
@@ -138,12 +138,13 @@ describe("transaction batching through the public API", () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
+    const wait = effect(() => gate);
 
     reaction({
       on: trigger,
       run: async () => {
         flag.value = 1; // pre-await write
-        await gate; // suspend — drain reaches the commitActiveTransaction boundary
+        await wait(); // direct unit await retains context across the commit boundary
         step(); // observe committed state after resuming
       },
     });

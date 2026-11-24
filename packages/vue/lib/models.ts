@@ -1,4 +1,5 @@
-import { collection, queryReactivity, subscribeInstance } from "@virentia/core/models";
+import { queryReactivity, subscribeInstance } from "@virentia/core/internal";
+import { modelDefinitionBindingOf, modelSingletonBindingOf, resolveModelInstance } from "@virentia/core/internal";
 import {
   customRef,
   getCurrentScope as getCurrentVueScope,
@@ -64,6 +65,11 @@ export function useModelQuery<Q extends object>(query: Q): Readonly<Ref<Q>> {
 /** Entity view: follows the instance's own writes, rebind and dispose;
  * resolves to null once the instance is gone — no throw mid-render (§10.1). */
 export function useModelEntity<I extends object>(instance: I | null): Readonly<Ref<I | null>> {
+  if (instance && modelSingletonBindingOf(instance)) {
+    const provided = useOptionalProvidedScope();
+    if (!provided) throw new Error("[useModel] A singleton model requires ScopeProvider");
+    instance = resolveModelInstance(instance, provided);
+  }
   let unsubscribe: (() => void) | null = null;
   let disposed = false;
 
@@ -123,7 +129,9 @@ export function useModelScreen(
       );
     }
 
-    home = collection(definition as never, scope) as unknown as ScreenCollection;
+    const binding = modelDefinitionBindingOf(definition);
+    if (!binding) throw new Error("[useModel] Expected a model definition from @virentia/core/models");
+    home = binding.collection(scope) as unknown as ScreenCollection;
     instance = acquireScreenInstance(home, toValue(props), keep);
   }
 

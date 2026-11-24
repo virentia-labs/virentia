@@ -1,10 +1,14 @@
 import type { Scope } from "../scope";
 
 export interface Node {
+  /** @internal Native unit graph with application-scope state and lazy initialization. */
+  resolveScope?: (scope: Scope) => Scope;
   id?: PropertyKey;
   run?: KernelNodeFn;
   next?: Node[];
   enabled?: boolean | (() => boolean);
+  /** @internal Lower values run first within a drain; equal values preserve FIFO. Default: 0. */
+  priority?: number;
   meta?: Record<string, unknown>;
   // Called when a scope-less (global) observer attaches to this node. A lazy
   // computed uses it to eagerly discover its dependencies and make its edges

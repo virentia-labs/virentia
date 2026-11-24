@@ -1,6 +1,6 @@
 {
   "name": "@virentia/core",
-  "version": "0.11.2",
+  "version": "0.12.0",
   "description": "",
   "keywords": [],
   "homepage": "https://movpushmov.dev/virentia/core/",
@@ -18,6 +18,7 @@
     "dist"
   ],
   "type": "module",
+  "sideEffects": false,
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
@@ -26,6 +27,16 @@
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.cjs"
+    },
+    "./compiler": {
+      "types": "./dist/compiler/index.d.mts",
+      "import": "./dist/compiler/index.mjs",
+      "require": "./dist/compiler/index.cjs"
+    },
+    "./compiler/vite": {
+      "types": "./dist/compiler/vite.d.mts",
+      "import": "./dist/compiler/vite.mjs",
+      "require": "./dist/compiler/vite.cjs"
     },
     "./devtools": {
       "types": "./dist/devtools.d.mts",
@@ -56,15 +67,23 @@
     "test": "vitest run && vitest typecheck --run --passWithNoTests",
     "test:watch": "vitest"
   },
+  "dependencies": {
+    "@babel/types": "7.29.0"
+  },
   "peerDependencies": {
+    "@babel/core": "^7.0.0",
     "@sinclair/typebox": "^0.34.52"
   },
   "peerDependenciesMeta": {
+    "@babel/core": {
+      "optional": true
+    },
     "@sinclair/typebox": {
       "optional": true
     }
   },
   "devDependencies": {
+    "@babel/core": "7.29.0",
     "@sinclair/typebox": "^0.34.52"
   }
 }

@@ -6,7 +6,7 @@ import {
   type Scope,
   type StoreWritable,
 } from "@virentia/core";
-import { run } from "@virentia/core/internal";
+import { boundStoreScopeOf, run, storeModeOf } from "@virentia/core/internal";
 import { useEffect, useLayoutEffect, type ComponentType } from "react";
 import type { AnyStore, UnitLike } from "./types";
 
@@ -15,6 +15,8 @@ export const useIsomorphicLayoutEffect =
 
 export function readStore<T>(unit: AnyStore<T>, scope: Scope): T {
   return scoped(scope, () => {
+    // A value store keeps `value` on its prototype; other stores show their keys.
+    if (storeModeOf(unit) === "ref") return Reflect.get(unit, "value") as T;
     const keys = Reflect.ownKeys(unit).filter((key) => !nativeStoreKeys.has(key));
 
     if (keys.length === 1 && keys[0] === "value") {
@@ -39,7 +41,7 @@ export function writeStore<T>(
   void run({
     unit: unit.node,
     payload: value,
-    scope,
+    scope: boundStoreScopeOf(unit) ?? scope,
   });
 }
 

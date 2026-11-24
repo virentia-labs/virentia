@@ -1,3 +1,3 @@
 export * from "./associations";
-export * from "./fool";
+export { fool } from "./fool";
 export type * from "./types";

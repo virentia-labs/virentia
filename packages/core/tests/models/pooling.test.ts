@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { computed, event, reaction, scope, scoped } from "../../lib/index";
-import { collection, f, model, staticModel } from "../../lib/models";
+import { f, model, staticModel } from "../../lib/models";
+import { collection } from "../../lib/models/collection";
+import { modelInstanceBindingOf } from "../../lib/internal";
 
 // §3.5: under churn a collection recycles instance scopes — Scope + Map are
 // reused (`clear()` instead of a new one). Safety: the handle is
@@ -23,6 +25,26 @@ function keyParts(key: string): { slot: number; generation: number } {
 const microtask = () => Promise.resolve();
 
 describe("§3.5 scope reuse and generations", () => {
+  it("bounds pending recycling work before a large disposal burst drains", async () => {
+    const Item = staticModel({});
+    const home = scope();
+    const items = scoped(home, () => Array.from({ length: 2500 }, () => Item.create({})));
+    const queued = vi.spyOn(globalThis, "queueMicrotask");
+    try {
+      for (const item of items) item.dispose();
+      // 1024 pending recycles (the free-list bound) share one microtask.
+      expect(queued).toHaveBeenCalledTimes(1);
+      const sameTick = scoped(home, () => Item.create({}));
+      expect(items.some(item => item.key === sameTick.key)).toBe(false);
+      await microtask();
+      const next = scoped(home, () => Item.create({}));
+      expect(keyParts(next.key)).toEqual({ ...keyParts(items[1023].key), generation: 2 });
+      for (const item of items) expect(item.alive).toBe(false);
+    } finally {
+      queued.mockRestore();
+    }
+  });
+
   it("a freed scope is reused: same slot, bumped generation", async () => {
     const Todo: any = staticModel({ data: { title: f.string("") } });
 
@@ -123,6 +145,32 @@ describe("§3.5 scope reuse and generations", () => {
       expect(keyParts(second.key).generation).toBe(2);
       expect(second.title.value).toBe("");
       expect(second.done.value).toBe(false);
+    });
+  });
+
+  it("a pooled scope lets go of its previous occupant once idle", async () => {
+    const Todo: any = staticModel({
+      data: { title: f.string(""), done: f.boolean(false) },
+      setup(self: any) {
+        return { label: computed(() => `${self.title.value}!`) };
+      },
+    });
+
+    await app(async () => {
+      const todos: any = collection(Todo);
+      const first = todos.add({ title: "dirty", done: true });
+      expect(first.label.value).toBe("dirty!");
+      const pooled = modelInstanceBindingOf(first)!.scope;
+      expect(pooled.values.size).toBeGreaterThan(0);
+
+      todos.remove(first.id);
+      await microtask();
+
+      // Its values (the instance's state, cached computeds) are gone before reuse.
+      expect(pooled.values.size).toBe(0);
+      const second = todos.add({ title: "fresh" });
+      expect(keyParts(second.key).generation).toBe(2);
+      expect(second.label.value).toBe("fresh!");
     });
   });
 

@@ -11,7 +11,7 @@ import {
   store,
   withOwner,
 } from "../../lib";
-import type { Reaction, Scope } from "../../lib";
+import type { Reaction, ReactionEffectApi, Scope } from "../../lib";
 import { node, run, withTransaction } from "../../lib/internal";
 import { reconcileScopedEdges } from "../../lib/kernel/scoped-edges";
 import { unwrapMicroScope } from "../../lib/scope/micro";
@@ -868,5 +868,38 @@ describe("owner", () => {
     r.stop();
     await run({ unit: s.node, payload: 1, scope: a });
     expect(seen).toEqual([0]);
+  });
+});
+
+describe("explicit reaction api object", () => {
+  it("has own enumerable scope and signal properties, like a literal", () => {
+    const app = scope(),
+      tick = event<number>();
+    const apis: ReactionEffectApi[] = [];
+    const r = reaction({
+      on: tick,
+      run: (_value, api) => {
+        apis.push(api);
+      },
+    });
+    try {
+      scoped(app, () => tick(1));
+      scoped(app, () => tick(2));
+      const [api, next] = apis;
+      expect(Object.keys(api)).toEqual(["scope", "signal"]);
+      expect(Object.getOwnPropertySymbols(api)).toEqual([]);
+      expect(api.scope).toBe(app);
+      expect(Object.getOwnPropertyDescriptor(api, "signal")).toMatchObject({
+        enumerable: true,
+        configurable: true,
+      });
+      const spread = { ...next };
+      expect(Object.keys(spread)).toEqual(["scope", "signal"]);
+      expect(spread.signal).toBeInstanceOf(AbortSignal);
+      expect(next.signal).toBe(spread.signal);
+      expect(api.signal).not.toBe(next.signal);
+    } finally {
+      r.stop();
+    }
   });
 });

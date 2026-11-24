@@ -1,0 +1,31 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #172333;
+  background: #f7f9fc;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  max-width: 42rem;
+  margin: 12vh auto;
+  padding: 2rem;
+}
+
+.eyebrow {
+  color: #516c91;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+button {
+  border: 0;
+  border-radius: 0.5rem;
+  background: #145cc6;
+  color: white;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+}

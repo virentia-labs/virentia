@@ -7,8 +7,9 @@ import {
   requireActiveScope,
   setActiveScope,
 } from "../scope/internal";
-import { isMicroScope, unwrapMicroScope } from "../scope/micro";
+import { unwrapMicroScope } from "../scope/micro";
 import type { Scope } from "../scope";
+import { scopePromise } from "../scope/promise";
 import { registerCleanup } from "../graph/owner";
 import { event } from "./event";
 import type { Event, EventCallable } from "./event";
@@ -262,15 +263,18 @@ export function effect<Params, Done, Fail = unknown>(
 
   const abort = Object.assign((reason?: unknown) => {
     const scope = getActiveScope();
-    const realScope = scope ? unwrapMicroScope(scope) : null;
+    const realScope = scope ? unwrapMicroScope(effectNode.resolveScope?.(scope) ?? scope) : null;
 
     // Scope-local: abort only the calls that belong to the scope `abort()` was
     // invoked in (the owner-dispose path above is the only unfiltered sweep).
-    abortActive(reason, realScope);
+    abortActive(reason, realScope ?? undefined);
 
-    return realScope
-      ? run({ unit: abortEvent.node, payload: reason, scope: realScope })
-      : Promise.resolve();
+    return scopePromise(
+      realScope
+        ? run({ unit: abortEvent.node, payload: reason, scope: realScope })
+        : Promise.resolve(),
+      scope,
+    );
   }, abortEvent) as EventCallable<unknown | void>;
 
   const executeNode = node({
@@ -410,10 +414,11 @@ export function effect<Params, Done, Fail = unknown>(
   linkEffectSubunit("abort", abortEvent.node);
   linkEffectSubunit("aborted", aborted.node);
 
+  const describeCall = () => `call ${describeNode(effectNode)}`;
   result = Object.assign(
     (...args: EffectCallArgs<Params>) => {
-      const ambient = requireActiveScope(() => `call ${describeNode(effectNode)}`);
-      const scope = unwrapMicroScope(ambient);
+      const ambient = requireActiveScope(describeCall);
+      const scope = unwrapMicroScope(effectNode.resolveScope?.(ambient) ?? ambient);
       const params = args[0] as Params;
       const options = args[1];
       const promise = new Promise<Done>((resolve, reject) => {
@@ -427,7 +432,7 @@ export function effect<Params, Done, Fail = unknown>(
       // already leaves the caller's real scope in place. A micro-scoped reaction
       // body is the exception: restore the micro-scope so reads after the `await`
       // keep being tracked as dependencies.
-      return isMicroScope(ambient) ? promise.finally(() => setActiveScope(ambient)) : promise;
+      return scopePromise(promise, ambient);
     },
     {
       node: effectNode,

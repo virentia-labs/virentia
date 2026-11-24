@@ -1,5 +1,5 @@
-import { getCurrentScope } from "@virentia/core";
-import { collection, isModelDefinition, isModelInstance } from "@virentia/core/models";
+import { getCurrentScope, scoped } from "@virentia/core";
+import { isModelDefinition, isModelInstance, modelSingletonBindingOf } from "@virentia/core/internal";
 import type { AnyModel, Dto, InstanceOf } from "@virentia/core/models";
 import { defineComponent, h, type Component } from "vue";
 import { getOrCreateCachedInstance } from "./model-cache";
@@ -32,13 +32,20 @@ export interface DefinitionComponentConfig<M extends AnyModel> {
   mapProps?: (props: Record<string, unknown>) => Partial<Dto<M>> & { id?: string };
 }
 
+/** Core instances, including singletons, already own their lifetime. */
+export type DefinitionComponent<M extends AnyModel> = Component<
+  Record<string, unknown> & { readonly model?: InstanceOf<M> }
+> & {
+  readonly create: (props: Dto<M> | ({ id: string } & Partial<Dto<M>>)) => InstanceOf<M>;
+};
+
 // Mapped overloads first: they require `mapProps`, so a config that provides it
 // binds here (pinning external `Props` from `mapProps`' parameter, which Vue's
 // loose `Component` view type cannot), and a config without `mapProps` falls
 // through to the plain overloads below.
 export function component<M extends AnyModel>(
   config: DefinitionComponentConfig<M>,
-): VirentiaComponent<Record<string, unknown>, InstanceOf<M>>;
+): DefinitionComponent<M>;
 export function component<Props, ModelProps, Key, Model extends object>(
   config: MappedCachedComponentConfig<Props, ModelProps, Key, Model>,
 ): VirentiaComponent<Props, Model, ModelProps>;
@@ -76,7 +83,7 @@ export function component(
             : readExternal();
         const controlledAttr = attrs.model as object | undefined;
         const controlled =
-          controlledAttr && isModelInstance(controlledAttr) ? controlledAttr : null;
+          controlledAttr && (isModelInstance(controlledAttr) || modelSingletonBindingOf(controlledAttr)) ? controlledAttr : null;
 
         if (controlledAttr && !controlled) {
           throw new Error("[component] The model prop must be created with component.create().");
@@ -150,12 +157,9 @@ export function component(
 
     // §10.2: a definition's controlled instance is a plain collection add.
     if (isModelDefinition((config as { model?: unknown }).model)) {
-      return (
-        collection(
-          (config as unknown as { model: never }).model,
-          externalScope,
-        ) as unknown as { add(input: Record<PropertyKey, unknown>): object }
-      ).add(props ?? {});
+      return scoped(externalScope, () =>
+        (config as unknown as { model: AnyModel }).model.create(props ?? {}),
+      );
     }
 
     const key = "cache" in config ? config.key(props) : undefined;

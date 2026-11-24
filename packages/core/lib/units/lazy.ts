@@ -1,3 +1,4 @@
+import { topologyChanged, topologyShrank } from "../kernel/topology";
 import { node, runDetached } from "../kernel";
 import type { Node } from "../kernel";
 import { describeNode, withInspectorMeta } from "../kernel/inspector";
@@ -558,6 +559,7 @@ function createMirroredNextList(): MirroredNextList {
     configurable: true,
     value(...items: Node[]) {
       const length = nativePush(...items);
+      topologyChanged();
 
       for (const target of targets) {
         for (const item of items) {
@@ -576,6 +578,8 @@ function createMirroredNextList(): MirroredNextList {
         deleteCount === undefined
           ? nativeSplice(start)
           : nativeSplice(start, deleteCount, ...items);
+      if (items.length > 0) topologyChanged();
+      else topologyShrank();
 
       for (const target of targets) {
         for (const item of removed) {
@@ -617,11 +621,10 @@ function primeLazyUnit(value: unknown, unit: unknown): void {
 }
 
 function appendNext(target: Node, next: Node): void {
-  target.next = target.next ?? [];
-
-  if (!target.next.includes(next)) {
-    target.next.push(next);
-  }
+  if (!target.next) target.next = [next];
+  else if (!target.next.includes(next)) target.next.push(next);
+  else return;
+  topologyChanged();
 }
 
 function detachNext(target: Node, next: Node): void {
@@ -631,6 +634,7 @@ function detachNext(target: Node, next: Node): void {
 
   if (index >= 0) {
     target.next.splice(index, 1);
+    topologyShrank();
   }
 }
 

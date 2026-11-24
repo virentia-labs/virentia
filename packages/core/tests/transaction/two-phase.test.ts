@@ -8,6 +8,7 @@ import {
   type StoreTransactionTarget,
 } from "../../lib/internal";
 import { makeTarget, resetTransactions } from "../support/transaction-target";
+import { nativeStoreStateOf } from "../../lib/units/store";
 
 afterEach(resetTransactions);
 
@@ -80,6 +81,41 @@ describe("transaction two-phase commit", () => {
   // back so nothing applies; a subscriber that throws during the notify phase does
   // not stop the other subscribers, and the state stays applied.
   describe("atomicity", () => {
+    it("distinguishes committed undefined from an absent default when rolling back", () => {
+      const app = scope();
+      const present = store<number | undefined>(0),
+        absent = store<number | undefined>(undefined);
+      const presentId = nativeStoreStateOf(present)!.id,
+        absentId = nativeStoreStateOf(absent)!.id;
+      scoped(app, () => {
+        present.value = undefined;
+      });
+      expect(app.values.has(presentId)).toBe(true);
+      expect(app.values.has(absentId)).toBe(false);
+      enterTransaction();
+      scoped(app, () => {
+        present.value = 7;
+        absent.value = 9;
+      });
+      writeTransactionStore(
+        {
+          scope: app,
+          id: Symbol("failed"),
+          commit() {
+            throw Error("rollback undefined");
+          },
+        },
+        0,
+      );
+      expect(() => exitTransaction()).toThrow("rollback undefined");
+      expect(app.values.has(presentId)).toBe(true);
+      expect(app.values.has(absentId)).toBe(false);
+      scoped(app, () => {
+        expect(present.value).toBeUndefined();
+        expect(absent.value).toBeUndefined();
+      });
+    });
+
     it("rolls back every committed store when a later commit throws", () => {
       const s = scope();
       const st = store(1);

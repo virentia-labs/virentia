@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { event, reaction, scope, scoped, store } from "../../lib";
+import { computed, event, reaction, scope, scoped, store } from "../../lib";
+import { withTransaction } from "../../lib/internal";
 
 // Contract: a throwing observer stops its OWN branch, the failure is reported
 // rather than swallowed, and independent branches of the same update still run.
@@ -255,5 +256,141 @@ describe("error containment", () => {
     });
 
     await expect(scoped(s, () => go(1))).rejects.toThrow(/Multiple reactions failed/);
+  });
+
+  // A throwing computed is a failing node like any other: its branch stops
+  // there, so its error never starts an observer of it.
+  describe("a throwing computed", () => {
+    function failing() {
+      const s = scope();
+      const $flag = store(0);
+      const $other = store(0);
+      const $parsed = computed(() => {
+        if ($flag.value === 1) throw new Error("boom");
+        return $flag.value;
+      });
+      return { s, $flag, $other, $parsed };
+    }
+
+    it("does not run a reaction that reads it", () => {
+      const { s, $flag, $parsed } = failing();
+      const ran: string[] = [];
+      reaction({
+        scope: s,
+        run: () => {
+          try {
+            ran.push(`read ${$parsed.value}`);
+          } catch {
+            ran.push("caught");
+          }
+        },
+      });
+      ran.length = 0;
+
+      scoped(s, () => {
+        $flag.value = 1;
+      });
+
+      expect(ran).toEqual([]);
+      expect(logged.map((entry) => (entry[1] as Error).message)).toEqual(["boom"]);
+    });
+
+    it("does not call its subscribers", () => {
+      const { s, $flag, $parsed } = failing();
+      const seen: number[] = [];
+      scoped(s, () => $parsed.value);
+      $parsed.subscribe((value) => void seen.push(value));
+
+      scoped(s, () => {
+        $flag.value = 1;
+      });
+
+      expect(seen).toEqual([]);
+      expect(logged.map((entry) => (entry[1] as Error).message)).toEqual(["boom"]);
+    });
+
+    it("does not run what observes it through another computed", () => {
+      const { s, $flag, $parsed } = failing();
+      const $doubled = computed(() => $parsed.value * 2);
+      const ran: number[] = [];
+      reaction({ scope: s, run: () => void ran.push($doubled.value) });
+      ran.length = 0;
+
+      scoped(s, () => {
+        $flag.value = 1;
+      });
+
+      expect(ran).toEqual([]);
+      expect(logged).toHaveLength(1);
+    });
+
+    it("still runs an independent reaction of the same update", () => {
+      const { s, $flag, $parsed } = failing();
+      const independent: number[] = [];
+      reaction({ scope: s, run: () => void $parsed.value });
+      reaction({ scope: s, run: () => void independent.push($flag.value) });
+      independent.length = 0;
+
+      scoped(s, () => {
+        $flag.value = 1;
+      });
+
+      expect(independent).toEqual([1]);
+    });
+
+    function readsBoth(s: ReturnType<typeof scope>, $other: { value: number }, $parsed: { value: number }) {
+      const ran: string[] = [];
+      reaction({
+        scope: s,
+        run: () => {
+          const other = $other.value;
+          try {
+            ran.push(`${other}: ${$parsed.value}`);
+          } catch (error) {
+            ran.push(`${other}: ${(error as Error).message}`);
+          }
+        },
+      });
+      ran.length = 0;
+      return ran;
+    }
+
+    it("lets a source that changed with it start a reaction, which meets the error on read", () => {
+      const { s, $flag, $other, $parsed } = failing();
+      const ran = readsBoth(s, $other, $parsed);
+
+      scoped(s, () =>
+        withTransaction(() => {
+          $flag.value = 1;
+          $other.value = 1;
+        }),
+      );
+
+      expect(ran).toEqual(["1: boom"]);
+    });
+
+    it("lets a later change of another source start a reaction, which meets the error on read", () => {
+      const { s, $flag, $other, $parsed } = failing();
+      const ran = readsBoth(s, $other, $parsed);
+      scoped(s, () => {
+        $flag.value = 1;
+      });
+      expect(ran).toEqual([]);
+
+      scoped(s, () => {
+        $other.value = 1;
+      });
+
+      expect(ran).toEqual(["1: boom"]);
+    });
+
+    it("rejects an awaited trigger whose update it fails", async () => {
+      const { s, $flag, $parsed } = failing();
+      const go = event<number>();
+      reaction({ on: go, run: (value: number) => void ($flag.value = value) });
+      reaction({ scope: s, run: () => void $parsed.value });
+
+      await expect(scoped(s, () => go(1))).rejects.toThrow("boom");
+    });
   });
 });

@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { describe, expectTypeOf, it } from "vitest";
-import { collection, f, staticModel } from "../../lib/models";
+import { f, staticModel } from "../../lib/models";
+import { collection } from "../../lib/models/collection";
 import type { Dto } from "../../lib/models";
 
 // §4.8 at the type level: combinators compose VALUE types (what the instance

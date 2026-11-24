@@ -4,7 +4,7 @@ import type { Scope } from "../scope";
 export interface Page {
   id: number;
   parent: Page | null;
-  contextMap: Map<symbol, unknown>;
+  contextMap: Map<symbol, unknown> | undefined;
 }
 
 export interface KernelWorkItem {

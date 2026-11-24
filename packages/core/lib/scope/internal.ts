@@ -1,17 +1,32 @@
 import type { Scope } from "./types";
 import type { Effect, EffectHandler } from "../units/effect";
 import { getNodeCallStackTrace } from "../kernel/call-stack";
+import { scopePromise } from "./promise";
+import { unwrapMicroScope } from "./micro";
 
 let activeScope: Scope | null = null;
+// The real scope behind the ambient one (see unwrapMicroScope), resolved on its
+// first use after the ambient scope changes; `undefined` until then. A unit
+// without a context of its own is read and written in exactly this scope, and
+// a computation reads many units between two changes of the ambient scope.
+let activeRealScope: Scope | null | undefined = null;
 
 export function getActiveScope(): Scope | null {
   return activeScope;
+}
+
+/** `unwrapMicroScope(getActiveScope())`, resolved once per ambient scope. */
+export function getActiveRealScope(): Scope | null {
+  return activeRealScope !== undefined
+    ? activeRealScope
+    : (activeRealScope = unwrapMicroScope(activeScope));
 }
 
 export function setActiveScope(scope: Scope | null): Scope | null {
   const previousScope = activeScope;
 
   activeScope = scope;
+  activeRealScope = undefined;
 
   return previousScope;
 }
@@ -26,25 +41,43 @@ export function runScopeFrame<T>(scope: Scope, fn: () => T): T {
   }
 }
 
-export function runScopeTask<T>(scope: Scope, fn: () => T): T {
+export function runScopeTask<T>(scope: Scope | null, fn: () => T): T {
   const previousScope = setActiveScope(scope);
   let result: T;
 
   try {
     result = fn();
-  } catch (error) {
+  } finally {
     setActiveScope(previousScope);
-    throw error;
   }
 
   if (isPromiseLike(result)) {
-    return Promise.resolve(result).finally(() => {
-      setActiveScope(previousScope);
-    }) as T;
+    return scopePromise(result, previousScope) as T;
   }
 
-  setActiveScope(previousScope);
   return result;
+}
+
+/** @internal Native model getters keep the usual async handoff without callback closures. */
+export function readScopeTaskValue<T>(
+  scope: Scope,
+  unit: { readonly value: T },
+  native?: ((scope?: Scope, modelRead?: boolean) => T) & { api: object },
+): T {
+  const previousScope = setActiveScope(scope);
+  let result: T;
+  try {
+    // A live API membership probe may re-enter and replace the ambient scope.
+    // Resolve it only after that probe, keeping custom getters' native receiver.
+    result = native
+      ? "value" in native.api
+        ? Reflect.get(native.api, "value", unit) as T
+        : native(getActiveScope() ?? undefined, true)
+      : unit.value;
+  } finally {
+    setActiveScope(previousScope);
+  }
+  return isPromiseLike(result) ? (scopePromise(result, previousScope) as T) : result;
 }
 
 export function requireActiveScope(describe?: () => string): Scope {

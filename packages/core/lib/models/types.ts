@@ -2,6 +2,7 @@ import type { Scope } from "../scope/types";
 import type { AnyField, FieldDef } from "./fields";
 import type { AnyInverseDef, AnyRelationDef, RelationDef, Self } from "./relations";
 import type { ModelDefinition } from "./definition";
+import type { StoreWritable } from "../units/store";
 
 // ---------------------------------------------------------------------------
 // The public type algebra of @virentia/core/models. Everything here follows the
@@ -34,6 +35,7 @@ type RelationTargetOf<E> = E extends { "~target"?: infer TR } ? Exclude<TR, unde
 export interface FieldStore<T> {
   value: T;
   readonly node: unknown;
+  readonly writable: true;
   subscribe(fn: (value: T, scope: Scope) => void): () => void;
 }
 
@@ -42,7 +44,7 @@ export interface InstanceApi {
   readonly key: string;
   readonly alive: boolean;
   json(): Record<string, unknown>;
-  dispose(): void;
+  dispose(): void | Promise<void>;
   rebind(newId: string): void;
   /** Attach an external cleanup to the instance's lifetime (§10.4); returns unregister. */
   onCleanup(cleanup: () => void): () => void;
@@ -89,7 +91,7 @@ export interface RefsManyView<Target> {
 export interface ChildrenManyView<Target, TargetDto> {
   add(input: TargetDto): Target;
   add(input: readonly TargetDto[]): Target[];
-  remove(target: Target | string): void;
+  remove(target: Target | string): void | Promise<void>;
   move(target: Target | string, index: number): void;
   readonly ids: string[];
   readonly items: Target[];
@@ -99,7 +101,7 @@ export interface ChildrenManyView<Target, TargetDto> {
 export interface ChildrenOneView<Target, TargetDto> {
   readonly value: Target | null;
   create(input: TargetDto): Target;
-  clear(): void;
+  clear(): void | Promise<void>;
 }
 
 /** Inverse views are intentionally loose in v1: link/unlink + reads. */
@@ -159,10 +161,18 @@ export interface Model<
   readonly "~shape"?: Shape;
   readonly "~members"?: Members;
   readonly "~props"?: PropsShape;
-  create(input: DtoFromShape<Shape> | ({ id: string } & Partial<DtoFromShape<Shape>>)): Instance<
+  /** Create a fresh independent native unit graph on every call. */
+  static(...args: {} extends DtoFromShape<Shape> ? [input?: DtoFromShape<Shape>] : [input: DtoFromShape<Shape>]): Singleton<Shape, Members>;
+  create(input: readonly (DtoFromShape<Shape> | ({ id: string } & Partial<DtoFromShape<Shape>>))[], options?: { replace?: boolean }): Instance<Shape, Members>[];
+  create(input: DtoFromShape<Shape> | ({ id: string } & Partial<DtoFromShape<Shape>>), options?: { replace?: boolean }): Instance<
     Shape,
     Members
   >;
+  get(id: string): Instance<Shape, Members> | null;
+  readonly instances: TypedQuery<Instance<Shape, Members>>;
+  where(predicate: Predicate<any> | ((instance: Instance<Shape, Members>) => boolean)): TypedQuery<Instance<Shape, Members>>;
+  sort(by: SortToken): TypedQuery<Instance<Shape, Members>>;
+  take(count: number): TypedQuery<Instance<Shape, Members>>;
 }
 
 type IsAny<T> = 0 extends 1 & T ? true : false;
@@ -220,6 +230,15 @@ export type Instance<Shape extends ShapeRecord, Members extends MembersRecord> =
   >;
 } & Readonly<ConcreteKeys<Members>> &
   InstanceApi;
+
+/** One independent native unit graph; values remain local to the active scope. */
+export type Singleton<Shape extends ShapeRecord, Members extends MembersRecord> = {
+  readonly [K in keyof ConcreteKeys<Shape> & string]: ConcreteKeys<Shape>[K] extends { kind: "field" }
+    ? StoreWritable<FieldValueOf<ConcreteKeys<Shape>[K]>>
+    : SurfaceOfEntry<ConcreteKeys<Shape>[K], unknown>;
+} & Readonly<ConcreteKeys<Members>> & InstanceApi;
+
+export type SingletonOf<M> = Singleton<ShapeOf<M>, MembersOf<M>>;
 
 export type InstanceOf<M> = IsAny<M> extends true
   ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -351,7 +370,7 @@ export interface TypedQuery<Inst> extends Iterable<Inst> {
   take(count: number): TypedQuery<Inst>;
   select<T>(descriptor: FieldDescriptorTyped<T, any>): T[];
   set<T>(descriptor: FieldDescriptorTyped<T, any>, value: T): void;
-  remove(id?: string): void;
+  remove(id?: string): void | Promise<void>;
   toArray(): Inst[];
 }
 
@@ -361,7 +380,7 @@ export interface TypedCollection<M extends AnyModel> extends TypedQuery<Instance
   add(input: AddInput<M>, options?: { replace?: boolean }): InstanceOf<M>;
   add(input: readonly AddInput<M>[], options?: { replace?: boolean }): InstanceOf<M>[];
   get(id: string): InstanceOf<M> | null;
-  remove(id: string): void;
+  remove(id?: string): void | Promise<void>;
 }
 
 // --- traits ------------------------------------------------------------------
@@ -552,7 +571,16 @@ export type TypedUnion<Vs extends readonly AnyModel[], HasBy extends boolean> = 
 > & {
   readonly variants: Vs;
   by(discriminate: (json: DistributeDto<Vs[number]>) => Vs[number]): TypedUnion<Vs, true>;
-} & UnionDescriptors<Vs>;
+  get(id: string): DistributeInstance<Vs[number]> | null;
+  readonly instances: TypedUnionQuery<Vs>;
+} & Pick<TypedUnionQuery<Vs>, "where" | "sort" | "take" | "match">
+  & (HasBy extends true ? TypedUnionCreate<Vs> : {})
+  & UnionDescriptors<Vs>;
+
+interface TypedUnionCreate<Vs extends readonly AnyModel[]> {
+  create(input: readonly DistributeAddInput<Vs[number]>[], options?: { replace?: boolean }): DistributeInstance<Vs[number]>[];
+  create(input: DistributeAddInput<Vs[number]>, options?: { replace?: boolean }): DistributeInstance<Vs[number]>;
+}
 
 export interface TypedUnionQuery<Vs extends readonly AnyModel[]>
   extends Iterable<DistributeInstance<Vs[number]>> {
@@ -581,7 +609,7 @@ export interface TypedUnionQuery<Vs extends readonly AnyModel[]>
   select<T>(descriptor: FieldDescriptorTyped<T, any>): T[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   set<T>(descriptor: FieldDescriptorTyped<T, any>, value: T): void;
-  remove(id?: string): void;
+  remove(id?: string): void | Promise<void>;
   toArray(): DistributeInstance<Vs[number]>[];
 }
 
@@ -634,7 +662,7 @@ export interface UnionQuery extends Iterable<object> {
   ): UnionQuery;
   select(descriptor: { "~descriptor": true; field: string }): unknown[];
   set(descriptor: { "~descriptor": true; field: string }, value: unknown): void;
-  remove(id?: string): void;
+  remove(id?: string): void | Promise<void>;
   toArray(): object[];
 }
 
@@ -646,5 +674,5 @@ export interface UnionCollection extends UnionQuery {
   add(input: Record<string, unknown>, options?: { replace?: boolean }): object;
   add(input: readonly Record<string, unknown>[], options?: { replace?: boolean }): object[];
   get(id: string): object | null;
-  remove(id?: string): void;
+  remove(id?: string): void | Promise<void>;
 }

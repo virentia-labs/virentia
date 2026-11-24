@@ -1,11 +1,13 @@
 # @virentia/vue
 
-## 0.5.2
+## 0.6.0
 
-### Patch Changes
+### Minor Changes
 
-- Updated dependencies
-  - @virentia/core@0.11.2
+- Support native model bindings and instance queries in useModel and component.
+
+- Updated Virentia dependencies
+  - @virentia/core@0.12.0
 
 ## 0.5.1
 

@@ -1,5 +1,6 @@
 import { describe, expectTypeOf, it } from "vitest";
-import { children, collection, f, refs, staticModel, trait, union } from "../../lib/models";
+import { children, f, refs, staticModel, trait, union } from "../../lib/models";
+import { collection } from "../../lib/models/collection";
 
 // §5.2 at the type level: variant identity is a model reference, `match` is
 // exhaustive at compile time, commonality of a member requires the same trait

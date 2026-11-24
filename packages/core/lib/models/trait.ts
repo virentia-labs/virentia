@@ -1,4 +1,4 @@
-import { Type } from "@sinclair/typebox";
+import { Instantiate } from "@sinclair/typebox";
 import type { TSchema } from "@sinclair/typebox";
 import { createPropsProxy, isFieldDef, isFnRequirement } from "./fields";
 import type { AnyField, Field, FieldDef, FnRequirement, Props } from "./fields";
@@ -201,7 +201,7 @@ function buildTrait(
 }
 
 function instantiateSchema(schema: TSchema, args: readonly TSchema[]): TSchema {
-  return Type.Instantiate(schema as never, args as never) as TSchema;
+  return Instantiate(schema as never, args as never) as TSchema;
 }
 
 /** One trait shared through several paths composes once: dedupe by application origin. */

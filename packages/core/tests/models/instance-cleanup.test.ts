@@ -1,6 +1,8 @@
+import { effect, getCurrentScope } from "../../lib";
 import { describe, expect, it, vi } from "vitest";
 import { event, reaction, scope, scoped, store } from "../../lib/index";
-import { collection, f, model, refs, staticModel } from "../../lib/models";
+import { f, model, refs, staticModel } from "../../lib/models";
+import { collection } from "../../lib/models/collection";
 
 // §10.4: `onCleanup` on instances — external subscriptions (sockets, markers,
 // unsubscribes) tie to the INSTANCE's lifetime in both kinds, with no store
@@ -228,7 +230,7 @@ describe("edges", () => {
 
       expect(cleaned).toHaveBeenCalledTimes(1);
 
-      await Promise.resolve(); // the scope joins the pool
+      await tick(); // the scope joins the pool
 
       const second = todos.add({}); // reuses the slot
 
@@ -264,7 +266,7 @@ describe("static model resource patterns (docs contract)", () => {
           run: async () => {
             const query = self.query.value;
 
-            await Promise.resolve(); // scope restoration must keep the instance
+            await tick(); // scope restoration must keep the instance
 
             self.result.value = `found:${query}`;
           },
@@ -344,3 +346,6 @@ describe("static model resource patterns (docs contract)", () => {
     });
   });
 });
+
+const tickUnit = effect(() => Promise.resolve());
+const tick = () => getCurrentScope() ? tickUnit() : Promise.resolve();

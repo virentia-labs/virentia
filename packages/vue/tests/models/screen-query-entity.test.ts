@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 
 import { scope, scoped } from "@virentia/core";
-import { collection, f, staticModel } from "@virentia/core/models";
+import { f, staticModel } from "@virentia/core/models";
+import { collection } from "../../../core/lib/models/collection";
 import { defineComponent, h, nextTick, ref } from "vue";
 import { afterEach, describe, expect, it } from "vitest";
 import { component, useModel } from "../../lib";

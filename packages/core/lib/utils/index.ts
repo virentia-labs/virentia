@@ -1,5 +1,5 @@
 // @virentia/core/utils — standard operator library over units. The inclusion
-// bar (docs/design/core-utils.md): an operator earns its place only when it
+// bar: an operator earns its place only when it
 // needs what neither `computed` nor an imperative reaction body can express —
 // time, per-scope memory with the right home, initial values, diagnostics.
 // Everything else from the patronum surface is a documentation recipe.

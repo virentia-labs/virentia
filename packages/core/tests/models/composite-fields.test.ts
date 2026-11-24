@@ -1,7 +1,8 @@
 import { Type } from "@sinclair/typebox";
 import { describe, expect, it } from "vitest";
 import { scope, scoped } from "../../lib/index";
-import { collection, f, staticModel } from "../../lib/models";
+import { f, staticModel } from "../../lib/models";
+import { collection } from "../../lib/models/collection";
 import type { Props } from "../../lib/models";
 
 // §4.8: any type assembles from `f.*` — combinators compose SCHEMAS (wire

@@ -1,4 +1,5 @@
-import { collection, f, staticModel, union, type InstanceOf } from "@virentia/core/models";
+import { f, staticModel, union, type InstanceOf } from "@virentia/core/models";
+import { collection } from "../../../core/lib/models/collection";
 import type { ComponentProps } from "react";
 import { describe, expectTypeOf, it } from "vitest";
 import { component, useModel, type DefinitionComponentConfig } from "../../lib";
@@ -38,9 +39,13 @@ describe("structural model bindings", () => {
       InstanceOf<typeof Todo>
     >();
 
-    component({
+    const TodoView = component({
       model: Todo,
       view: ({ model }) => <span>{model.title.value}</span>,
     });
+    const singleton = Todo.static({ title: "Singleton" });
+    <TodoView model={singleton} />;
+    expectTypeOf(TodoView.create({ title: "Instance" })).toEqualTypeOf<InstanceOf<typeof Todo>>();
+    expectTypeOf(useModel(singleton)).toEqualTypeOf<typeof singleton | null>();
   });
 });

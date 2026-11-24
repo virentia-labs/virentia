@@ -15,7 +15,7 @@ export function context<T>(): KernelContextManager<T> {
       let cursor: ReturnType<typeof createPage> | null = currentPage;
 
       while (cursor) {
-        if (cursor.contextMap.has(id)) return true;
+        if (cursor.contextMap?.has(id)) return true;
         cursor = cursor.parent;
       }
 
@@ -31,7 +31,7 @@ export function context<T>(): KernelContextManager<T> {
     },
 
     delete(): void {
-      currentPage.contextMap.delete(id);
+      currentPage.contextMap?.delete(id);
     },
   };
 }
