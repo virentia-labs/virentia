@@ -5,13 +5,10 @@ dist
 
 # Left behind when a `vitest typecheck` run is interrupted; vitest removes it on a clean exit.
 tsconfig.vitest-temp.json
-docs/.vitepress/.temp
-docs/.vitepress/dist
-docs/.vitepress/cache
 .DS_Store
 .pnpm-store/
 
 # Internal design discussions and investigation records stay local.
-docs/design/
+docs/
 benchmarks/*.json
 !benchmarks/package.json

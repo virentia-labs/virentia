@@ -101,6 +101,18 @@ describe("direct unit await context", () => {
     expect(observations).toEqual([null, null]);
   });
 
+  it("restores the caller after overlapping native promises in one scope", async () => {
+    const app = scope();
+    expect(getCurrentScope()).toBeNull();
+
+    await Promise.all([
+      scoped(app, () => Promise.resolve()),
+      scoped(app, () => Promise.resolve()),
+    ]);
+
+    expect(getCurrentScope()).toBeNull();
+  });
+
   it("resumes shared static-model self after effects and events", async () => {
     const gates = [deferred(), deferred()];
     const wait = effect((index: number) => gates[index].promise);

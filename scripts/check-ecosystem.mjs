@@ -18,7 +18,9 @@ if (!["link", "build", "runtime", "types", "integration", "smoke", "all"].includ
 const names = ["virentia", "forms", "storage", "net", "router"];
 if (values.repo && !names.includes(values.repo)) throw Error("Unknown --repo");
 const json = file => JSON.parse(readFileSync(file, "utf8"));
-const repositories = names.map(name => {
+const linkOnly = values.phase === "link" && values.repo !== undefined;
+const repositoryNames = linkOnly ? names.filter(name => name === "virentia" || name === values.repo) : names;
+const repositories = repositoryNames.map(name => {
   const directory = name === "virentia" ? root : path.join(base, name);
   const packages = readdirSync(path.join(directory, "packages"), { withFileTypes: true })
     .filter(entry => entry.isDirectory() && existsSync(path.join(directory, "packages", entry.name, "package.json")))
@@ -32,8 +34,10 @@ const shared = new Map([
   ["react-dom", realpathSync(path.join(root, "packages/react/node_modules/react-dom"))],
   ["vue", realpathSync(path.join(root, "packages/vue/node_modules/vue"))],
   ["effector", realpathSync(path.join(root, "packages/effector/node_modules/effector"))],
-  ["history", realpathSync(path.join(base, "router/packages/router/node_modules/history"))],
 ]);
+if (repositoryNames.includes("router")) {
+  shared.set("history", realpathSync(path.join(base, "router/packages/router/node_modules/history")));
+}
 const allTargets = new Map([...targets, ...shared]);
 let linked = 0;
 function linkModules(directory, manifest) {
@@ -60,7 +64,9 @@ for (const repo of repositories) {
     if (entry.isDirectory()) linkModules(path.join(store, entry.name, "node_modules"));
 }
 const ecosystem = path.join(root, "ecosystem");
-linkModules(path.join(ecosystem, "node_modules"), json(path.join(ecosystem, "package.json")));
+if (!linkOnly) {
+  linkModules(path.join(ecosystem, "node_modules"), json(path.join(ecosystem, "package.json")));
+}
 const resolution = [];
 for (const repo of repositories) for (const pkg of repo.packages) {
   for (const name of Object.keys({ ...pkg.manifest.dependencies, ...pkg.manifest.devDependencies, ...pkg.manifest.peerDependencies })) {
@@ -141,6 +147,8 @@ try {
         if (phase === "runtime") await run(`${repo.name}-${name}-runtime`, pkg.cwd, [vitest, "run", ...serial]);
         else if (repo.name === "virentia" && name === "ui")
           await run("virentia-ui-types", pkg.cwd, [path.join(repo.directory, "node_modules/typescript/bin/tsc"), "--noEmit", "-p", "tsconfig.vitest.json"]);
+        else if (repo.name === "storage" && name === "core")
+          await run("storage-core-types", pkg.cwd, [path.join(repo.directory, "node_modules/typescript/bin/tsc"), "--noEmit", "-p", "../../tsconfig.json"]);
         else await run(`${repo.name}-${name}-types`, pkg.cwd, [vitest, ...(modern ? ["--typecheck.only", "--run"] : ["typecheck", "--run"]), ...serial, "--passWithNoTests"]);
       }
       if (phase === "types") await run(`${repo.name}-root-types`, repo.directory, [path.join(repo.directory, "node_modules/typescript/bin/tsc"), "--noEmit"]);
