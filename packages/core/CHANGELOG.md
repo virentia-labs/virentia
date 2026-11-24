@@ -1,12 +1,13 @@
 # @virentia/core
 
-## 0.11.2
+## 0.12.0
 
-### Patch Changes
+### Minor Changes
 
-- Stop the root `@virentia/react` entry from loading `@virentia/core/models` and its optional TypeBox peer when entity models are not used.
-
-  Model-aware `useModel` and `component` behavior is preserved through a lightweight core binding protocol, and their generated React declarations now infer model inputs and instances structurally without importing the models subpath.
+- Use model definitions and their instance queries to create and access native models. The public models entry no longer exports collection.
+- Restore the caller's scope when the synchronous part of scoped() returns. Direct Virentia unit awaits preserve scope. Re-enter the scope after awaiting a native promise before touching scoped state.
+- Use native value stores. The value accessor is inherited, and JSON serialization still exposes the value.
+- Add scope snapshots and the model compiler. Keep TypeBox optional when using the React root entry.
 
 ## 0.11.1
 

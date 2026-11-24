@@ -4,8 +4,10 @@
 
 ### Patch Changes
 
-- Updated dependencies
-  - @virentia/core@0.11.2
+- Track mutable drafts against the real scope with the native store runtime.
+
+- Updated Virentia dependencies
+  - @virentia/core@0.12.0
 
 ## 0.3.4
 

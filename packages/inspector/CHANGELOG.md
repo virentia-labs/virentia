@@ -4,9 +4,11 @@
 
 ### Patch Changes
 
-- Updated dependencies
-  - @virentia/core@0.11.2
-  - @virentia/react@0.5.2
+- Read native models and scoped graph updates in the inspector.
+
+- Updated Virentia dependencies
+  - @virentia/core@0.12.0
+  - @virentia/react@0.6.0
 
 ## 0.4.5
 

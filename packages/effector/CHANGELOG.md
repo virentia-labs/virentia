@@ -4,8 +4,10 @@
 
 ### Patch Changes
 
-- Updated dependencies
-  - @virentia/core@0.11.2
+- Support native model field stores and isolate overlapping bridged effects.
+
+- Updated Virentia dependencies
+  - @virentia/core@0.12.0
 
 ## 0.5.4
 
