@@ -8,8 +8,8 @@ import { allSettled, fork } from "effector";
 import { memory, persist, type StorageBox } from "@virentia/storage-core";
 import { query } from "@virentia/net-core";
 import { route, router, historyAdapter } from "@virentia/router";
-import { render } from "@virentia/ui";
-import { jsx } from "@virentia/ui/jsx-runtime";
+import { render, type ComponentProps } from "@virentia/ui";
+import { jsx, type JSX } from "@virentia/ui/jsx-runtime";
 import { ScopeProvider } from "@virentia/react";
 import { useField, useForm } from "@virentia/forms-react";
 import { useQuery as useReactQuery } from "@virentia/net-react";
@@ -20,7 +20,7 @@ import { createMemoryHistory } from "history";
 import { createElement, act } from "react";
 import { createRoot } from "react-dom/client";
 import { createApp, defineComponent, h, nextTick } from "vue";
-import { expect, it, vi } from "vitest";
+import { expect, expectTypeOf, it, vi } from "vitest";
 
 const Editor = staticModel({
   name: "EcosystemEditor",
@@ -60,6 +60,7 @@ const PersistenceBinding = staticModel({
 });
 
 it("runs router → net → form → storage → UI independently in two applications", async () => {
+  expectTypeOf<JSX.IntrinsicElements["p"]>().toEqualTypeOf<ComponentProps<"p">>();
   const model = moduleEditor();
   const a = scope(), b = scope();
   const boxA = memory(), boxB = memory();

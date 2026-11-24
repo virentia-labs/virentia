@@ -1,7 +1,6 @@
 {
   "name": "@virentia/ui",
   "version": "0.1.0",
-  "private": true,
   "description": "Fine-grained reactive JSX components for Virentia",
   "license": "MIT",
   "author": "movpushmov",
@@ -87,6 +86,9 @@
       "import": "./dist/vite.mjs",
       "require": "./dist/vite.cjs"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "dev": "vite --config examples/playground/vite.config.ts",

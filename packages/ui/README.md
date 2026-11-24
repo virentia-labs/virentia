@@ -2,7 +2,13 @@
 
 Virentia UI connects native Core models directly to DOM. A component is a model definition and a view, not a function that reruns whenever state changes. Store bindings change existing text and properties. Conditional fragments replace their own DOM range. There is no virtual tree reconciliation or reactivity compiler.
 
-The package is experimental and private. Its API is being developed together with Core.
+The package is experimental. Its API is being developed together with Core.
+
+```sh
+npm install @virentia/ui@0.1.0 @virentia/core@0.12.0 @sinclair/typebox@0.34.52
+```
+
+The [installation guide](https://movpushmov.dev/virentia/ui/installation) shows how to set up Vite and mount your first component.
 
 ## One model, one active display
 
