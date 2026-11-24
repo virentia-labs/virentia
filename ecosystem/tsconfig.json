@@ -7,5 +7,5 @@
       "react-dom/*": ["../router/packages/react/node_modules/@types/react-dom/*"]
     }
   },
-  "include": ["tests/**/*.test.ts"]
+  "include": ["tests/**/*.test.ts", "tests/**/*.test-d.tsx"]
 }
