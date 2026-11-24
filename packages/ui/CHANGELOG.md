@@ -1,5 +1,11 @@
 # @virentia/ui
 
+## 0.1.1
+
+### Patch Changes
+
+- Link to the public UI documentation from the npm package and keep the installation example on the compatible 0.1 release line.
+
 ## 0.1.0
 
 ### Minor Changes
