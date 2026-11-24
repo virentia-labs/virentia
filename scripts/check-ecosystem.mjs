@@ -113,7 +113,11 @@ async function run(label, cwd, args) {
   clearTimeout(timer); active = undefined;
   await new Promise(resolve => stream.end(resolve));
   entry.finishedAt = new Date().toISOString(); save();
-  if (entry.exitCode !== 0) throw Error(`${label} failed; see ${log}`);
+  if (entry.exitCode !== 0) {
+    const tail = readFileSync(log, "utf8").trimEnd().split("\n").slice(-80).join("\n");
+    if (tail) console.error(tail);
+    throw Error(`${label} failed; see ${log}`);
+  }
   console.log(`Passed ${label}`);
 }
 const selected = repositories.filter(repo => !values.repo || repo.name === values.repo);
