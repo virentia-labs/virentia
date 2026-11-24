@@ -335,13 +335,15 @@ export type SVGAttributes<T extends SVGElement> = Omit<
     "xlink:href"?: Binding<string>;
   };
 
-export type IntrinsicElements = {
+type DOMIntrinsicElements = {
   [K in keyof HTMLElementTagNameMap]: HTMLAttributes<HTMLElementTagNameMap[K]>;
 } & {
   [K in Exclude<keyof SVGElementTagNameMap, keyof HTMLElementTagNameMap>]: SVGAttributes<
     SVGElementTagNameMap[K]
   >;
 };
+
+export type IntrinsicElements = DOMIntrinsicElements;
 
 export namespace JSX {
   export type Element = ElementDescriptor;
@@ -354,5 +356,5 @@ export namespace JSX {
     /** Local component-model identity; otherwise a fresh model ID is generated. */
     id?: string;
   }
-  export type IntrinsicElements = import("./types").IntrinsicElements;
+  export type IntrinsicElements = DOMIntrinsicElements;
 }
